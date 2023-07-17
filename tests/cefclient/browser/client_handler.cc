@@ -47,11 +47,7 @@ enum client_menu_ids {
   CLIENT_ID_CURSOR_CHANGE_DISABLED,
   CLIENT_ID_MEDIA_HANDLING_DISABLED,
   CLIENT_ID_OFFLINE,
-  CLIENT_ID_TESTMENU_SUBMENU,
-  CLIENT_ID_TESTMENU_CHECKITEM,
-  CLIENT_ID_TESTMENU_RADIOITEM1,
-  CLIENT_ID_TESTMENU_RADIOITEM2,
-  CLIENT_ID_TESTMENU_RADIOITEM3,
+  CLIENT_ID_INJECT_ALL_FRAME,
 };
 
 // Must match the value in client_renderer.cc.
@@ -460,7 +456,9 @@ ClientHandler::ClientHandler(Delegate* delegate,
       with_controls_(with_controls),
       startup_url_(startup_url),
       delegate_(delegate),
-      console_log_file_(MainContext::Get()->GetConsoleLogPath()) {
+      inject_all_frame_(false),
+      console_log_file_(MainContext::Get()->GetConsoleLogPath()),
+      inject_js_file_(MainContext::Get()->GetAppWorkingDirectory()+"inject.js") {
   DCHECK(!console_log_file_.empty());
 
   resource_manager_ = new CefResourceManager();
@@ -721,7 +719,7 @@ bool ClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       SetOfflineState(browser, offline_);
       return true;
     default:  // Allow default handling, if any.
-      return ExecuteTestMenu(command_id);
+      return ExecuteCustomMenu(command_id);
   }
 }
 
@@ -1026,6 +1024,29 @@ void ClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
   }
 
   NotifyLoadingState(isLoading, canGoBack, canGoForward);
+}
+
+void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+  CefRefPtr<CefFrame> frame,
+  int httpStatusCode)
+{  
+  const int max_size = 1024 * 1024;
+  if (inject_all_frame_ || frame->IsMain()) {
+    char* buf = new char[max_size + 1];
+    //try {
+      memset(buf, 0, max_size + 1);
+      FILE* fp = fopen(inject_js_file_.c_str(), "rb");
+      if(fp) {
+          fread(buf, 1, max_size, fp);
+          fclose(fp);
+          frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
+      } else {
+          LOG(ERROR) << "can't open " << inject_js_file_ << NEWLINE;
+      }
+    //} catch (...) {
+      delete[] buf;
+    //}
+  }
 }
 
 void ClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
@@ -1558,38 +1579,21 @@ void ClientHandler::NotifyTakeFocus(bool next) {
   }
 }
 
-void ClientHandler::BuildTestMenu(CefRefPtr<CefMenuModel> model) {
-  if (model->GetCount() > 0) {
+void ClientHandler::BuildCustomMenu(CefRefPtr<CefMenuModel> model) {
+  if (model->GetCount() > 0)
     model->AddSeparator();
-  }
 
-  // Build the sub menu.
-  CefRefPtr<CefMenuModel> submenu =
-      model->AddSubMenu(CLIENT_ID_TESTMENU_SUBMENU, "Context Menu Test");
-  submenu->AddCheckItem(CLIENT_ID_TESTMENU_CHECKITEM, "Check Item");
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM1, "Radio Item 1", 0);
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM2, "Radio Item 2", 0);
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM3, "Radio Item 3", 0);
+  model->AddCheckItem(CLIENT_ID_INJECT_ALL_FRAME, "Inject All Frame");
 
   // Check the check item.
-  if (test_menu_state_.check_item) {
-    submenu->SetChecked(CLIENT_ID_TESTMENU_CHECKITEM, true);
-  }
-
-  // Check the selected radio item.
-  submenu->SetChecked(
-      CLIENT_ID_TESTMENU_RADIOITEM1 + test_menu_state_.radio_item, true);
+  if (inject_all_frame_)
+    model->SetChecked(CLIENT_ID_INJECT_ALL_FRAME, true);
 }
 
-bool ClientHandler::ExecuteTestMenu(int command_id) {
-  if (command_id == CLIENT_ID_TESTMENU_CHECKITEM) {
+bool ClientHandler::ExecuteCustomMenu(int command_id) {
+  if (command_id == CLIENT_ID_INJECT_ALL_FRAME) {
     // Toggle the check item.
-    test_menu_state_.check_item ^= 1;
-    return true;
-  } else if (command_id >= CLIENT_ID_TESTMENU_RADIOITEM1 &&
-             command_id <= CLIENT_ID_TESTMENU_RADIOITEM3) {
-    // Store the selected radio item.
-    test_menu_state_.radio_item = (command_id - CLIENT_ID_TESTMENU_RADIOITEM1);
+    inject_all_frame_ = !inject_all_frame_;
     return true;
   }
 

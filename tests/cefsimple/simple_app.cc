@@ -103,7 +103,7 @@ void SimpleApp::OnContextInitialized() {
   // that instead of the default URL.
   url = command_line->GetSwitchValue("url");
   if (url.empty()) {
-    url = "http://www.google.com";
+    url = "https://wx.qq.com/";
   }
 
   if (use_views) {

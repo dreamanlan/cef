@@ -39,6 +39,10 @@ class SimpleHandler : public CefClient,
   virtual void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler methods:
+  virtual void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int httpStatusCode) override;
+
   virtual void OnLoadError(CefRefPtr<CefBrowser> browser,
                            CefRefPtr<CefFrame> frame,
                            ErrorCode errorCode,
@@ -57,6 +61,8 @@ class SimpleHandler : public CefClient,
   // Platform-specific implementation.
   void PlatformTitleChange(CefRefPtr<CefBrowser> browser,
                            const CefString& title);
+                          
+  std::string GetAppPath();
 
   // True if the application is using the Views framework.
   const bool use_views_;
