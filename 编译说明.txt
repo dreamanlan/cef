@@ -3,3 +3,17 @@
 3、按cef的编译过程，这里的源码只是修改备份，按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding与https://bitbucket.org/chromiumembedded/cef/wiki/AutomatedBuildSetup.md的编译说明进行编译，但在update之后，需要将本分支的修改同步到编译的源码
 4、master编译说明使用c:\code作为编译根目录，update.bat里会使用这个绝对路径，按需要调整成其它剩余空间足够的磁盘目录（特别注意不要使用github的源码目录），比如d:\cef_src_build之类
 5、修改同步使用beyond compare将tests目录同步过去即可
+
+第3步文档里的编译脚本如下：
+export GN_DEFINES="is_official_build=true use_sysroot=true symbol_level=1 is_cfi=false"
+export CEF_ARCHIVE_FORMAT=tar.bz2
+python3 automate-git.py --download-dir=%download_dir% --branch=%cef_branch% --minimal-distrib --client-distrib --force-clean --build-target=cefsimple --x64-build --with-pgo-profiles
+
+这里有几个问题：
+1、chromium源码下的cef目录会被删除然后从新拷贝新的，这会覆盖我们对tests的修改
+2、chromium源码会每次revert到分支最新版本
+需要加一些命令行参数来改变这些行为，下面是在D:\GitHub\CEF_Src_Build根目录下执行的修改过的脚本（也可以参考master分支的编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart进行修改，master的编译脚本不会覆盖修改）
+set GN_DEFINES=is_official_build=true
+set GYP_MSVS_VERSION=2022
+set CEF_ARCHIVE_FORMAT=tar.bz2
+python ../automate/automate-git.py --download-dir=D:\GitHub\CEF_Src_Build\chromium_git --branch=5845 --minimal-distrib --client-distrib --no-update --x64-build --with-pgo-profiles
