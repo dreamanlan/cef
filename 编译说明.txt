@@ -12,7 +12,7 @@ python3 automate-git.py --download-dir=%download_dir% --branch=%cef_branch% --mi
 这里有几个问题：
 1、chromium源码下的cef目录会被删除然后从新拷贝新的，这会覆盖我们对tests的修改
 2、chromium源码会每次revert到分支最新版本
-需要加一些命令行参数来改变这些行为，下面是在D:\GitHub\CEF_Src_Build根目录下执行的修改过的脚本（也可以参考master分支的编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart进行修改，master的编译脚本不会覆盖修改）
+需要修改命令行参数来改变这些行为（去掉--force-clean，增加--no-update），下面是在D:\GitHub\CEF_Src_Build根目录下执行的修改过的脚本（也可以参考master分支的编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart进行修改，master的编译脚本不会覆盖修改，不过master的编译过程是分步的，有点麻烦）
 set GN_DEFINES=is_official_build=true
 set GYP_MSVS_VERSION=2022
 set CEF_ARCHIVE_FORMAT=tar.bz2
