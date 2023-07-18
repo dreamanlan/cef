@@ -1,0 +1,3 @@
+1、master之外的2个分支主要是对cef的tests工程修改以方便执行附加的js，分别对应windows与macos平台
+2、按cef的编译过程，这里的源码只是修改备份，按照https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart的编译说明进行编译，但在update之后，需要将本分支的修改同步到编译的源码
+3、修改同步使用beyond compare将tests目录同步过去即可
