@@ -233,6 +233,11 @@ class ClientHandler : public CefClient,
                             bool isLoading,
                             bool canGoBack,
                             bool canGoForward) override;
+
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int httpStatusCode) override;
+
   void OnLoadError(CefRefPtr<CefBrowser> browser,
                    CefRefPtr<CefFrame> frame,
                    ErrorCode errorCode,
@@ -372,8 +377,8 @@ class ClientHandler : public CefClient,
   void NotifyTakeFocus(bool next);
 
   // Test context menu creation.
-  void BuildTestMenu(CefRefPtr<CefMenuModel> model);
-  bool ExecuteTestMenu(int command_id);
+  void BuildCustomMenu(CefRefPtr<CefMenuModel> model);
+  bool ExecuteCustomMenu(int command_id);
 
   void SetOfflineState(CefRefPtr<CefBrowser> browser, bool offline);
 
@@ -433,11 +438,7 @@ class ClientHandler : public CefClient,
   // The following members will only be accessed on the CEF UI thread.
 
   // Track state information for the text context menu.
-  struct TestMenuState {
-    TestMenuState() : check_item(true), radio_item(0) {}
-    bool check_item;
-    int radio_item;
-  } test_menu_state_;
+  bool inject_all_frame_;
 
   // The current number of browsers using this handler.
   int browser_count_ = 0;

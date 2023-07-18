@@ -104,6 +104,26 @@ void SimpleHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   }
 }
 
+void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+  CefRefPtr<CefFrame> frame,
+  int httpStatusCode)
+{
+  const int max_size = 1024 * 1024;
+  if (frame->IsMain()) {
+    char* buf = new char[max_size + 1];
+    try {
+      memset(buf, 0, max_size + 1);
+      std::string file = "inject.js";
+      FILE* fp = fopen(file.c_str(), "rb");
+      fread(buf, 1, max_size, fp);
+      fclose(fp);
+      frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
+    } catch (...) {
+      delete[] buf;
+    }
+  }
+}
+
 void SimpleHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
                                 CefRefPtr<CefFrame> frame,
                                 ErrorCode errorCode,
