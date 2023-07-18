@@ -7,3 +7,4 @@
 7、master编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart可作为编译过程的参考，但分支按这个过程编译可能遇到gn命令报9009错误
 8、修改同步使用beyond compare将tests目录同步过去即可
 9、python脚本命令行看源码可能更清楚https://bitbucket.org/chromiumembedded/cef/raw/master/tools/automate/automate-git.py
+10、cef使用的gn环境变量说明https://github.com/chromiumembedded/cef/blob/master/BUILD.gn，chromium的gn构建配置说明https://www.chromium.org/developers/gn-build-configuration/
