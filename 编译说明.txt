@@ -2,6 +2,7 @@
 2、编译cef应选择某个稳定分支的源码编译，cef不推荐使用master编译
 3、按cef的编译过程，这里的源码只是修改备份，另外开一个目录用来编译chromium与cef
 4、按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding的说明选择分支并准备相应编译环境
-5、按master的编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart进行编译，但记得python命令行加上命令行参数--branch=tag_no
+5、按https://bitbucket.org/chromiumembedded/cef/wiki/AutomatedBuildSetup.md进行编译，但python命令行需要加上--no-update，去掉--force-clean
 6、master编译说明使用~/code作为编译根目录，python命令行里会使用这个绝对路径，按需要调整成其它剩余空间足够并且名称方便识别的目录（特别注意不要使用github的源码目录），比如~/cef_src_build之类
-5、修改同步使用beyond compare将tests目录同步过去即可
+7、master编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart可作为编译过程的参考，但分支按这个过程编译可能遇到gn命令报9009错误
+8、修改同步使用beyond compare将tests目录同步过去即可
