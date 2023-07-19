@@ -111,16 +111,16 @@ void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   const int max_size = 1024 * 1024;
   if (frame->IsMain()) {
     char* buf = new char[max_size + 1];
-    try {
+    //try {
       memset(buf, 0, max_size + 1);
       std::string file = "inject.js";
       FILE* fp = fopen(file.c_str(), "rb");
       fread(buf, 1, max_size, fp);
       fclose(fp);
       frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
-    } catch (...) {
+    //} catch (...) {
       delete[] buf;
-    }
+    //}
   }
 }
 

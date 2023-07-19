@@ -1032,16 +1032,16 @@ void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   const int max_size = 1024 * 1024;
   if (inject_all_frame_ || frame->IsMain()) {
     char* buf = new char[max_size + 1];
-    try {
+    //try {
       memset(buf, 0, max_size + 1);
       std::string file = MainContext::Get()->GetAppWorkingDirectory() + "inject.js";
       FILE* fp = fopen(file.c_str(), "rb");
       fread(buf, 1, max_size, fp);
       fclose(fp);
       frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
-    } catch (...) {
+    //} catch (...) {
       delete[] buf;
-    }
+    //}
   }
 }
 
