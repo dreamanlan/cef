@@ -39,7 +39,7 @@ class SimpleHandler : public CefClient,
   virtual void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler methods:
-  virtual void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+  virtual void OnLoadEnd(CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,
     int httpStatusCode) override;
 
