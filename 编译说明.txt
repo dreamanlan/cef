@@ -22,11 +22,11 @@ windows下成功编译的步骤:
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --x64-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --x64-build --build-target="cefclient cefsimple"
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、对cef源码修改后，删除chromium_git/chromium/src/out目录，然后重新执行update.bat编译（先加上--no-cef-update命令行开关），或修改update.bat内容如下不删除out目录直接重新编译
   set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --no-update --force-build --x64-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --no-update --force-build --x64-build --build-target="cefclient cefsimple"
