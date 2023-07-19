@@ -1,3 +1,32 @@
+注意事项：
 1、master之外的2个分支主要是对cef的tests工程修改以方便执行附加的js，分别对应windows与macos平台
-2、按cef的编译过程，这里的源码只是修改备份，按照https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart的编译说明进行编译，但在update之后，需要将本分支的修改同步到编译的源码
-3、修改同步使用beyond compare将tests目录同步过去即可
+2、编译cef应选择某个稳定分支的源码编译，cef不推荐使用master编译
+3、按cef的编译过程，这里的源码只是修改备份，另外开一个目录用来编译chromium与cef
+4、按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding的说明选择分支并准备相应编译环境
+5、按照https://bitbucket.org/chromiumembedded/cef/wiki/AutomatedBuildSetup.md的python脚本进行编译，但python脚本命令行需要加上--no-cef-update，去掉--force-clean
+6、master编译说明使用c:\code作为编译根目录，update.bat里会使用这个绝对路径，按需要调整成其它剩余空间足够的磁盘目录（特别注意不要使用github的源码目录），比如d:\cef_src_build之类，分支编译可以按照master文档的目录结构来组织
+  root_dir -|
+            |- automate
+            |- chromium_git
+            |- depot_tools
+7、master编译文档https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart可作为编译过程的参考，但分支按这个过程编译可能遇到gn命令报9009错误
+8、本github工程的修改使用beyond compare将tests目录同步到cef下的tests目录即可，同步后需要重新编译，因此编译脚本不能重新checkout覆盖cef目录，否则会导致修改丢失。如5所说
+9、python脚本命令行看源码可能更清楚https://bitbucket.org/chromiumembedded/cef/raw/master/tools/automate/automate-git.py
+10、cef使用的gn环境变量说明https://github.com/chromiumembedded/cef/blob/master/BUILD.gn，chromium的gn构建配置说明https://www.chromium.org/developers/gn-build-configuration/
+
+windows下成功编译的步骤:
+1、按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding的说明选择分支并准备相应编译环境
+2、按照https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart的1~5步建立编译目录结构，下载depot_tools与automate-git.py
+3、新建chromium_git\update.bat，内容如下
+  set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
+  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
+  set GYP_MSVS_VERSION=2022
+  set CEF_ARCHIVE_FORMAT=tar.bz2
+  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --x64-build
+4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
+5、对cef源码修改后，删除chromium_git/chromium/src/out目录，然后重新执行update.bat编译（先加上--no-cef-update命令行开关），或修改update.bat内容如下不删除out目录直接重新编译
+  set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
+  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
+  set GYP_MSVS_VERSION=2022
+  set CEF_ARCHIVE_FORMAT=tar.bz2
+  python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --no-update --force-build --x64-build
