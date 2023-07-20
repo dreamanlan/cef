@@ -30,4 +30,4 @@ windows下成功编译的步骤（macos或可参考）:
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
   python ../automate/automate-git.py --download-dir=../chromium_git --branch=5845 --no-distrib --no-update --force-build --x64-build --build-target="cefclient cefsimple"
-6、编译都需要很长时间（8小时以上）与大量磁盘空间（out目录150GB，带git源码与编译工具整个目录220GB空间，剩余磁盘至少300GB空间可能是必要的）
+6、编译都需要很长时间（8小时以上）与大量磁盘空间（x64-build情形，out目录主要生成了x64的debug与release版本[目录结构是所有版本的，实际只有2个目录有生成内容]，约150GB，带git源码与编译工具整个目录220GB空间，剩余磁盘至少300GB空间可能是必要的）
