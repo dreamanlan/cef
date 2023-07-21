@@ -1,0 +1,40 @@
+var elements = document.getElementsByClassName("woo-checkbox-main");
+alert(elements.length);
+var ix = 0;
+
+function cancelOne()
+{
+	if (ix < 20 && ix < elements.length) {
+		var elem = elements[ix];
+		elem.click();		
+	}
+	else if (ix == 20 || ix == elements.length) {
+		var btns = document.getElementsByClassName("woo-button-content");
+		btns.forEach(function(btn){
+				if(btn.innerText=="取消关注"){
+					btn.click();
+					document.title = "取消关注";
+				}
+			}
+			);
+	}
+	else {
+		var btns = document.getElementsByClassName("woo-button-content");
+		btns.forEach(function(btn){
+				if(btn.innerText=="确认"){
+					btn.click();
+					document.title = "确认";
+				}
+			}
+			);
+		elements = document.getElementsByClassName("woo-checkbox-main");
+		document.title = "left:" + elements.length;
+		ix = 0;
+	}
+	++ix;
+	if (elements.length > 0) {
+		setTimeout(cancelOne, 500);
+	}
+}
+
+cancelOne();

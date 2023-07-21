@@ -1,0 +1,24 @@
+var div1 = document.createElement("DIV");
+div1.style.width="100%";
+div1.style.height="300px";
+var hr = document.createElement("hr");
+var div2 = document.createElement("DIV");
+div2.style.width="100%";
+div2.align="center";
+var txtArea = document.createElement("TEXTAREA");
+txtArea.style.width="100%";
+txtArea.style.height="100%";
+var btn = document.createElement("BUTTON");
+var t = document.createTextNode("Run");
+btn.appendChild(t);
+div1.appendChild(txtArea);
+div2.appendChild(btn);
+btn.onclick=function(){
+  eval(txtArea.value);
+};
+//document.body.appendChild(div1);
+//document.body.appendChild(hr);
+//document.body.appendChild(div2);
+document.body.insertBefore(div2, document.body.firstChild);
+document.body.insertBefore(hr, document.body.firstChild);
+document.body.insertBefore(div1, document.body.firstChild);

@@ -36,7 +36,7 @@ windows下成功编译的步骤:
 1、locales目录
 2、snapshot_blob.bin与v8_context_snapshot.bin
 3、icudtl.dat
-4、resources.pak
+4、resources.pak、chrome_100_percent.pak、chrome_200_percent.pak、headless_command_resources.pak
 5、libcef.dll与chrome_elf.dll
 6、支持WebGL需要d3dcompiler_47.dll、libEGL.dll、libGLESv2.dll、vk_swiftshader.dll、VkICD_mock_icd.dll、VkLayer_khronos_validation.dll、vulkan-1.dll
 7、运行时库dbgcore.dll、dbghelp.dll、msdia140.dll、msvcp140.dll、vccorlib140.dll、vcruntime140.dll、vcruntime140_1.dll

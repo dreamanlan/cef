@@ -1,0 +1,16 @@
+ base/logging.cc | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/base/logging.cc b/base/logging.cc
+index b1b0af0710f28..4adafe1869305 100644
+--- a/base/logging.cc
++++ b/base/logging.cc
+@@ -962,7 +962,7 @@ LogMessage::~LogMessage() {
+ #endif
+ 
+       // Crash the process to generate a dump.
+-      base::ImmediateCrash();
++      // base::ImmediateCrash();
+     }
+   }
+ }
