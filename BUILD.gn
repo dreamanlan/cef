@@ -1964,6 +1964,10 @@ if (is_mac) {
           cflags_c = invoker.helper_cflags_c
         }
 
+        if (defined(invoker.helper_libs)) {
+          libs = invoker.helper_libs
+        }
+
         # Disable clang modules for this target (see issue #3611).
         use_libcxx_modules = false
       }
@@ -1999,6 +2003,9 @@ if (is_mac) {
         }
         if (defined(invoker.helper_cflags_c)) {
           helper_cflags_c = invoker.helper_cflags_c
+        }
+        if (defined(invoker.helper_libs)) {
+          helper_libs = invoker.helper_libs
         }
 
         helper_name_suffix = _helper_suffix
@@ -2064,6 +2071,10 @@ if (is_mac) {
         cflags_c = invoker.cflags_c
       }
 
+      if (defined(invoker.libs)) {
+        libs = invoker.libs
+      }
+
       info_plist_target = ":${app_name}_plist"
 
       # Disable clang modules for this target (see issue #3611).
@@ -2125,6 +2136,10 @@ if (is_mac) {
     helper_defines = [
       "CEF_USE_SANDBOX",
     ]
+    helper_libs = [
+      "//cef/tests/cefclient/hostclr/coreclr/libnethost.a",
+      "c++",
+    ]
 
     info_plist = "tests/cefclient/mac/Info.plist.in"
     sources = includes_common +
@@ -2147,6 +2162,10 @@ if (is_mac) {
       "AppKit.framework",
       "IOSurface.framework",
       "OpenGL.framework",
+    ]
+    libs = [
+      "//cef/tests/cefclient/hostclr/coreclr/libnethost.a",
+      "c++",
     ]
     defines = [
       "CEF_USE_SANDBOX",

@@ -5,8 +5,10 @@
 #include "tests/cefclient/browser/root_window_manager.h"
 
 #include <sstream>
+#ifdef _WIN32
 #include <windows.h>
 #include <tlhelp32.h>
+#endif
 
 #include "include/base/cef_callback.h"
 #include "include/base/cef_logging.h"

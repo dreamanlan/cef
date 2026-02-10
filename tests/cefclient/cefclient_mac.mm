@@ -555,14 +555,14 @@ int RunMain(int argc, char* argv[]) {
   }
 
   // Determine process type from command line
-  int process_type = 0;  // 0 = browser, 1 = renderer, 2 = other
+  int clr_process_type = 0;  // 0 = browser, 1 = renderer, 2 = other
   for (int i = 1; i < argc; ++i) {
     if (strncmp(argv[i], "--type=", 7) == 0) {
       const char* type_value = argv[i] + 7;
       if (strncmp(type_value, "renderer", 8) == 0) {
-        process_type = 1;
+        clr_process_type = 1;
       } else {
-        process_type = 2;
+        clr_process_type = 2;
       }
       break;
     }
@@ -585,7 +585,7 @@ int RunMain(int argc, char* argv[]) {
 
     // Log error without CEF logging (CEF not loaded yet)
     fprintf(stderr, "Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d\n",
-            r, detailed_rc, attempt, max_attempts, process_type);
+            r, detailed_rc, attempt, max_attempts, clr_process_type);
 
     if (attempt < max_attempts) {
       const unsigned int delay_ms = fixed_ms + (rand() % delta_ms);
@@ -595,7 +595,7 @@ int RunMain(int argc, char* argv[]) {
 
   if (r != 0) {
     // Only show alert in browser process to avoid crashes in sub-processes
-    if (process_type == 0) {
+    if (clr_process_type == 0) {
       fprintf(stderr, "CLR initialization failed after %d attempts.\n"
                       "Return code: %d\nDetailed error code: %d (0x%08X)\n"
                       "Please check .NET runtime installation and restart later.\n",
@@ -609,7 +609,7 @@ int RunMain(int argc, char* argv[]) {
   if (r != 0) {
     // Log error without CEF logging (CEF not loaded yet)
     fprintf(stderr, "Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d\n",
-            r, detailed_rc, process_type);
+            r, detailed_rc, clr_process_type);
     return 1;
   }
 
@@ -620,7 +620,7 @@ int RunMain(int argc, char* argv[]) {
     if (lastDirName == "cefclientdbg") {
       exeDir += "/..";
     }
-    on_init_fptr(raw_command_line_utf8.c_str(), exeDir.c_str(), process_type);
+    on_init_fptr(raw_command_line_utf8.c_str(), exeDir.c_str(), clr_process_type);
   }
 
   // Load the CEF framework library at runtime instead of linking directly

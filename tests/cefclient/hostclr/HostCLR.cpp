@@ -3,10 +3,18 @@
 #include "include/cef_browser.h"
 #include "include/cef_frame.h"
 #include "JavaScriptCaller.h"
+#include "path_utils.h"
 
 #include <iostream>
 #include <string>
 #include <vector>
+
+// Cross-platform string literal macro for char_t
+#if defined(_MSC_VER)
+    #define CHAR_T_LITERAL(str) L##str
+#else
+    #define CHAR_T_LITERAL(str) str
+#endif
 
 #if defined(_MSC_VER)
 #include "windows.h"
@@ -51,6 +59,9 @@ bool IsMemoryReadable(HANDLE process, LPCVOID address) {
 #if TARGET_OS_OSX
 #include <iostream>
 #include <dlfcn.h>
+#include <signal.h>
+#include <sys/sysctl.h>
+#include <mach-o/dyld.h>
 #include "coreclr/nethost.h"
 #include "coreclr/coreclr_delegates.h"
 #include "coreclr/hostfxr.h"
@@ -227,26 +238,88 @@ void printf_log(LogSeverity severity, const char* fmt, ...)
 #endif
 }
 
-static const char_t* c_local_managed_dll_dir = L"./";
-static const char_t* c_local_dotnet_runtime_dir = L"./dotnet/Microsoft.NETCore.App/9.0.2";
-static const char_t* c_dotnet_runtime_config_path = L"./managed/CefDotnetApp.runtimeconfig.json";
-static const char_t* c_dotnet_assembly_path = L"./managed/CefDotnetApp.dll";
+// Initialize absolute paths based on executable location
+// Use GetExeDir() from path_utils.h, which returns directory with trailing separator
+static std::string GetExeDirWithSeparator() {
+    std::string dir = GetExeDir();
+    if (dir.empty()) {
+        return "./";
+    }
+    // Ensure trailing separator
+    if (dir.back() != '/' && dir.back() != '\\') {
+#if defined(_MSC_VER)
+        dir += '\\';
+#else
+        dir += '/';
+#endif
+    }
+    return dir;
+}
 
-static const char_t* c_local_managed_dll_dir_dbg = L"../";
-static const char_t* c_local_dotnet_runtime_dir_dbg = L"../dotnet/Microsoft.NETCore.App/9.0.2";
-static const char_t* c_dotnet_runtime_config_path_dbg = L"../managed/CefDotnetApp.runtimeconfig.json";
-static const char_t* c_dotnet_assembly_path_dbg = L"../managed/CefDotnetApp.dll";
+// Helper functions to build paths dynamically (no static storage, no memory leak)
+#if defined(_MSC_VER)
+// Windows: use wide strings
+typedef std::wstring string_t;
+#define STR_LITERAL(s) L##s
 
-static const char_t* c_dotnet_class_name = L"DotNetLib.Lib, CefDotnetApp";
+static string_t GetExeDirString() {
+    return Utf8ToWstring(GetExeDirWithSeparator().c_str());
+}
+#else
+// Unix: use narrow strings
+typedef std::string string_t;
+#define STR_LITERAL(s) s
 
+static string_t GetExeDirString() {
+    return GetExeDirWithSeparator();
+}
+#endif
+
+// Build paths dynamically based on debug/release mode
+static string_t BuildManagedDllDir(bool is_debug) {
+    string_t base = GetExeDirString();
+    return is_debug ? (base + STR_LITERAL("../")) : base;
+}
+
+static string_t BuildDotnetRuntimeDir(bool is_debug) {
+    string_t base = GetExeDirString();
+    if (is_debug) {
+        return base + STR_LITERAL("../dotnet/Microsoft.NETCore.App/9.0.2");
+    }
+    return base + STR_LITERAL("dotnet/Microsoft.NETCore.App/9.0.2");
+}
+
+static string_t BuildRuntimeConfigPath(bool is_debug) {
+    string_t base = GetExeDirString();
+    if (is_debug) {
+        return base + STR_LITERAL("../managed/CefDotnetApp.runtimeconfig.json");
+    }
+    return base + STR_LITERAL("managed/CefDotnetApp.runtimeconfig.json");
+}
+
+static string_t BuildAssemblyPath(bool is_debug) {
+    string_t base = GetExeDirString();
+    if (is_debug) {
+        return base + STR_LITERAL("../managed/CefDotnetApp.dll");
+    }
+    return base + STR_LITERAL("managed/CefDotnetApp.dll");
+}
+
+#if defined(_MSC_VER)
+static const wchar_t* c_dotnet_class_name = L"DotNetLib.Lib, CefDotnetApp";
+#else
+static const char* c_dotnet_class_name = "DotNetLib.Lib, CefDotnetApp";
+#endif
 static load_assembly_and_get_function_pointer_fn load_assembly_and_get_function_pointer = nullptr;
 // Function to initialize .NET Core runtime
 int load_hostfxr(bool is_debug, int& out_rc)
 {
-    [[maybe_unused]]const char_t* dotnet_runtime_config_path = is_debug ? c_dotnet_runtime_config_path_dbg : c_dotnet_runtime_config_path;
-    [[maybe_unused]]const char_t* local_managed_dll_dir = is_debug ? c_local_managed_dll_dir_dbg : c_local_managed_dll_dir;
-    [[maybe_unused]]const char_t* local_dotnet_runtime_dir = is_debug ? c_local_dotnet_runtime_dir_dbg : c_local_dotnet_runtime_dir;
-    [[maybe_unused]]const char_t* dotnet_assembly_path = is_debug ? c_dotnet_assembly_path_dbg : c_dotnet_assembly_path;
+    // Build paths dynamically based on debug mode
+    string_t dotnet_runtime_config_path = BuildRuntimeConfigPath(is_debug);
+    string_t local_managed_dll_dir = BuildManagedDllDir(is_debug);
+    string_t local_dotnet_runtime_dir = BuildDotnetRuntimeDir(is_debug);
+    string_t dotnet_assembly_path = BuildAssemblyPath(is_debug);
+    
     out_rc = 0;
 #ifdef USE_SPEC_DOTNET
     // Load hostfxr.dll and use dotnet framework in specific directory
@@ -314,15 +387,15 @@ int load_hostfxr(bool is_debug, int& out_rc)
     // Initialize the .NET Core runtime
     hostfxr_initialize_parameters parameters{
         sizeof(hostfxr_initialize_parameters),
-        local_managed_dll_dir,
-        local_dotnet_runtime_dir
+        local_managed_dll_dir.c_str(),
+        local_dotnet_runtime_dir.c_str()
     };
 
     hostfxr_handle cxt = nullptr;
-    int rc = init_config_fptr(dotnet_runtime_config_path, &parameters, &cxt);
+    int rc = init_config_fptr(dotnet_runtime_config_path.c_str(), &parameters, &cxt);
 #else
     hostfxr_handle cxt = nullptr;
-    int rc = init_config_fptr(dotnet_runtime_config_path, nullptr, &cxt);
+    int rc = init_config_fptr(dotnet_runtime_config_path.c_str(), nullptr, &cxt);
 #endif
     //int argc = 1;
     //const char_t* argv[] = { dotnet_assembly_path };
@@ -576,7 +649,7 @@ void command_line_remove_switch(void* command_line, const char* name)
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
-    const char_t* dotnet_assembly_path = is_debug ? c_dotnet_assembly_path_dbg : c_dotnet_assembly_path;
+    string_t dotnet_assembly_path = BuildAssemblyPath(is_debug);
     const char_t* dotnet_class_name = c_dotnet_class_name;
     // native api
     HostApi api;
@@ -596,9 +669,9 @@ int load_dotnet_method(bool is_debug, int& rc)
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
     register_api_fn register_api = nullptr;
     rc = load_assembly_and_get_function_pointer(
-        dotnet_assembly_path,
+        dotnet_assembly_path.c_str(),
         dotnet_class_name,
-        L"RegisterApi",
+        CHAR_T_LITERAL("RegisterApi"),
         UNMANAGEDCALLERSONLY_METHOD,
         nullptr,
         (void**)&register_api);
@@ -613,10 +686,10 @@ int load_dotnet_method(bool is_debug, int& rc)
 
     // dotnet methods
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnInit",
-    L"DotNetLib.Lib+OnInitDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnInit"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnInitDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_init_fptr);
     if (rc || !on_init_fptr) {
@@ -624,10 +697,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnFinalize",
-    L"DotNetLib.Lib+OnFinalizeDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnFinalize"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnFinalizeDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_finalize_fptr);
     if (rc || !on_finalize_fptr) {
@@ -635,10 +708,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBrowserInit",
-    L"DotNetLib.Lib+OnBrowserInitDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnBrowserInit"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserInitDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_browser_init_fptr);
     if (rc || !on_browser_init_fptr) {
@@ -646,10 +719,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBrowserFinalize",
-    L"DotNetLib.Lib+OnBrowserFinalizeDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnBrowserFinalize"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserFinalizeDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_browser_finalize_fptr);
     if (rc || !on_browser_finalize_fptr) {
@@ -657,10 +730,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBrowserHotReloadCopyFiles",
-    L"DotNetLib.Lib+OnBrowserHotReloadCopyFilesDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnBrowserHotReloadCopyFiles"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserHotReloadCopyFilesDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_browser_hot_reload_copyfiles_fptr);
     if (rc || !on_browser_hot_reload_copyfiles_fptr) {
@@ -668,10 +741,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBrowserHotReloadCompleted",
-    L"DotNetLib.Lib+OnBrowserHotReloadCompletedDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnBrowserHotReloadCompleted"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserHotReloadCompletedDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_browser_hot_reload_completed_fptr);
     if (rc || !on_browser_hot_reload_completed_fptr) {
@@ -679,10 +752,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBrowserCefQuery",
-    L"DotNetLib.Lib+OnBrowserCefQueryDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnBrowserCefQuery"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserCefQueryDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_browser_cef_query_fptr);
     if (rc || !on_browser_cef_query_fptr) {
@@ -690,10 +763,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnRendererInit",
-    L"DotNetLib.Lib+OnRendererInitDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnRendererInit"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererInitDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_renderer_init_fptr);
     if (rc || !on_renderer_init_fptr) {
@@ -701,10 +774,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnRendererFinalize",
-    L"DotNetLib.Lib+OnRendererFinalizeDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnRendererFinalize"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererFinalizeDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_renderer_finalize_fptr);
     if (rc || !on_renderer_finalize_fptr) {
@@ -712,10 +785,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnLoadingStateChange",
-    L"DotNetLib.Lib+OnLoadingStateChangeDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnLoadingStateChange"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnLoadingStateChangeDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_loading_state_change_fptr);
     if (rc || !on_loading_state_change_fptr) {
@@ -723,10 +796,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnLoadError",
-    L"DotNetLib.Lib+OnLoadErrorDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnLoadError"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnLoadErrorDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_load_error_fptr);
     if (rc || !on_load_error_fptr) {
@@ -734,10 +807,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnRenderProcessTerminated",
-    L"DotNetLib.Lib+OnRenderProcessTerminatedDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnRenderProcessTerminated"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRenderProcessTerminatedDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_render_process_terminated_fptr);
     if (rc || !on_render_process_terminated_fptr) {
@@ -745,10 +818,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnLoadEnd",
-    L"DotNetLib.Lib+OnLoadEndDelegation, CefDotnetApp", // Delegate type
+    CHAR_T_LITERAL("OnLoadEnd"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnLoadEndDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_load_end_fptr);
     if (rc || !on_load_end_fptr) {
@@ -756,10 +829,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnReceiveCefMessage",
-    L"DotNetLib.Lib+OnReceiveCefMessageDelegation, CefDotnetApp",
+    CHAR_T_LITERAL("OnReceiveCefMessage"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnReceiveCefMessageDelegation, CefDotnetApp"),
     nullptr,
     (void**)&on_receive_cef_message_fptr);
     if (rc || !on_receive_cef_message_fptr) {
@@ -767,10 +840,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnReceiveJsMessage",
-    L"DotNetLib.Lib+OnReceiveJsMessageDelegation, CefDotnetApp",
+    CHAR_T_LITERAL("OnReceiveJsMessage"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnReceiveJsMessageDelegation, CefDotnetApp"),
     nullptr,
     (void**)&on_receive_js_message_fptr);
     if (rc || !on_receive_js_message_fptr) {
@@ -778,10 +851,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnExecuteMetaDSL",
-    L"DotNetLib.Lib+OnExecuteMetaDSLDelegation, CefDotnetApp",
+    CHAR_T_LITERAL("OnExecuteMetaDSL"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnExecuteMetaDSLDelegation, CefDotnetApp"),
     nullptr,
     (void**)&on_execute_metadsl_fptr);
     if (rc || !on_execute_metadsl_fptr) {
@@ -789,10 +862,10 @@ int load_dotnet_method(bool is_debug, int& rc)
     }
 
     rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path,
+    dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    L"OnBeforeCommandLineProcessing",
-    L"DotNetLib.Lib+OnBeforeCommandLineProcessingDelegation, CefDotnetApp",
+    CHAR_T_LITERAL("OnBeforeCommandLineProcessing"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBeforeCommandLineProcessingDelegation, CefDotnetApp"),
     nullptr,
     (void**)&on_before_command_line_processing_fptr);
     if (rc || !on_before_command_line_processing_fptr) {
@@ -1132,10 +1205,10 @@ int TerminateRenderProcess() {
 
         // Get process arguments
         char args_buffer[MAXPATHLEN * 4];
-        int mib[3] = {CTL_KERN, KERN_PROCARGS2, pids[i]};
+        int mib_args[3] = {CTL_KERN, KERN_PROCARGS2, pids[i]};
         size_t args_size = sizeof(args_buffer);
 
-        if (sysctl(mib, 3, args_buffer, &args_size, NULL, 0) != 0) {
+        if (sysctl(mib_args, 3, args_buffer, &args_size, NULL, 0) != 0) {
             continue;
         }
 
