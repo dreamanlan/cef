@@ -35,6 +35,7 @@
 #include "tests/cefclient/browser/task_manager_test.h"
 #include "tests/cefclient/browser/urlrequest_test.h"
 #include "tests/cefclient/browser/window_test.h"
+#include "tests/cefclient/browser/cef_query_handler.h"
 #include "tests/shared/browser/resource_util.h"
 #include "tests/shared/common/string_util.h"
 
@@ -894,6 +895,9 @@ void CreateMessageHandlers(MessageHandlerSet& handlers) {
 
   // Create the window test handlers.
   window_test::CreateMessageHandlers(handlers);
+
+  // Create the hot reload test handlers.
+  cef_query_handler::CreateMessageHandlers(handlers);
 }
 
 void RegisterSchemeHandlers() {

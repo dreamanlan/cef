@@ -17,6 +17,7 @@
 #include "tests/cefclient/browser/resource.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/browser/test_runner.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 #include "tests/shared/browser/client_app_browser.h"
 #include "tests/shared/browser/main_message_loop_external_pump.h"
 #include "tests/shared/browser/main_message_loop_std.h"
@@ -27,6 +28,36 @@
 
 namespace client {
 namespace {
+
+// Process type enumeration (independent of CEF)
+enum SimpleProcessType {
+  PROCESS_TYPE_BROWSER = 0,
+  PROCESS_TYPE_RENDERER = 1,
+  PROCESS_TYPE_OTHER = 2,
+};
+
+// Determine process type from raw command line without CEF dependency
+SimpleProcessType GetProcessTypeFromCommandLine(const char* command_line) {
+  if (!command_line) {
+    return PROCESS_TYPE_BROWSER;
+  }
+
+  // Look for --type= switch in command line
+  const char* type_switch = strstr(command_line, "--type=");
+  if (!type_switch) {
+    return PROCESS_TYPE_BROWSER;
+  }
+
+  // Move past "--type="
+  type_switch += 7;
+
+  // Check for renderer process
+  if (strncmp(type_switch, "renderer", 8) == 0) {
+    return PROCESS_TYPE_RENDERER;
+  }
+
+  return PROCESS_TYPE_OTHER;
+}
 
 // Configure code signing requirements. For a code signing example see
 // https://github.com/chromiumembedded/cef/issues/3824#issuecomment-2892139995
@@ -117,14 +148,102 @@ int RunMain(HINSTANCE hInstance,
             int nCmdShow,
             void* sandbox_info,
             cef_version_info_t* version_info) {
+  // Get wide char command line and convert to UTF-8 (before CEF is loaded)
+  const wchar_t* raw_command_line_w = ::GetCommandLineW();
+  std::string raw_command_line_utf8 = WideStringToUtf8(raw_command_line_w);
+
+  // Determine process type from UTF-8 command line
+  SimpleProcessType simple_process_type = GetProcessTypeFromCommandLine(raw_command_line_utf8.c_str());
+
+  // Load hostfxr and initialize CLR before loading CEF
+  int r = 0;
+  int detailed_rc = 0;
+  const int max_attempts = 5;
+  const DWORD fixed_ms = 3000;
+  const DWORD delta_ms = 6000;
+
+  std::string exeLastDirName = GetExeLastDirName();
+  bool is_debug = (exeLastDirName == "cefclientdbg");
+  for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+    r = load_hostfxr(is_debug, detailed_rc);
+    if (r == 0) {
+      break;
+    }
+
+    // Log error without CEF logging (CEF not loaded yet)
+    wchar_t error_msg[512];
+    swprintf(error_msg, 512,
+             L"Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d",
+             r, detailed_rc, attempt, max_attempts, static_cast<int>(simple_process_type));
+    ::OutputDebugStringW(error_msg);
+
+    if (attempt < max_attempts) {
+      const DWORD delay_ms = fixed_ms + (::GetTickCount() % delta_ms);
+      ::Sleep(delay_ms);
+    }
+  }
+
+  if (r != 0) {
+    // Only show MessageBox in browser process to avoid crashes in sub-processes
+    if (simple_process_type == PROCESS_TYPE_BROWSER) {
+      // Use std::string for safer string handling
+      std::string msg = "CLR initialization failed after ";
+      msg += std::to_string(max_attempts);
+      msg += " attempts.\n\nReturn code: ";
+      msg += std::to_string(r);
+      msg += "\nDetailed error code: ";
+      msg += std::to_string(detailed_rc);
+      msg += " (0x";
+
+      char hex_buf[16];
+      snprintf(hex_buf, sizeof(hex_buf), "%08X", static_cast<unsigned int>(detailed_rc));
+      msg += hex_buf;
+      msg += ")\n\nPlease check .NET runtime installation and restart later.";
+
+      // Convert to wide char for MessageBox
+      int wide_size = ::MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, nullptr, 0);
+      if (wide_size > 0) {
+        std::wstring wide_msg(wide_size - 1, L'\0');
+        ::MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, &wide_msg[0], wide_size);
+        ::MessageBoxW(nullptr, wide_msg.c_str(), L"CLR Initialization Failed", MB_OK | MB_ICONERROR);
+      }
+    }
+    return 1;  // Exit with error code before CEF initialization
+  }
+
+  // Load .NET methods
+  r = load_dotnet_method(is_debug, detailed_rc);
+  if (r != 0) {
+    // Log error without CEF logging (CEF not loaded yet)
+    wchar_t error_msg[512];
+    swprintf(error_msg, 512,
+             L"Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d",
+             r, detailed_rc, static_cast<int>(simple_process_type));
+    ::OutputDebugStringW(error_msg);
+    return 1;
+  }
+
+  // Call on_init callback with UTF-8 strings
+  if (on_init_fptr) {
+    std::string exeDir = GetExeDir();
+    std::string lastDirName = GetExeLastDirName();
+    if (lastDirName == "cefclientdbg") {
+      exeDir += "/..";
+    }
+    on_init_fptr(raw_command_line_utf8.c_str(), exeDir.c_str(), static_cast<int>(simple_process_type));
+  }
+
+  // Now load CEF library after CLR initialization succeeded
   CefMainArgs main_args(hInstance);
 
   // Dynamically load the CEF library after code signing verification.
   CefScopedLibraryLoader library_loader;
   if (!VerifyCodeSigningAndLoad(library_loader, version_info)) {
     // The verification or load failed. We'll crash before reaching this line.
-    NOTREACHED();
-    return CEF_RESULT_CODE_KILLED;
+    if (simple_process_type == PROCESS_TYPE_BROWSER) {
+      ::MessageBoxW(nullptr, L"Failed to verify code signing or load libcef.dll", L"CEF Load Error", MB_OK | MB_ICONERROR);
+    }
+    return 1;
   }
 
   // The CEF library (libcef) is loaded at this point.
@@ -161,6 +280,12 @@ int RunMain(HINSTANCE hInstance,
 
   // Populate the settings based on command line arguments.
   context->PopulateSettings(&settings);
+
+  // Set log severity to INFO to enable all log levels (INFO, WARNING, ERROR, FATAL)
+  // By default, only WARNING and above are written to the log file
+  if (settings.log_severity == LOGSEVERITY_DEFAULT) {
+    settings.log_severity = LOGSEVERITY_INFO;
+  }
 
   // Set the ID for the ICON resource that will be loaded from the main
   // executable and used when creating default Chrome windows such as DevTools
@@ -227,7 +352,11 @@ CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE hInstance,
                                     int nCmdShow,
                                     void* sandbox_info,
                                     cef_version_info_t* version_info) {
-  return client::RunMain(hInstance, nCmdShow, sandbox_info, version_info);
+  int exit_code = client::RunMain(hInstance, nCmdShow, sandbox_info, version_info);
+  if (on_finalize_fptr) {
+    on_finalize_fptr();
+  }
+  return exit_code;
 }
 
 #else  // !defined(CEF_USE_BOOTSTRAP)
@@ -268,7 +397,11 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
   cef_version_info_t version_info = {};
   CEF_POPULATE_VERSION_INFO(&version_info);
 
-  return client::RunMain(hInstance, nCmdShow, sandbox_info, &version_info);
+  int exit_code = client::RunMain(hInstance, nCmdShow, sandbox_info, &version_info);
+  if (on_finalize_fptr) {
+    on_finalize_fptr();
+  }
+  return exit_code;
 }
 
 #endif  // !defined(CEF_USE_BOOTSTRAP)

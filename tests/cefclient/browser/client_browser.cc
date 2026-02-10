@@ -13,6 +13,8 @@
 #include "tests/cefclient/browser/main_context.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/shared/common/client_switches.h"
+#include "tests/shared/common/client_app.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 
 namespace client::browser {
 
@@ -59,6 +61,12 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     // Append Chromium command line parameters if touch events are enabled
     if (client::MainContext::Get()->TouchEventsEnabled()) {
       command_line->AppendSwitchWithValue("touch-events", "enabled");
+    }
+
+    // Call C# callback to allow DSL script to process command line
+    if (on_before_command_line_processing_fptr) {
+      int process_type = static_cast<int>(ClientApp::GetProcessType(command_line));
+      on_before_command_line_processing_fptr(process_type, command_line.get());
     }
   }
 

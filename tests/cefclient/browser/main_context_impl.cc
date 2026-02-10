@@ -188,6 +188,8 @@ bool MainContextImpl::UseDefaultPopup() {
 void MainContextImpl::PopulateSettings(CefSettings* settings) {
   client::ClientAppBrowser::PopulateSettings(command_line_, *settings);
 
+  // Set application-specific cache path to avoid process singleton conflicts
+  CefString(&settings->root_cache_path) = GetAppWorkingDirectory() + "cefclient_cache";
   CefString(&settings->cache_path) =
       command_line_->GetSwitchValue(switches::kCachePath);
 

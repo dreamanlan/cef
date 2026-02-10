@@ -11,6 +11,7 @@
 #include "include/cef_dom.h"
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_message_router.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 
 namespace client::renderer {
 
@@ -18,6 +19,90 @@ namespace {
 
 // Must match the value in client_handler.cc.
 const char kFocusedNodeChangedMessage[] = "ClientRenderer.FocusedNodeChanged";
+
+class JsBridgeV8Handler : public CefV8Handler {
+public:
+  bool Execute(const CefString& name,
+                CefRefPtr<CefV8Value> object,
+                const CefV8ValueList& arguments,
+                CefRefPtr<CefV8Value>& retval,
+                CefString& exception) override
+  {
+    if (name == "sendMessage") {
+      if (arguments.size() > 0 && arguments[0]->IsString()) {
+        std::string msg = arguments[0]->GetStringValue();
+
+        CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+        CefRefPtr<CefBrowser> browser = context->GetBrowser();
+        CefRefPtr<CefFrame> frame = context->GetFrame();
+
+        if (on_receive_js_message_fptr) {
+          size_t size = arguments.size();
+          std::vector<std::string> args_vec;
+          std::vector<const char*> args_ptrs;
+
+          for (size_t i = 1; i < size; i++) {
+            if (arguments[i]->IsString()) {
+              args_vec.push_back(arguments[i]->GetStringValue());
+            } else {
+              args_vec.push_back("");
+            }
+          }
+
+          for (const auto& arg : args_vec) {
+            args_ptrs.push_back(arg.c_str());
+          }
+
+          on_receive_js_message_fptr(msg.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), browser.get(), frame.get());
+          return true;
+        }
+      }
+    }
+    else if (name == "executeMetaDSL") {
+      CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+      CefRefPtr<CefBrowser> browser = context->GetBrowser();
+      CefRefPtr<CefFrame> frame = context->GetFrame();
+
+      if (on_execute_metadsl_fptr) {
+        size_t size = arguments.size();
+        std::vector<std::string> args_vec;
+        std::vector<const char*> args_ptrs;
+
+        for (size_t i = 0; i < size; i++) {
+          if (arguments[i]->IsString()) {
+            args_vec.push_back(arguments[i]->GetStringValue());
+          } else {
+            args_vec.push_back("");
+          }
+        }
+
+        for (const auto& arg : args_vec) {
+          args_ptrs.push_back(arg.c_str());
+        }
+
+        const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
+        std::vector<uint8_t> result_buffer(c_result_buffer_size);
+        int result_size = static_cast<int>(result_buffer.size());
+        bool success = on_execute_metadsl_fptr(args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
+
+        if (success && result_size > 0 && result_size < c_result_buffer_size) {
+          result_buffer[result_size] = '\0';
+          retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
+        } else {
+          retval = CefV8Value::CreateString("");
+          if (result_size >= c_result_buffer_size) {
+            printf_log(LOG_SEVERITY_ERROR, "executeMetaDSL failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
+          }
+        }
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  IMPLEMENT_REFCOUNTING(JsBridgeV8Handler);
+};
 
 class ClientRenderDelegate : public ClientAppRenderer::Delegate {
  public:
@@ -45,12 +130,29 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
                         CefRefPtr<CefFrame> frame,
                         CefRefPtr<CefV8Context> context) override {
     message_router_->OnContextCreated(browser, frame, context);
+
+    CefRefPtr<CefV8Value> global = context->GetGlobal();
+    CefRefPtr<JsBridgeV8Handler> handler = new JsBridgeV8Handler();
+
+    CefRefPtr<CefV8Value> func = CefV8Value::CreateFunction("sendMessage", handler);
+    global->SetValue("sendMessage", func, V8_PROPERTY_ATTRIBUTE_NONE);
+
+    CefRefPtr<CefV8Value> execFunc = CefV8Value::CreateFunction("executeMetaDSL", handler);
+    global->SetValue("executeMetaDSL", execFunc, V8_PROPERTY_ATTRIBUTE_NONE);
+
+    if (on_renderer_init_fptr) {
+      std::string url = frame->GetURL();
+      on_renderer_init_fptr(browser.get(), frame.get(), url.c_str());
+    }
   }
 
   void OnContextReleased(CefRefPtr<ClientAppRenderer> app,
                          CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefFrame> frame,
                          CefRefPtr<CefV8Context> context) override {
+    if (on_renderer_finalize_fptr) {
+      on_renderer_finalize_fptr(browser.get(), frame.get());
+    }
     message_router_->OnContextReleased(browser, frame, context);
   }
 
@@ -74,8 +176,30 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
                                 CefRefPtr<CefFrame> frame,
                                 CefProcessId source_process,
                                 CefRefPtr<CefProcessMessage> message) override {
-    return message_router_->OnProcessMessageReceived(browser, frame,
-                                                     source_process, message);
+    if(message_router_->OnProcessMessageReceived(browser, frame, source_process, message)){
+      return true;
+    }
+
+
+    if (on_receive_cef_message_fptr) {
+      std::string message_name = message->GetName();
+      size_t size = message->GetArgumentList()->GetSize();
+
+      std::vector<std::string> args_vec;
+      std::vector<const char*> args_ptrs;
+
+      for (size_t i = 0; i < size; i++) {
+        args_vec.push_back(message->GetArgumentList()->GetString(i).ToString());
+      }
+
+      for (const auto& arg : args_vec) {
+        args_ptrs.push_back(arg.c_str());
+      }
+
+      on_receive_cef_message_fptr(message_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), browser.get(), frame.get(), static_cast<int>(source_process));
+      return true;
+    }
+    return false;
   }
 
  private:

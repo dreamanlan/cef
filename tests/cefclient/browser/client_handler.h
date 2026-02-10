@@ -254,6 +254,16 @@ class ClientHandler : public BaseClientHandler,
                             bool canGoBack,
                             bool canGoForward) override;
 
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int httpStatusCode) override;
+
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString& errorText,
+                   const CefString& failedUrl) override;
+
   // CefPermissionHandler methods
   bool OnRequestMediaAccessPermission(
       CefRefPtr<CefBrowser> browser,
@@ -364,9 +374,8 @@ class ClientHandler : public BaseClientHandler,
   void NotifyTakeFocus(bool next);
 
   // Test context menu creation.
-  void BuildTestMenu(CefRefPtr<CefBrowser> browser,
-                     CefRefPtr<CefMenuModel> model);
-  bool ExecuteTestMenu(CefRefPtr<CefBrowser> browser, int command_id);
+  void BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefMenuModel> model);
+  bool ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command_id);
 
   void SetOfflineState(CefRefPtr<CefBrowser> browser, bool offline);
 
@@ -416,14 +425,13 @@ class ClientHandler : public BaseClientHandler,
   // UI THREAD MEMBERS
   // The following members will only be accessed on the CEF UI thread.
 
-  // Track state information for the test context menu.
-  struct TestMenuState {
-    TestMenuState() = default;
-    bool check_item = true;
-    int radio_item = 0;
+  // Track state information for the text context menu.
+  struct MyMenuState {
+    MyMenuState() = default;
+    bool inject_all_frame = false;
     int chrome_theme_mode_item = -1;
     int chrome_theme_color_item = -1;
-  } test_menu_state_;
+  } my_menu_state_;
 
   // Console logging state.
   const std::string console_log_file_;

@@ -35,11 +35,15 @@ class SimpleHandler : public CefClient,
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
   // CefLoadHandler methods:
-  void OnLoadError(CefRefPtr<CefBrowser> browser,
-                   CefRefPtr<CefFrame> frame,
-                   ErrorCode errorCode,
-                   const CefString& errorText,
-                   const CefString& failedUrl) override;
+  virtual void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    int httpStatusCode) override;
+
+  virtual void OnLoadError(CefRefPtr<CefBrowser> browser,
+                           CefRefPtr<CefFrame> frame,
+                           ErrorCode errorCode,
+                           const CefString& errorText,
+                           const CefString& failedUrl) override;
 
   void ShowMainWindow();
 

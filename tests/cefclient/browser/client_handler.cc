@@ -23,6 +23,7 @@
 #include "tests/cefclient/browser/main_context.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/browser/test_runner.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 #include "tests/shared/browser/resource_util.h"
 #include "tests/shared/common/binary_value_utils.h"
 #include "tests/shared/common/client_switches.h"
@@ -47,26 +48,21 @@ enum client_menu_ids {
   CLIENT_ID_CURSOR_CHANGE_DISABLED,
   CLIENT_ID_MEDIA_HANDLING_DISABLED,
   CLIENT_ID_OFFLINE,
-  CLIENT_ID_TESTMENU_SUBMENU,
-  CLIENT_ID_TESTMENU_CHECKITEM,
-  CLIENT_ID_TESTMENU_RADIOITEM1,
-  CLIENT_ID_TESTMENU_RADIOITEM2,
-  CLIENT_ID_TESTMENU_RADIOITEM3,
-
+  CLIENT_ID_INJECT_ALL_FRAME,
   // Chrome theme selection.
-  CLIENT_ID_TESTMENU_THEME,
-  CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM,
-  CLIENT_ID_TESTMENU_THEME_MODE_LIGHT,
-  CLIENT_ID_TESTMENU_THEME_MODE_DARK,
-  CLIENT_ID_TESTMENU_THEME_MODE_FIRST = CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM,
-  CLIENT_ID_TESTMENU_THEME_MODE_LAST = CLIENT_ID_TESTMENU_THEME_MODE_DARK,
-  CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT,
-  CLIENT_ID_TESTMENU_THEME_COLOR_RED,
-  CLIENT_ID_TESTMENU_THEME_COLOR_GREEN,
-  CLIENT_ID_TESTMENU_THEME_COLOR_BLUE,
-  CLIENT_ID_TESTMENU_THEME_COLOR_FIRST = CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT,
-  CLIENT_ID_TESTMENU_THEME_COLOR_LAST = CLIENT_ID_TESTMENU_THEME_COLOR_BLUE,
-  CLIENT_ID_TESTMENU_THEME_CUSTOM,
+  CLIENT_ID_THEME,
+  CLIENT_ID_THEME_MODE_SYSTEM,
+  CLIENT_ID_THEME_MODE_LIGHT,
+  CLIENT_ID_THEME_MODE_DARK,
+  CLIENT_ID_THEME_MODE_FIRST = CLIENT_ID_THEME_MODE_SYSTEM,
+  CLIENT_ID_THEME_MODE_LAST = CLIENT_ID_THEME_MODE_DARK,
+  CLIENT_ID_THEME_COLOR_DEFAULT,
+  CLIENT_ID_THEME_COLOR_RED,
+  CLIENT_ID_THEME_COLOR_GREEN,
+  CLIENT_ID_THEME_COLOR_BLUE,
+  CLIENT_ID_THEME_COLOR_FIRST = CLIENT_ID_THEME_COLOR_DEFAULT,
+  CLIENT_ID_THEME_COLOR_LAST = CLIENT_ID_THEME_COLOR_BLUE,
+  CLIENT_ID_THEME_CUSTOM,
 };
 
 // Constants for Chrome theme colors.
@@ -611,6 +607,23 @@ bool ClientHandler::OnProcessMessageReceived(
     return true;
   }
 
+  if (on_receive_cef_message_fptr) {
+    size_t size = message->GetArgumentList()->GetSize();
+    std::vector<std::string> args_vec;
+    std::vector<const char*> args_ptrs;
+
+    for (size_t i = 0; i < size; i++) {
+      args_vec.push_back(message->GetArgumentList()->GetString(i).ToString());
+    }
+
+    for (const auto& arg : args_vec) {
+      args_ptrs.push_back(arg.c_str());
+    }
+
+    on_receive_cef_message_fptr(message_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(size), browser.get(), frame.get(), static_cast<int>(source_process));
+    return true;
+  }
+
   return false;
 }
 
@@ -728,8 +741,8 @@ void ClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
       model->SetChecked(CLIENT_ID_OFFLINE, true);
     }
 
-    // Test context menu features.
-    BuildTestMenu(browser, model);
+    // Custom context menu features.
+    BuildCustomMenu(browser, model);
   }
 
   if (delegate_) {
@@ -768,7 +781,7 @@ bool ClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       SetOfflineState(browser, offline_);
       return true;
     default:  // Allow default handling, if any.
-      return ExecuteTestMenu(browser, command_id);
+      return ExecuteCustomMenu(browser, command_id);
   }
 }
 
@@ -998,6 +1011,11 @@ bool ClientHandler::OnBeforePopup(
     bool* no_javascript_access) {
   CEF_REQUIRE_UI_THREAD();
 
+  printf_log(LOG_SEVERITY_INFO,
+            "OnBeforePopup: source_browser=%d, popup_id=%d, url=%s, disposition=%d, user_gesture=%d",
+            browser->GetIdentifier(), popup_id, target_url.ToString().c_str(),
+            static_cast<int>(target_disposition), user_gesture ? 1 : 0);
+
   if (target_disposition == CEF_WOD_NEW_PICTURE_IN_PICTURE) {
     // Use default handling for document picture-in-picture popups.
     client = nullptr;
@@ -1029,6 +1047,10 @@ void ClientHandler::OnBeforeDevToolsPopup(
     bool* use_default_window) {
   CEF_REQUIRE_UI_THREAD();
 
+  printf_log(LOG_SEVERITY_INFO,
+            "OnBeforeDevToolsPopup: source_browser=%d",
+            browser->GetIdentifier());
+
   // Potentially create a new RootWindow for the DevTools popup browser that
   // will be created immediately after this method returns.
   if (!CreatePopupWindow(browser, /*popup_id=*/-1, /*is_devtools=*/true,
@@ -1053,6 +1075,10 @@ void ClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
 
   NotifyBrowserCreated(browser);
+
+  if (on_browser_init_fptr) {
+    on_browser_init_fptr(browser.get());
+  }
 }
 
 bool ClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
@@ -1068,6 +1094,12 @@ bool ClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
 void ClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
+  printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Browser %d closing", browser->GetIdentifier());
+
+  if (on_browser_finalize_fptr) {
+    printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Calling on_browser_finalize_fptr");
+    on_browser_finalize_fptr(browser.get());
+  }
   // Close all popups that have this browser as the opener.
   OnBeforePopupAborted(browser, /*popup_id=*/-1);
 
@@ -1085,6 +1117,107 @@ void ClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                                           canGoForward);
 
   NotifyLoadingState(isLoading, canGoBack, canGoForward);
+
+  printf_log(LOG_SEVERITY_INFO, "OnLoadingStateChange: Browser %d isLoading=%d canGoBack=%d canGoForward=%d", browser->GetIdentifier(), isLoading, canGoBack, canGoForward);
+
+  if (on_loading_state_change_fptr) {
+    CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+    std::string url_str;
+    if (frame) {
+      url_str = frame->GetURL();
+    }
+    on_loading_state_change_fptr(browser.get(), frame.get(), url_str.empty() ? "" : url_str.c_str(), isLoading, canGoBack, canGoForward);
+  }
+}
+
+void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
+  CefRefPtr<CefFrame> frame,
+  int httpStatusCode)
+{
+  printf_log(LOG_SEVERITY_INFO, "OnLoadEnd: Browser %d frame=%s httpStatusCode=%d inject_all_frame=%d isMain=%d", browser->GetIdentifier(), frame->GetURL().ToString().c_str(), httpStatusCode, my_menu_state_.inject_all_frame, frame->IsMain());
+
+  const int max_size = 4 * 1024 * 1024;
+  if (my_menu_state_.inject_all_frame || frame->IsMain()) {
+    char* buf = new char[max_size + 1];
+    memset(buf, 0, max_size + 1);
+
+    bool use_custom_code = false;
+    if (on_load_end_fptr) {
+      std::string url = frame->GetURL().ToString();
+      int code_size = max_size;
+      use_custom_code = on_load_end_fptr(browser.get(), frame.get(), url.c_str(), httpStatusCode, my_menu_state_.inject_all_frame, frame->IsMain(), buf, code_size);
+      if (use_custom_code && code_size > 0) {
+        buf[code_size] = '\0';
+      }
+    }
+
+    if (!use_custom_code) {
+      //std::string file = MainContext::Get()->GetAppWorkingDirectory() + "inject.js";
+      std::string exeDir = GetExeDir();
+      std::string lastDirName = GetExeLastDirName();
+      if (lastDirName == "cefclientdbg") {
+        exeDir += "/..";
+      }
+      std::string file = exeDir + "/inject.js";
+      FILE* fp = fopen(file.c_str(), "rb");
+      if (fp != NULL) {
+        fread(buf, 1, max_size, fp);
+        fclose(fp);
+      } else {
+        // Log error if file cannot be opened
+        std::string error_msg = "Failed to open inject.js from: " + file;
+        printf_log(LOG_SEVERITY_ERROR, "%s", error_msg.c_str());
+        delete[] buf;
+        return;
+      }
+    }
+
+    if (buf[0] != '\0') {
+      frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
+    }
+    delete[] buf;
+  }
+}
+
+std::string GetDataURI(const std::string& data, const std::string& mime_type) {
+  return "data:" + mime_type + ";base64," +
+         CefURIEncode(CefBase64Encode(data.data(), data.size()), false)
+             .ToString();
+}
+
+void ClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefFrame> frame,
+                                ErrorCode errorCode,
+                                const CefString& errorText,
+                                const CefString& failedUrl) {
+  CEF_REQUIRE_UI_THREAD();
+
+  // Don't display an error for downloaded files.
+  if (errorCode == ERR_ABORTED) {
+    return;
+  }
+
+  // Don't display an error for external protocols that we allow the OS to
+  // handle. See OnProtocolExecution().
+  if (errorCode == ERR_UNKNOWN_URL_SCHEME) {
+    std::string urlStr = frame->GetURL();
+    if (urlStr.find("spotify:") == 0) {
+      return;
+    }
+  }
+
+  // Display a load error message using a data: URI.
+  std::stringstream ss;
+  ss << "<html><body bgcolor=\"white\">"
+        "<h2>Failed to load URL "
+     << std::string(failedUrl) << " with error " << std::string(errorText)
+     << " (" << errorCode << ").</h2></body></html>";
+
+  frame->LoadURL(GetDataURI(ss.str(), "text/html"));
+
+  if (on_load_error_fptr) {
+    on_load_error_fptr(browser.get(), frame.get(), errorCode, errorText.ToString().c_str(), failedUrl.ToString().c_str());
+  }
 }
 
 bool ClientHandler::OnRequestMediaAccessPermission(
@@ -1221,17 +1354,22 @@ void ClientHandler::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
   BaseClientHandler::OnRenderProcessTerminated(browser, status, error_code,
                                                error_string);
 
-  LOG(ERROR) << "Render process terminated with status "
-             << test_runner::GetErrorString(status) << " ("
-             << error_string.ToString() << ")";
+  printf_log(LOG_SEVERITY_INFO,
+            "OnRenderProcessTerminated: Browser %d, status=%d, error_code=%d, error_string=%s",
+            browser->GetIdentifier(), static_cast<int>(status), error_code,
+            error_string.ToString().c_str());
+
+  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+  std::string url = frame ? frame->GetURL() : "";
+
+  if (on_render_process_terminated_fptr) {
+    on_render_process_terminated_fptr(browser.get(), frame.get(), startup_url_.c_str(), url.c_str(), static_cast<int>(status), error_code, error_string.ToString().c_str());
+  }
 
   // Don't reload if there's no start URL, or if the crash URL was specified.
   if (startup_url_.empty() || startup_url_ == "chrome://crash") {
     return;
   }
-
-  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
-  std::string url = frame->GetURL();
 
   // Don't reload if the termination occurred before any URL had successfully
   // loaded.
@@ -1533,45 +1671,34 @@ void ClientHandler::NotifyTakeFocus(bool next) {
   }
 }
 
-void ClientHandler::BuildTestMenu(CefRefPtr<CefBrowser> browser,
-                                  CefRefPtr<CefMenuModel> model) {
+void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefMenuModel> model) {
   if (model->GetCount() > 0) {
     model->AddSeparator();
   }
 
-  // Build the sub menu.
-  CefRefPtr<CefMenuModel> submenu =
-      model->AddSubMenu(CLIENT_ID_TESTMENU_SUBMENU, "Context Menu Test");
-  submenu->AddCheckItem(CLIENT_ID_TESTMENU_CHECKITEM, "Check Item");
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM1, "Radio Item 1", 0);
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM2, "Radio Item 2", 0);
-  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM3, "Radio Item 3", 0);
+  model->AddCheckItem(CLIENT_ID_INJECT_ALL_FRAME, "Inject All Frame");
 
   // Check the check item.
-  if (test_menu_state_.check_item) {
-    submenu->SetChecked(CLIENT_ID_TESTMENU_CHECKITEM, true);
+  if (my_menu_state_.inject_all_frame) {
+    model->SetChecked(CLIENT_ID_INJECT_ALL_FRAME, true);
   }
-
-  // Check the selected radio item.
-  submenu->SetChecked(
-      CLIENT_ID_TESTMENU_RADIOITEM1 + test_menu_state_.radio_item, true);
 
   // Build the theme sub menu.
   CefRefPtr<CefMenuModel> theme_menu =
-      model->AddSubMenu(CLIENT_ID_TESTMENU_THEME, "Theme");
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM, "System", 1);
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_LIGHT, "Light", 1);
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_DARK, "Dark", 1);
+      model->AddSubMenu(CLIENT_ID_THEME, "Theme");
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_SYSTEM, "System", 1);
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_LIGHT, "Light", 1);
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_DARK, "Dark", 1);
   theme_menu->AddSeparator();
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT, "Default",
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_DEFAULT, "Default",
                            2);
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_RED, "Red", 2);
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_GREEN, "Green", 2);
-  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_BLUE, "Blue", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_RED, "Red", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_GREEN, "Green", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_BLUE, "Blue", 2);
 
   if (!use_alloy_style_) {
     theme_menu->AddSeparator();
-    theme_menu->AddItem(CLIENT_ID_TESTMENU_THEME_CUSTOM, "Custom...");
+    theme_menu->AddItem(CLIENT_ID_THEME_CUSTOM, "Custom...");
   }
 
   auto request_context = browser->GetHost()->GetRequestContext();
@@ -1579,13 +1706,13 @@ void ClientHandler::BuildTestMenu(CefRefPtr<CefBrowser> browser,
   int checked_mode_item = -1;
   switch (request_context->GetChromeColorSchemeMode()) {
     case CEF_COLOR_VARIANT_SYSTEM:
-      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM;
+      checked_mode_item = CLIENT_ID_THEME_MODE_SYSTEM;
       break;
     case CEF_COLOR_VARIANT_LIGHT:
-      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_LIGHT;
+      checked_mode_item = CLIENT_ID_THEME_MODE_LIGHT;
       break;
     case CEF_COLOR_VARIANT_DARK:
-      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_DARK;
+      checked_mode_item = CLIENT_ID_THEME_MODE_DARK;
       break;
     default:
       NOTREACHED();
@@ -1595,13 +1722,13 @@ void ClientHandler::BuildTestMenu(CefRefPtr<CefBrowser> browser,
   int checked_color_item = -1;
   const cef_color_t color = request_context->GetChromeColorSchemeColor();
   if (color == kColorTransparent) {
-    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT;
+    checked_color_item = CLIENT_ID_THEME_COLOR_DEFAULT;
   } else if (color == kColorRed) {
-    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_RED;
+    checked_color_item = CLIENT_ID_THEME_COLOR_RED;
   } else if (color == kColorGreen) {
-    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_GREEN;
+    checked_color_item = CLIENT_ID_THEME_COLOR_GREEN;
   } else if (color == kColorBlue) {
-    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_BLUE;
+    checked_color_item = CLIENT_ID_THEME_COLOR_BLUE;
   }
 
   // Check the selected radio item, if any.
@@ -1609,62 +1736,56 @@ void ClientHandler::BuildTestMenu(CefRefPtr<CefBrowser> browser,
     theme_menu->SetChecked(checked_mode_item, true);
 
     // Update the selected item.
-    test_menu_state_.chrome_theme_mode_item =
-        checked_mode_item - CLIENT_ID_TESTMENU_THEME_MODE_FIRST;
+    my_menu_state_.chrome_theme_mode_item =
+        checked_mode_item - CLIENT_ID_THEME_MODE_FIRST;
   }
   if (checked_color_item != -1) {
     theme_menu->SetChecked(checked_color_item, true);
 
     // Update the selected item.
-    test_menu_state_.chrome_theme_color_item =
-        checked_color_item - CLIENT_ID_TESTMENU_THEME_COLOR_FIRST;
+    my_menu_state_.chrome_theme_color_item =
+        checked_color_item - CLIENT_ID_THEME_COLOR_FIRST;
   }
 }
 
-bool ClientHandler::ExecuteTestMenu(CefRefPtr<CefBrowser> browser,
-                                    int command_id) {
-  if (command_id == CLIENT_ID_TESTMENU_CHECKITEM) {
+bool ClientHandler::ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command_id) {
+  if (command_id == CLIENT_ID_INJECT_ALL_FRAME) {
     // Toggle the check item.
-    test_menu_state_.check_item ^= 1;
+    my_menu_state_.inject_all_frame = !my_menu_state_.inject_all_frame;
     return true;
-  } else if (command_id >= CLIENT_ID_TESTMENU_RADIOITEM1 &&
-             command_id <= CLIENT_ID_TESTMENU_RADIOITEM3) {
-    // Store the selected radio item.
-    test_menu_state_.radio_item = (command_id - CLIENT_ID_TESTMENU_RADIOITEM1);
-    return true;
-  } else if (command_id >= CLIENT_ID_TESTMENU_THEME_MODE_FIRST &&
-             command_id <= CLIENT_ID_TESTMENU_THEME_COLOR_LAST) {
-    int selected_mode_item = test_menu_state_.chrome_theme_mode_item;
-    if (command_id >= CLIENT_ID_TESTMENU_THEME_MODE_FIRST &&
-        command_id <= CLIENT_ID_TESTMENU_THEME_MODE_LAST) {
-      selected_mode_item = command_id - CLIENT_ID_TESTMENU_THEME_MODE_FIRST;
-      if (selected_mode_item != test_menu_state_.chrome_theme_mode_item) {
+  } else if (command_id >= CLIENT_ID_THEME_MODE_FIRST &&
+             command_id <= CLIENT_ID_THEME_COLOR_LAST) {
+    int selected_mode_item = my_menu_state_.chrome_theme_mode_item;
+    if (command_id >= CLIENT_ID_THEME_MODE_FIRST &&
+        command_id <= CLIENT_ID_THEME_MODE_LAST) {
+      selected_mode_item = command_id - CLIENT_ID_THEME_MODE_FIRST;
+      if (selected_mode_item != my_menu_state_.chrome_theme_mode_item) {
         // Update the selected item.
-        test_menu_state_.chrome_theme_mode_item = selected_mode_item;
+        my_menu_state_.chrome_theme_mode_item = selected_mode_item;
       }
     }
 
-    int selected_color_item = test_menu_state_.chrome_theme_color_item;
-    if (command_id >= CLIENT_ID_TESTMENU_THEME_COLOR_FIRST &&
-        command_id <= CLIENT_ID_TESTMENU_THEME_COLOR_LAST) {
-      selected_color_item = command_id - CLIENT_ID_TESTMENU_THEME_COLOR_FIRST;
-      if (selected_color_item != test_menu_state_.chrome_theme_color_item) {
+    int selected_color_item = my_menu_state_.chrome_theme_color_item;
+    if (command_id >= CLIENT_ID_THEME_COLOR_FIRST &&
+        command_id <= CLIENT_ID_THEME_COLOR_LAST) {
+      selected_color_item = command_id - CLIENT_ID_THEME_COLOR_FIRST;
+      if (selected_color_item != my_menu_state_.chrome_theme_color_item) {
         // Udpate the selected item.
-        test_menu_state_.chrome_theme_color_item = selected_color_item;
+        my_menu_state_.chrome_theme_color_item = selected_color_item;
       }
     }
 
     // Don't change the color mode unless a selection has been made.
     cef_color_variant_t variant = CEF_COLOR_VARIANT_TONAL_SPOT;
     if (selected_mode_item != -1) {
-      switch (CLIENT_ID_TESTMENU_THEME_MODE_FIRST + selected_mode_item) {
-        case CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM:
+      switch (CLIENT_ID_THEME_MODE_FIRST + selected_mode_item) {
+        case CLIENT_ID_THEME_MODE_SYSTEM:
           variant = CEF_COLOR_VARIANT_SYSTEM;
           break;
-        case CLIENT_ID_TESTMENU_THEME_MODE_LIGHT:
+        case CLIENT_ID_THEME_MODE_LIGHT:
           variant = CEF_COLOR_VARIANT_LIGHT;
           break;
-        case CLIENT_ID_TESTMENU_THEME_MODE_DARK:
+        case CLIENT_ID_THEME_MODE_DARK:
           variant = CEF_COLOR_VARIANT_DARK;
           break;
         default:
@@ -1675,14 +1796,14 @@ bool ClientHandler::ExecuteTestMenu(CefRefPtr<CefBrowser> browser,
     // Don't change the user color unless a selection has been made.
     cef_color_t color = kColorTransparent;
     if (selected_color_item != -1) {
-      switch (CLIENT_ID_TESTMENU_THEME_COLOR_FIRST + selected_color_item) {
-        case CLIENT_ID_TESTMENU_THEME_COLOR_RED:
+      switch (CLIENT_ID_THEME_COLOR_FIRST + selected_color_item) {
+        case CLIENT_ID_THEME_COLOR_RED:
           color = kColorRed;
           break;
-        case CLIENT_ID_TESTMENU_THEME_COLOR_GREEN:
+        case CLIENT_ID_THEME_COLOR_GREEN:
           color = kColorGreen;
           break;
-        case CLIENT_ID_TESTMENU_THEME_COLOR_BLUE:
+        case CLIENT_ID_THEME_COLOR_BLUE:
           color = kColorBlue;
           break;
         default:
@@ -1693,7 +1814,7 @@ bool ClientHandler::ExecuteTestMenu(CefRefPtr<CefBrowser> browser,
     browser->GetHost()->GetRequestContext()->SetChromeColorScheme(variant,
                                                                   color);
     return true;
-  } else if (command_id == CLIENT_ID_TESTMENU_THEME_CUSTOM) {
+  } else if (command_id == CLIENT_ID_THEME_CUSTOM) {
     browser->GetMainFrame()->LoadURL("chrome://settings/manageProfile");
     return true;
   }

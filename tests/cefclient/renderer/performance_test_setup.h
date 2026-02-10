@@ -19,7 +19,7 @@ extern const int kDefaultIterations;
 
 // Entry in test array.
 #define PERF_TEST_ENTRY_EX(name, iterations) \
-  { #name, PERF_TEST_NAME(name), iterations }
+  {#name, PERF_TEST_NAME(name), iterations}
 #define PERF_TEST_ENTRY(name) PERF_TEST_ENTRY_EX(name, kDefaultIterations)
 
 // Test function declaration.

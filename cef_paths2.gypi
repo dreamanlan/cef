@@ -267,6 +267,8 @@
       'tests/cefclient/browser/dialog_test.h',
       'tests/cefclient/browser/hang_test.cc',
       'tests/cefclient/browser/hang_test.h',
+      'tests/cefclient/browser/cef_query_handler.cc',
+      'tests/cefclient/browser/cef_query_handler.h',
       'tests/cefclient/browser/image_cache.cc',
       'tests/cefclient/browser/image_cache.h',
       'tests/cefclient/browser/main_context.cc',
@@ -323,6 +325,10 @@
       'tests/cefclient/common/client_app_delegates_common.cc',
       'tests/cefclient/common/scheme_test_common.cc',
       'tests/cefclient/common/scheme_test_common.h',
+      'tests/cefclient/hostclr/HostCLR.cpp',
+      'tests/cefclient/hostclr/HostCLR.h',
+      'tests/cefclient/hostclr/path_utils.cpp',
+      'tests/cefclient/hostclr/path_utils.h',
     ],
     'cefclient_sources_renderer': [
       'tests/cefclient/renderer/client_app_delegates_renderer.cc',
@@ -464,6 +470,8 @@
       'tests/cefsimple/simple_app.h',
       'tests/cefsimple/simple_handler.cc',
       'tests/cefsimple/simple_handler.h',
+      'tests/cefclient/hostclr/path_utils.cpp',
+      'tests/cefclient/hostclr/path_utils.h',
     ],
     'cefsimple_sources_win': [
       'tests/cefsimple/cefsimple_win.cc',

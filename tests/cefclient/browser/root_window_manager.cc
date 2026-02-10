@@ -5,9 +5,12 @@
 #include "tests/cefclient/browser/root_window_manager.h"
 
 #include <sstream>
+#include <windows.h>
+#include <tlhelp32.h>
 
 #include "include/base/cef_callback.h"
 #include "include/base/cef_logging.h"
+#include "include/cef_task_manager.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
 #include "tests/cefclient/browser/default_client_handler.h"
@@ -16,6 +19,7 @@
 #include "tests/shared/browser/file_util.h"
 #include "tests/shared/browser/resource_util.h"
 #include "tests/shared/common/client_switches.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 
 namespace client {
 
@@ -227,6 +231,9 @@ void RootWindowManager::OtherBrowserCreated(int browser_id,
   }
 
   other_browser_ct_++;
+  printf_log(LOG_SEVERITY_INFO,
+            "RootWindowManager: Other browser created, count = %d",
+            other_browser_ct_);
 
   // Track ownership of popup browsers that don't have a RootWindow.
   if (opener_browser_id > 0) {
@@ -246,6 +253,9 @@ void RootWindowManager::OtherBrowserClosed(int browser_id,
 
   DCHECK_GT(other_browser_ct_, 0);
   other_browser_ct_--;
+  printf_log(LOG_SEVERITY_INFO,
+            "RootWindowManager: Other browser closed, count = %d",
+            other_browser_ct_);
 
   // Track ownership of popup browsers that don't have a RootWindow.
   if (opener_browser_id > 0) {
@@ -443,11 +453,283 @@ void RootWindowManager::OnRootWindowActivated(RootWindow* root_window) {
 
 void RootWindowManager::MaybeCleanup() {
   REQUIRE_MAIN_THREAD();
-  if (terminate_when_all_windows_closed_ && root_windows_.empty() &&
-      other_browser_ct_ == 0) {
+
+  printf_log(LOG_SEVERITY_INFO, "MaybeCleanup called: terminate_when_all_windows_closed_=%d, disable_termination_=%d, root_windows_.empty()=%d, other_browser_ct_=%d",
+            terminate_when_all_windows_closed_, disable_termination_, root_windows_.empty(), other_browser_ct_);
+  if (terminate_when_all_windows_closed_ && !disable_termination_ &&
+      root_windows_.empty() && other_browser_ct_ == 0) {
     // All windows and browsers have closed. Clean up on the UI thread.
+    printf_log(LOG_SEVERITY_INFO, "MaybeCleanup: Triggering cleanup");
     CefPostTask(TID_UI, base::BindOnce(&RootWindowManager::CleanupOnUIThread,
                                        base::Unretained(this)));
+  } else {
+    printf_log(LOG_SEVERITY_INFO, "MaybeCleanup: Cleanup not triggered");
+  }
+}
+
+void RootWindowManager::SetDisableTermination(bool disable) {
+  if (!CURRENTLY_ON_MAIN_THREAD()) {
+    // Execute this method on the main thread.
+    MAIN_POST_CLOSURE(base::BindOnce(&RootWindowManager::SetDisableTermination,
+                                     base::Unretained(this), disable));
+    return;
+  }
+  SetDisableTerminationInternal(disable);
+}
+
+void RootWindowManager::SetDisableTerminationInternal(bool disable) {
+  disable_termination_ = disable;
+  printf_log(LOG_SEVERITY_INFO, "SetDisableTerminationInternal: disable_termination_ = %s", disable ? "true" : "false");
+}
+
+void RootWindowManager::ExecuteHotReload(
+    const std::string& url,
+    const std::vector<cef_query_handler::FileCopyInfo>& files,
+    base::OnceCallback<void()> copy_callback,
+    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+    bool custom_process_killer) {
+  if (!CURRENTLY_ON_MAIN_THREAD()) {
+    // Execute this method on the main thread.
+    MAIN_POST_CLOSURE(base::BindOnce(&RootWindowManager::ExecuteHotReload,
+                                     base::Unretained(this), url, files,
+                                     std::move(copy_callback),
+                                     std::move(completion_callback),
+                                     custom_process_killer));
+    return;
+  }
+  CEF_REQUIRE_UI_THREAD();
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Starting hot reload flow...");
+
+  // Step 1: Disable termination
+  SetDisableTerminationInternal(true);
+
+  // Step 2: Close all windows
+  if (!root_windows_.empty()) {
+    printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Closing %zu windows...",
+              root_windows_.size());
+    RootWindowSet root_windows = root_windows_;
+    for (auto root_window : root_windows) {
+      root_window->Close(true);
+    }
+  }
+
+  printf_log(LOG_SEVERITY_INFO,
+            "ExecuteHotReload: All windows closed, root_windows_.empty()=%d, other_browser_ct_=%d, custom_process_killer=%s, files count=%zu",
+            root_windows_.empty(), other_browser_ct_,
+            custom_process_killer ? "true" : "false", files.size());
+
+  // Step 3: Wait for all renderer processes to terminate, then copy files
+  // Instead of a fixed delay, we'll poll and wait for renderer processes to exit
+  const int kPollIntervalMs = 200;
+  const int kMaxWaitTimeMs = 10000; // Maximum 10 seconds wait
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce(&RootWindowManager::TerminateRendererProcessesAndCopy,
+                     base::Unretained(this), url, files, std::move(copy_callback),
+                     std::move(completion_callback), 0,
+                     kPollIntervalMs, kMaxWaitTimeMs, custom_process_killer),
+      kPollIntervalMs * (custom_process_killer ? 5 : 1));
+}
+
+void RootWindowManager::TerminateRendererProcessesAndCopy(
+    const std::string& url,
+    const std::vector<cef_query_handler::FileCopyInfo>& files,
+    base::OnceCallback<void()> copy_callback,
+    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+    int elapsed_ms,
+    int poll_interval_ms,
+    int max_wait_time_ms,
+    bool custom_process_killer) {
+  CEF_REQUIRE_UI_THREAD();
+
+  printf_log(LOG_SEVERITY_INFO,
+            "TerminateRendererProcessesAndCopy: other_browser_ct_=%d, elapsed=%dms",
+            other_browser_ct_, elapsed_ms);
+
+  // First, count renderer processes
+  int renderer_count = 0;
+  if (custom_process_killer) {
+    renderer_count = CountRenderProcess();
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: CountRenderProcess returned %d",
+              renderer_count);
+  } else {
+    renderer_count = CefCountRenderProcess();
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: CefCountRenderProcess returned %d",
+              renderer_count);
+  }
+
+  if (renderer_count < 0) {
+    printf_log(LOG_SEVERITY_ERROR,
+              "TerminateRendererProcessesAndCopy: Failed to count renderer processes, proceeding with copy");
+    CheckFileLockAndCopy(url, files, std::move(copy_callback),
+                         std::move(completion_callback), 0, poll_interval_ms,
+                         max_wait_time_ms);
+    return;
+  }
+
+  // If no renderer processes, proceed with copy
+  if (renderer_count == 0) {
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: No renderer processes found, proceeding with copy");
+    CheckFileLockAndCopy(url, files, std::move(copy_callback),
+                         std::move(completion_callback), 0, poll_interval_ms,
+                         max_wait_time_ms);
+    return;
+  }
+
+  // Terminate renderer processes
+  int terminated_count = 0;
+  if (custom_process_killer) {
+    terminated_count = TerminateRenderProcess();
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: Terminated %d/%d renderer process(es)",
+              terminated_count, renderer_count);
+  } else {
+    terminated_count = CefTerminateRenderProcess();
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: CefTerminateRenderProcess terminated %d/%d renderer process(es)",
+              terminated_count, renderer_count);
+  }
+
+  // Check if termination was successful
+  if (terminated_count == 0 && renderer_count > 0) {
+    printf_log(LOG_SEVERITY_WARNING,
+              "TerminateRendererProcessesAndCopy: Failed to terminate any renderer processes, looping back");
+  } else {
+    printf_log(LOG_SEVERITY_INFO,
+              "TerminateRendererProcessesAndCopy: Looping back to check renderer process count again");
+  }
+
+  // Loop back to count again
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce(&RootWindowManager::TerminateRendererProcessesAndCopy,
+                     base::Unretained(this), url, files, std::move(copy_callback),
+                     std::move(completion_callback), elapsed_ms + poll_interval_ms,
+                     poll_interval_ms, max_wait_time_ms, custom_process_killer),
+      poll_interval_ms);
+}
+
+void RootWindowManager::CheckFileLockAndCopy(
+    const std::string& url,
+    const std::vector<cef_query_handler::FileCopyInfo>& files,
+    base::OnceCallback<void()> copy_callback,
+    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+    int elapsed_ms,
+    int poll_interval_ms,
+    int max_wait_time_ms) {
+  CEF_REQUIRE_UI_THREAD();
+
+  // Try to detect if any destination file is still locked
+  // This is a best-effort detection on Windows by attempting to open with exclusive access
+  bool is_locked = false;
+  std::string locked_file;
+
+#ifdef _WIN32
+  for (const auto& file : files) {
+    HANDLE hFile = CreateFileA(file.dest.c_str(),
+                               GENERIC_READ,
+                               0,  // No sharing, exclusive access
+                               NULL,
+                               OPEN_EXISTING,
+                               FILE_ATTRIBUTE_NORMAL,
+                               NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+      DWORD error = GetLastError();
+      if (error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION) {
+        is_locked = true;
+        locked_file = file.dest;
+        printf_log(LOG_SEVERITY_INFO,
+                  "CheckFileLockAndCopy: File %s is locked (error=%d)",
+                  file.dest.c_str(), error);
+        break;
+      } else {
+        // File doesn't exist or other error, not a lock issue
+        printf_log(LOG_SEVERITY_INFO,
+                  "CheckFileLockAndCopy: Cannot open file %s (error=%d), not a lock issue",
+                  file.dest.c_str(), error);
+      }
+    } else {
+      // File is not locked, close the handle
+      CloseHandle(hFile);
+      printf_log(LOG_SEVERITY_INFO,
+                "CheckFileLockAndCopy: File %s is not locked",
+                file.dest.c_str());
+    }
+  }
+#else
+  // On non-Windows platforms, assume not locked
+  printf_log(LOG_SEVERITY_INFO,
+            "CheckFileLockAndCopy: File lock detection not supported on this platform");
+#endif
+
+  if (!is_locked) {
+    // All files are not locked, proceed with copy
+    printf_log(LOG_SEVERITY_INFO,
+              "CheckFileLockAndCopy: All files are not locked, proceeding with file copy");
+    OnCopyFilesAndCreateWindow(url, files, std::move(copy_callback),
+                               std::move(completion_callback));
+  } else if (elapsed_ms < max_wait_time_ms) {
+    // Some file is locked, wait and retry
+    printf_log(LOG_SEVERITY_INFO,
+              "CheckFileLockAndCopy: File %s is locked, will check again in %dms (elapsed=%dms)",
+              locked_file.c_str(), poll_interval_ms, elapsed_ms);
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(&RootWindowManager::CheckFileLockAndCopy,
+                       base::Unretained(this), url, files, std::move(copy_callback),
+                       std::move(completion_callback), elapsed_ms + poll_interval_ms,
+                       poll_interval_ms, max_wait_time_ms),
+        poll_interval_ms);
+  } else {
+    // Timeout waiting for file unlock, but proceed anyway
+    printf_log(LOG_SEVERITY_ERROR,
+              "CheckFileLockAndCopy: Timeout waiting for file unlock (file=%s, waited %dms), proceeding with copy anyway",
+              locked_file.c_str(), max_wait_time_ms);
+    OnCopyFilesAndCreateWindow(url, files, std::move(copy_callback),
+                               std::move(completion_callback));
+  }
+}
+
+void RootWindowManager::OnCopyFilesAndCreateWindow(
+    const std::string& url,
+    const std::vector<cef_query_handler::FileCopyInfo>& files,
+    base::OnceCallback<void()> copy_callback,
+    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Copying files...");
+
+  // Execute the copy callback
+  if (copy_callback) {
+    std::move(copy_callback).Run();
+  }
+
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Creating new window...");
+
+  // Create new window
+  auto config = std::make_unique<RootWindowConfig>();
+  config->with_controls = true;
+  config->with_osr = false;
+  config->url = url;
+
+  scoped_refptr<RootWindow> root_window = CreateRootWindow(std::move(config));
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: New window created with URL: %s",
+            (url.empty() ? "[default]" : url.c_str()));
+
+  // Step 4: Re-enable termination
+  SetDisableTerminationInternal(false);
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
+
+  // Step 5: Call completion callback
+  if (completion_callback && root_window.get()) {
+    // Delay to ensure browser is fully initialized
+    const int kReloadDelayMs = 500;
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(std::move(completion_callback), root_window),
+        kReloadDelayMs);
   }
 }
 
@@ -465,6 +747,130 @@ void RootWindowManager::CleanupOnUIThread() {
 
   // Quit the main message loop.
   MainMessageLoop::Get()->Quit();
+}
+
+// Count renderer processes using CefTaskManager
+// Returns the number of renderer processes, or -1 on error
+// NOTE: Must be called on UI thread
+int RootWindowManager::CefCountRenderProcess() {
+  CEF_REQUIRE_UI_THREAD();
+
+  int renderer_count = 0;
+
+  // Get the global task manager (nullptr if not on UI thread)
+  CefRefPtr<CefTaskManager> task_manager = CefTaskManager::GetTaskManager();
+  if (!task_manager) {
+    printf_log(LOG_SEVERITY_ERROR,
+               "CefCountRenderProcess: Failed to get task manager (must be on UI thread)");
+    return -1;
+  }
+
+  // Get all task IDs
+  CefTaskManager::TaskIdList task_ids;
+  if (!task_manager->GetTaskIdsList(task_ids)) {
+    printf_log(LOG_SEVERITY_ERROR,
+               "CefCountRenderProcess: Failed to get task ID list");
+    return -1;
+  }
+
+  // Count renderer processes
+  for (const auto& task_id : task_ids) {
+    CefTaskInfo task_info;
+
+    if (!task_manager->GetTaskInfo(task_id, task_info)) {
+      continue;
+    }
+
+    // Check if this is a renderer process
+    if (task_info.type == CEF_TASK_TYPE_RENDERER) {
+      printf_log(LOG_SEVERITY_INFO,
+                 "CefCountRenderProcess: Found renderer process task_id=%lld, title='%s', is_killable=%d, memory=%lld",
+                 task_info.id,
+                 CefString(&task_info.title).ToString().c_str(),
+                 task_info.is_killable,
+                 task_info.memory);
+
+      // Only count killable renderer processes
+      if (task_info.is_killable) {
+        renderer_count++;
+      }
+    }
+  }
+
+  printf_log(LOG_SEVERITY_INFO,
+             "CefCountRenderProcess: Found %d killable renderer process(es)",
+             renderer_count);
+
+  return renderer_count;
+}
+
+// Terminate renderer processes using CefTaskManager
+// Returns the number of terminated renderer processes, or -1 on error
+// NOTE: Must be called on UI thread
+int RootWindowManager::CefTerminateRenderProcess() {
+  CEF_REQUIRE_UI_THREAD();
+
+  int terminated_count = 0;
+
+  // Get the global task manager (nullptr if not on UI thread)
+  CefRefPtr<CefTaskManager> task_manager = CefTaskManager::GetTaskManager();
+  if (!task_manager) {
+    printf_log(LOG_SEVERITY_ERROR,
+               "CefTerminateRenderProcess: Failed to get task manager (must be on UI thread)");
+    return -1;
+  }
+
+  // Get all task IDs
+  CefTaskManager::TaskIdList task_ids;
+  if (!task_manager->GetTaskIdsList(task_ids)) {
+    printf_log(LOG_SEVERITY_ERROR,
+               "CefTerminateRenderProcess: Failed to get task ID list");
+    return -1;
+  }
+
+  // Find and terminate renderer processes
+  for (const auto& task_id : task_ids) {
+    CefTaskInfo task_info;
+
+    if (!task_manager->GetTaskInfo(task_id, task_info)) {
+      continue;
+    }
+
+    // Check if this is a renderer process
+    if (task_info.type == CEF_TASK_TYPE_RENDERER) {
+      printf_log(LOG_SEVERITY_INFO,
+                 "CefTerminateRenderProcess: Checking renderer process task_id=%lld, title='%s', is_killable=%d",
+                 task_info.id,
+                 CefString(&task_info.title).ToString().c_str(),
+                 task_info.is_killable);
+
+      // Only try to kill processes that are marked as killable
+      if (!task_info.is_killable) {
+        printf_log(LOG_SEVERITY_WARNING,
+                   "CefTerminateRenderProcess: Skipping task_id=%lld - not killable",
+                   task_info.id);
+        continue;
+      }
+
+      printf_log(LOG_SEVERITY_INFO,
+                 "CefTerminateRenderProcess: Terminating renderer process TaskId=%llu", task_id);
+
+      // Kill the task (renderer process)
+      if (task_manager->KillTask(task_id)) {
+        terminated_count++;
+        printf_log(LOG_SEVERITY_INFO,
+                   "CefTerminateRenderProcess: Successfully terminated renderer process task_id=%d", task_id);
+      } else {
+        printf_log(LOG_SEVERITY_ERROR,
+                   "CefTerminateRenderProcess: Failed to terminate renderer process task_id=%d (KillTask returned false)", task_id);
+      }
+    }
+  }
+
+  printf_log(LOG_SEVERITY_INFO,
+             "CefTerminateRenderProcess: Terminated %d renderer process(es)", terminated_count);
+
+  return terminated_count;
 }
 
 }  // namespace client

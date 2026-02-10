@@ -9,6 +9,8 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <cstring>
+#include <cstdlib>
 
 #include <memory>
 #include <string>
@@ -20,6 +22,7 @@
 #include "tests/cefclient/browser/main_context_impl.h"
 #include "tests/cefclient/browser/main_message_loop_multithreaded_gtk.h"
 #include "tests/cefclient/browser/test_runner.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 #include "tests/shared/browser/client_app_browser.h"
 #include "tests/shared/browser/main_message_loop_external_pump.h"
 #include "tests/shared/browser/main_message_loop_std.h"
@@ -50,6 +53,84 @@ void TerminationSignalHandler(int signatl) {
 
 NO_STACK_PROTECTOR
 int RunMain(int argc, char* argv[]) {
+  // Get command line as UTF-8 string (before CEF is loaded)
+  std::string raw_command_line_utf8;
+  for (int i = 0; i < argc; ++i) {
+    if (i > 0) {
+      raw_command_line_utf8 += " ";
+    }
+    raw_command_line_utf8 += argv[i];
+  }
+
+  // Determine process type from command line
+  int process_type = 0;  // 0 = browser, 1 = renderer, 2 = other
+  for (int i = 1; i < argc; ++i) {
+    if (strncmp(argv[i], "--type=", 7) == 0) {
+      const char* type_value = argv[i] + 7;
+      if (strncmp(type_value, "renderer", 8) == 0) {
+        process_type = 1;
+      } else {
+        process_type = 2;
+      }
+      break;
+    }
+  }
+
+  // Load hostfxr and initialize CLR before loading CEF
+  int r = 0;
+  int detailed_rc = 0;
+  const int max_attempts = 5;
+  const unsigned int fixed_ms = 3000;
+  const unsigned int delta_ms = 6000;
+
+  std::string exeLastDirName = GetExeLastDirName();
+  bool is_debug = (exeLastDirName == "cefclientdbg");
+  for (int attempt = 1; attempt <= max_attempts; ++attempt) {
+    r = load_hostfxr(is_debug, detailed_rc);
+    if (r == 0) {
+      break;
+    }
+
+    // Log error without CEF logging (CEF not loaded yet)
+    fprintf(stderr, "Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d\n",
+            r, detailed_rc, attempt, max_attempts, process_type);
+
+    if (attempt < max_attempts) {
+      const unsigned int delay_ms = fixed_ms + (rand() % delta_ms);
+      usleep(delay_ms * 1000);  // usleep takes microseconds
+    }
+  }
+
+  if (r != 0) {
+    // Only show error in browser process to avoid crashes in sub-processes
+    if (process_type == 0) {
+      fprintf(stderr, "CLR initialization failed after %d attempts.\n"
+                      "Return code: %d\nDetailed error code: %d (0x%08X)\n"
+                      "Please check .NET runtime installation and restart later.\n",
+              max_attempts, r, detailed_rc, static_cast<unsigned int>(detailed_rc));
+    }
+    return 1;  // Exit with error code before CEF initialization
+  }
+
+  // Load .NET methods
+  r = load_dotnet_method(is_debug, detailed_rc);
+  if (r != 0) {
+    // Log error without CEF logging (CEF not loaded yet)
+    fprintf(stderr, "Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d\n",
+            r, detailed_rc, process_type);
+    return 1;
+  }
+
+  // Call on_init callback with UTF-8 strings
+  if (on_init_fptr) {
+    std::string exeDir = GetExeDir();
+    std::string lastDirName = GetExeLastDirName();
+    if (lastDirName == "cefclientdbg") {
+      exeDir += "/..";
+    }
+    on_init_fptr(raw_command_line_utf8.c_str(), exeDir.c_str(), process_type);
+  }
+
   // Create a copy of |argv| on Linux because Chromium mangles the value
   // internally (see issue #620).
   CefScopedArgArray scoped_arg_array(argc, argv);
@@ -151,6 +232,11 @@ int RunMain(int argc, char* argv[]) {
   // Release objects in reverse order of creation.
   message_loop.reset();
   context.reset();
+
+  // Call on_finalize callback
+  if (on_finalize_fptr) {
+    on_finalize_fptr();
+  }
 
   return result;
 }

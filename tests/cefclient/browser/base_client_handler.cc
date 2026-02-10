@@ -7,6 +7,7 @@
 #include "include/cef_command_line.h"
 #include "tests/cefclient/browser/main_context.h"
 #include "tests/cefclient/browser/root_window_manager.h"
+#include "tests/cefclient/hostclr/HostCLR.h"
 #include "tests/shared/common/client_switches.h"
 
 namespace client {
@@ -47,6 +48,13 @@ void BaseClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
   browser_count_++;
+
+  int opener_id = browser->GetHost()->GetOpenerIdentifier();
+  const char* browser_type = (opener_id >= 0) ? "POPUP" : "MAIN";
+
+  printf_log(LOG_SEVERITY_INFO,
+            "OnAfterCreated: Browser %d created, browser_count_=%d, type=%s, opener_id=%d",
+            browser->GetIdentifier(), browser_count_, browser_type, opener_id);
 
   if (!message_router_) {
     // Create the browser-side router for query handling.
@@ -128,6 +136,13 @@ void BaseClientHandler::OnRenderProcessTerminated(
     int error_code,
     const CefString& error_string) {
   CEF_REQUIRE_UI_THREAD();
+
+  printf_log(LOG_SEVERITY_INFO,
+            "OnRenderProcessTerminated: Browser %d, status=%d, error_code=%d, "
+            "error_string=%s",
+            browser->GetIdentifier(), static_cast<int>(status), error_code,
+            error_string.ToString().c_str());
+
   message_router_->OnRenderProcessTerminated(browser);
 }
 
