@@ -545,6 +545,19 @@ namespace client {
 namespace {
 
 int RunMain(int argc, char* argv[]) {
+  // Initialize ScopedEarlySupport for early logging support before CEF initialization
+  cef::logging::ScopedEarlySupport::Config config = {
+      cef::logging::LOG_WARNING,  // min_log_level
+      0,                         // vlog_level
+      "[HostCLR]",              // log_prefix
+      true,                      // log_process_id
+      true,                      // log_thread_id
+      true,                      // log_timestamp
+      false,                     // log_tickcount
+      nullptr                    // formatted_log_handler
+  };
+  cef::logging::ScopedEarlySupport scoped_logging(config);
+
   // Get command line as UTF-8 string (before CEF is loaded)
   std::string raw_command_line_utf8;
   for (int i = 0; i < argc; ++i) {
@@ -575,8 +588,8 @@ int RunMain(int argc, char* argv[]) {
   const unsigned int fixed_ms = 3000;
   const unsigned int delta_ms = 6000;
 
-  std::string exeLastDirName = GetExeLastDirName();
-  bool is_debug = (exeLastDirName == "cefclientdbg");
+  std::string appDirName = GetMacAppDirName();
+  bool is_debug = (appDirName == "cefclientdbg.app");
   for (int attempt = 1; attempt <= max_attempts; ++attempt) {
     r = load_hostfxr(is_debug, detailed_rc);
     if (r == 0) {

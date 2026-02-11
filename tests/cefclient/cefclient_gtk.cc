@@ -53,6 +53,19 @@ void TerminationSignalHandler(int signatl) {
 
 NO_STACK_PROTECTOR
 int RunMain(int argc, char* argv[]) {
+  // Initialize ScopedEarlySupport for early logging support before CEF initialization
+  cef::logging::ScopedEarlySupport::Config config = {
+      cef::logging::LOG_WARNING,  // min_log_level
+      0,                         // vlog_level
+      "[HostCLR]",              // log_prefix
+      true,                      // log_process_id
+      true,                      // log_thread_id
+      true,                      // log_timestamp
+      false,                     // log_tickcount
+      nullptr                    // formatted_log_handler
+  };
+  cef::logging::ScopedEarlySupport scoped_logging(config);
+
   // Get command line as UTF-8 string (before CEF is loaded)
   std::string raw_command_line_utf8;
   for (int i = 0; i < argc; ++i) {

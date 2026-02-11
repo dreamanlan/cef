@@ -103,7 +103,17 @@ bool VerifyCodeSigningAndLoad(CefScopedLibraryLoader& library_loader,
                               cef_version_info_t* version_info) {
   // Enable early logging support (required before libcef is loaded).
   // The *Assert() calls below will output a FATAL error and crash on failure.
-  cef::logging::ScopedEarlySupport scoped_logging({});
+  cef::logging::ScopedEarlySupport::Config config = {
+      cef::logging::LOG_WARNING,  // min_log_level
+      0,                         // vlog_level
+      "[HostCLR]",              // log_prefix
+      true,                      // log_process_id
+      true,                      // log_thread_id
+      true,                      // log_timestamp
+      false,                     // log_tickcount
+      nullptr                    // formatted_log_handler
+  };
+  cef::logging::ScopedEarlySupport scoped_logging(config);
 
   if (library_loader.LoadInSubProcessAssert(version_info)) {
     // Running as a sub-process. We may be sandboxed. Nothing more to be done.
@@ -148,6 +158,19 @@ int RunMain(HINSTANCE hInstance,
             int nCmdShow,
             void* sandbox_info,
             cef_version_info_t* version_info) {
+  // Initialize ScopedEarlySupport for early logging support before CEF initialization
+  cef::logging::ScopedEarlySupport::Config config = {
+      cef::logging::LOG_WARNING,  // min_log_level
+      0,                         // vlog_level
+      "[HostCLR]",              // log_prefix
+      true,                      // log_process_id
+      true,                      // log_thread_id
+      true,                      // log_timestamp
+      false,                     // log_tickcount
+      nullptr                    // formatted_log_handler
+  };
+  cef::logging::ScopedEarlySupport scoped_logging(config);
+
   // Get wide char command line and convert to UTF-8 (before CEF is loaded)
   const wchar_t* raw_command_line_w = ::GetCommandLineW();
   std::string raw_command_line_utf8 = WideStringToUtf8(raw_command_line_w);
