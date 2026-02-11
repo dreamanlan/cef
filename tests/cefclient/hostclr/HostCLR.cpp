@@ -262,7 +262,7 @@ static std::string GetExeDirWithSeparator() {
 typedef std::wstring string_t;
 #define STR_LITERAL(s) L##s
 
-static string_t GetExeDirString() {
+static string_t GetAppBaseDirString() {
     return Utf8ToWstring(GetExeDirWithSeparator().c_str());
 }
 #else
@@ -270,39 +270,68 @@ static string_t GetExeDirString() {
 typedef std::string string_t;
 #define STR_LITERAL(s) s
 
-static string_t GetExeDirString() {
+static string_t GetAppBaseDirString() {
+#if defined(__APPLE__)
+    // On macOS, return .app directory path with trailing separator
+    std::string appPath = GetMacAppDirPath();
+    if (appPath.empty()) {
+        return GetExeDirWithSeparator();
+    }
+    // Ensure trailing separator
+    if (appPath.back() != '/') {
+        appPath += '/';
+    }
+    return appPath;
+#else
     return GetExeDirWithSeparator();
+#endif
 }
 #endif
 
 // Build paths dynamically based on debug/release mode
 static string_t BuildManagedDllDir(bool is_debug) {
-    string_t base = GetExeDirString();
-    return is_debug ? (base + STR_LITERAL("../")) : base;
+    string_t base = GetAppBaseDirString();
+#if defined(__APPLE__)
+    return is_debug ? (base + STR_LITERAL("../cefclient.app/Contents/managed/")) : base + STR_LITERAL("Contents/managed/");
+#else
+    return is_debug ? (base + STR_LITERAL("../cefclient/managed/")) : base + STR_LITERAL("managed/");
+#endif
 }
 
 static string_t BuildDotnetRuntimeDir(bool is_debug) {
-    string_t base = GetExeDirString();
+    string_t base = GetAppBaseDirString();
+#if defined(__APPLE__)
+    return is_debug ? (base + STR_LITERAL("../cefclient.app/Contents/dotnet/Microsoft.NETCore.App/9.0.2")) : base + STR_LITERAL("Contents/dotnet/Microsoft.NETCore.App/9.0.2");
+#else
     if (is_debug) {
-        return base + STR_LITERAL("../dotnet/Microsoft.NETCore.App/9.0.2");
+        return base + STR_LITERAL("../cefclient/dotnet/Microsoft.NETCore.App/9.0.2");
     }
     return base + STR_LITERAL("dotnet/Microsoft.NETCore.App/9.0.2");
+#endif
 }
 
 static string_t BuildRuntimeConfigPath(bool is_debug) {
-    string_t base = GetExeDirString();
+    string_t base = GetAppBaseDirString();
+#if defined(__APPLE__)
+    return is_debug ? (base + STR_LITERAL("../cefclient.app/Contents/managed/CefDotnetApp.runtimeconfig.json")) : base + STR_LITERAL("Contents/managed/CefDotnetApp.runtimeconfig.json");
+#else
     if (is_debug) {
-        return base + STR_LITERAL("../managed/CefDotnetApp.runtimeconfig.json");
+        return base + STR_LITERAL("../cefclient/managed/CefDotnetApp.runtimeconfig.json");
     }
     return base + STR_LITERAL("managed/CefDotnetApp.runtimeconfig.json");
+#endif
 }
 
 static string_t BuildAssemblyPath(bool is_debug) {
-    string_t base = GetExeDirString();
+    string_t base = GetAppBaseDirString();
+#if defined(__APPLE__)
+    return is_debug ? (base + STR_LITERAL("../cefclient.app/Contents/managed/CefDotnetApp.dll")) : base + STR_LITERAL("Contents/managed/CefDotnetApp.dll");
+#else
     if (is_debug) {
-        return base + STR_LITERAL("../managed/CefDotnetApp.dll");
+        return base + STR_LITERAL("../cefclient/managed/CefDotnetApp.dll");
     }
     return base + STR_LITERAL("managed/CefDotnetApp.dll");
+#endif
 }
 
 #if defined(_MSC_VER)
@@ -319,7 +348,7 @@ int load_hostfxr(bool is_debug, int& out_rc)
     string_t local_managed_dll_dir = BuildManagedDllDir(is_debug);
     string_t local_dotnet_runtime_dir = BuildDotnetRuntimeDir(is_debug);
     string_t dotnet_assembly_path = BuildAssemblyPath(is_debug);
-    
+
     out_rc = 0;
 #ifdef USE_SPEC_DOTNET
     // Load hostfxr.dll and use dotnet framework in specific directory

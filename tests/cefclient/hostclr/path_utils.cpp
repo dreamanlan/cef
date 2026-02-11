@@ -96,3 +96,38 @@ std::string GetExeDir() {
 std::string GetExeLastDirName() {
     return GetLastNameFromPath(GetExeDir());
 }
+
+std::string GetMacAppDirPath() {
+#if defined(__APPLE__)
+    std::string path = GetExePath();
+    if (path.empty())
+        return std::string();
+
+    // Traverse up the directory tree to find .app bundle
+    while (!path.empty()) {
+        size_t pos = path.find_last_of("/\\");
+        if (pos == std::string::npos)
+            break;
+
+        path = path.substr(0, pos);
+
+        // Check if current path ends with .app
+        if (path.length() > 4 && path.substr(path.length() - 4) == ".app") {
+            return path;
+        }
+    }
+
+    return std::string();
+#else
+    // On non-macOS platforms, return empty string
+    return std::string();
+#endif
+}
+
+std::string GetMacAppDirName() {
+    std::string appPath = GetMacAppDirPath();
+    if (appPath.empty())
+        return std::string();
+
+    return GetLastNameFromPath(appPath);
+}

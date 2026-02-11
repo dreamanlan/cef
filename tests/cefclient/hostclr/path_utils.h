@@ -12,3 +12,11 @@ std::string GetExeDir();
 // Returns last directory name of the current executable path, UTF-8 encoded.
 // Returns empty string on failure.
 std::string GetExeLastDirName();
+
+// Returns full path of the .app directory on macOS, UTF-8 encoded.
+// Returns empty string on failure or on non-macOS platforms.
+std::string GetMacAppDirPath();
+
+// Returns app directory name of the current executable path, UTF-8 encoded.
+// Returns empty string on failure.
+std::string GetMacAppDirName();

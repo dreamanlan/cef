@@ -115,13 +115,20 @@ void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   if (frame->IsMain()) {
     char* buf = new char[max_size + 1];
     memset(buf, 0, max_size + 1);
-    //std::string file = "inject.js";
+    //std::string file = "managed/simple_inject.js";
     std::string exeDir = GetExeDir();
+#if defined(__APPLE__)
+    std::string lastDirName = GetMacAppDirName();
+    if (lastDirName == "cefsimpledbg.app") {
+      exeDir += "/../cefsimple.app/Contents";
+    }
+#else
     std::string lastDirName = GetExeLastDirName();
     if (lastDirName == "cefclientdbg") {
       exeDir += "/..";
     }
-    std::string file = exeDir + "/simple_inject.js";
+#endif
+    std::string file = exeDir + "/managed/simple_inject.js";
     FILE* fp = fopen(file.c_str(), "rb");
     if (fp != NULL) {
       fread(buf, 1, max_size, fp);
@@ -129,7 +136,7 @@ void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
       frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
     } else {
       // Log error if file cannot be opened
-      std::string error_msg = "Failed to open inject.js from: " + file;
+      std::string error_msg = "Failed to open simple_inject.js from: " + file;
       LOG(ERROR) << error_msg;
     }
     delete[] buf;
