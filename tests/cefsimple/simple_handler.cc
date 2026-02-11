@@ -116,19 +116,23 @@ void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     char* buf = new char[max_size + 1];
     memset(buf, 0, max_size + 1);
     //std::string file = "managed/simple_inject.js";
-    std::string exeDir = GetExeDir();
 #if defined(__APPLE__)
+    std::string baseDir = GetMacAppDirPath();
     std::string lastDirName = GetMacAppDirName();
     if (lastDirName == "cefsimpledbg.app") {
-      exeDir += "/../cefsimple.app/Contents";
+      baseDir += "/../cefsimple.app/Contents";
+    }
+    else {
+      baseDir += "/Contents";
     }
 #else
+    std::string baseDir = GetExeDir();
     std::string lastDirName = GetExeLastDirName();
     if (lastDirName == "cefclientdbg") {
-      exeDir += "/..";
+      baseDir += "/../cefclient";
     }
 #endif
-    std::string file = exeDir + "/managed/simple_inject.js";
+    std::string file = baseDir + "/managed/simple_inject.js";
     FILE* fp = fopen(file.c_str(), "rb");
     if (fp != NULL) {
       fread(buf, 1, max_size, fp);

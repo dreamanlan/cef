@@ -123,12 +123,12 @@ int RunMain(int argc, char* argv[]) {
 
   // Call on_init callback with UTF-8 strings
   if (on_init_fptr) {
-    std::string exeDir = GetExeDir();
+    std::string baseDir = GetExeDir();
     std::string lastDirName = GetExeLastDirName();
     if (lastDirName == "cefclientdbg") {
-      exeDir += "/..";
+      baseDir += "/../cefclient";
     }
-    on_init_fptr(raw_command_line_utf8.c_str(), exeDir.c_str(), process_type);
+    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), process_type);
   }
 
   // Create a copy of |argv| on Linux because Chromium mangles the value

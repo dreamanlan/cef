@@ -167,7 +167,7 @@ int main(int argc, char* argv[]) {
 #endif
 
     // Set application-specific cache path to avoid process singleton conflicts
-    CefString(&settings.root_cache_path) = GetExeDir() + "/cefsimple_cache";
+    CefString(&settings.root_cache_path) = GetMacAppDirPath() + "/Contents/cefsimple_cache";
 
     // SimpleApp implements application-level callbacks for the browser process.
     // It will create the first browser instance in OnContextInitialized() after

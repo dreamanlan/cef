@@ -9,6 +9,7 @@
 
 #include "include/cef_parser.h"
 #include "tests/cefclient/browser/test_runner.h"
+#include "tests/cefclient/hostclr/path_utils.h"
 #include "tests/shared/browser/client_app_browser.h"
 #include "tests/shared/common/client_switches.h"
 #include "tests/shared/common/string_util.h"
@@ -189,7 +190,11 @@ void MainContextImpl::PopulateSettings(CefSettings* settings) {
   client::ClientAppBrowser::PopulateSettings(command_line_, *settings);
 
   // Set application-specific cache path to avoid process singleton conflicts
-  CefString(&settings->root_cache_path) = GetAppWorkingDirectory() + "cefclient_cache";
+#if defined(__APPLE__)
+  CefString(&settings->cache_path) = GetMacAppDirPath() + "/Contents/cefclient_cache";
+#else
+  CefString(&settings->root_cache_path) = GetExeDir() + "cefclient_cache";
+#endif
   CefString(&settings->cache_path) =
       command_line_->GetSwitchValue(switches::kCachePath);
 
