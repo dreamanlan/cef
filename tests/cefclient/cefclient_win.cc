@@ -249,11 +249,12 @@ int RunMain(HINSTANCE hInstance,
   // Call on_init callback with UTF-8 strings
   if (on_init_fptr) {
     std::string baseDir = GetExeDir();
+    std::string appDir = GetExeDir();
     std::string lastDirName = GetExeLastDirName();
     if (lastDirName == "cefclientdbg") {
       baseDir += "/../cefclient";
     }
-    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), static_cast<int>(simple_process_type));
+    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), static_cast<int>(simple_process_type), appDir.c_str(), false);
   }
 
   // Now load CEF library after CLR initialization succeeded

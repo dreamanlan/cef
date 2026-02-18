@@ -629,6 +629,7 @@ int RunMain(int argc, char* argv[]) {
   // Call on_init callback with UTF-8 strings
   if (on_init_fptr) {
     std::string baseDir = GetMacAppDirPath();
+    std::string appDir = GetMacAppDirPath();
     std::string lastDirName = GetMacAppDirName();
     if (lastDirName == "cefclientdbg.app") {
       baseDir += "/../cefclient.app/Contents";
@@ -636,7 +637,7 @@ int RunMain(int argc, char* argv[]) {
     else {
       baseDir += "/Contents";
     }
-    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type);
+    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type, appDir.c_str(), true);
   }
 
   // Load the CEF framework library at runtime instead of linking directly
