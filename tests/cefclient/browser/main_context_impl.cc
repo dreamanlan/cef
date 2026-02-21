@@ -186,6 +186,10 @@ bool MainContextImpl::UseDefaultPopup() {
          command_line_->HasSwitch(switches::kUseDefaultPopup);
 }
 
+bool MainContextImpl::UseCefPopup() {
+  return command_line_->HasSwitch(switches::kUseCefPopup);
+}
+
 void MainContextImpl::PopulateSettings(CefSettings* settings) {
   client::ClientAppBrowser::PopulateSettings(command_line_, *settings);
 

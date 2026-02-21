@@ -48,6 +48,7 @@ const char kNoActivate[] = "no-activate";
 const char kShowChromeToolbar[] = "show-chrome-toolbar";
 const char kInitialShowState[] = "initial-show-state";
 const char kUseDefaultPopup[] = "use-default-popup";
+const char kUseCefPopup[] = "use-cef-popup";
 const char kUseClientDialogs[] = "use-client-dialogs";
 const char kUseTestHttpServer[] = "use-test-http-server";
 const char kShowWindowButtons[] = "show-window-buttons";

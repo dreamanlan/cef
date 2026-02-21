@@ -56,6 +56,9 @@ class MainContext {
   // Returns true if the default popup implementation should be used.
   virtual bool UseDefaultPopup() = 0;
 
+  // Returns true if cefclient popup should be used for Chrome commands.
+  virtual bool UseCefPopup() = 0;
+
   // Populate |settings| based on command-line arguments.
   virtual void PopulateSettings(CefSettings* settings) = 0;
   virtual void PopulateBrowserSettings(CefBrowserSettings* settings) = 0;

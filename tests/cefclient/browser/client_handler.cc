@@ -21,6 +21,7 @@
 #include "include/cef_x509_certificate.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "tests/cefclient/browser/main_context.h"
+#include "tests/cefclient/browser/resource.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/browser/test_runner.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
@@ -632,6 +633,23 @@ bool ClientHandler::OnChromeCommand(CefRefPtr<CefBrowser> browser,
                                     cef_window_open_disposition_t disposition) {
   CEF_REQUIRE_UI_THREAD();
   DCHECK(!use_alloy_style_);
+
+  // Intercept window/tab creation commands to use cefclient's RootWindow
+  // instead of Chrome's default behavior, but only if --use-cef-popup is specified.
+  // This ensures all new windows/tabs support C# interop and inject.js when enabled.
+  if (MainContext::Get()->UseCefPopup()) {
+    CEF_DECLARE_COMMAND_ID(IDC_NEW_WINDOW);
+    CEF_DECLARE_COMMAND_ID(IDC_NEW_TAB);
+    CEF_DECLARE_COMMAND_ID(IDC_NEW_INCOGNITO_WINDOW);
+
+    if (command_id == IDC_NEW_WINDOW ||
+        command_id == IDC_NEW_TAB ||
+        command_id == IDC_NEW_INCOGNITO_WINDOW) {
+      // Use RunTest with ID_TESTS_WINDOW_NEW to create a new RootWindow
+      test_runner::RunTest(browser, ID_TESTS_WINDOW_NEW);
+      return true;  // Block default Chrome behavior
+    }
+  }
 
   const bool allowed = IsAllowedAppMenuCommandId(command_id) ||
                        IsAllowedContextMenuCommandId(command_id);
