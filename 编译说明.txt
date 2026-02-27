@@ -13,7 +13,7 @@
 8、本github工程的修改使用beyond compare将tests目录同步到cef下的tests目录即可（注意最终编译的cef代码会拷到chorimum源码目录下，修改应同步到那里），同步后需要重新编译，因此修改cef源码后用的编译脚本不能重新checkout覆盖cef目录，否则会导致修改丢失。如5所说
 9、python脚本命令行看源码可能更清楚https://bitbucket.org/chromiumembedded/cef/raw/master/tools/automate/automate-git.py
 10、cef使用的gn环境变量说明https://github.com/chromiumembedded/cef/blob/master/BUILD.gn，chromium的gn构建配置说明https://www.chromium.org/developers/gn-build-configuration/
-
+11、由于代码更新会删除构建源码目录下的cef目录并重新拷贝，所以代码更新后的构建不是必要的，可以中止后更新cef代码然后再rebuild
 
 ## windows下稳定版本成功编译的步骤:（参考https://bitbucket.org/chromiumembedded/cef/wiki/AutomatedBuildSetup.md）
 1、按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding的说明选择分支并准备相应编译环境
@@ -23,7 +23,7 @@
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --x64-build --build-target="cefclient cefsimple"
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --no-build
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、对cef源码修改后，新建chromium_git\rebuild.bat，内容如下（不更新、不删除out目录直接重新编译
   set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
@@ -54,7 +54,7 @@
 
 export PATH=/Users/lanxiang/CEF_BUILD/depot_tools:$PATH
 alias python=python3
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7559 --no-distrib --arm64-build --build-target="cefclient cefsimple"
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7559 --no-distrib --no-build
 
 [rebuild.sh]:
 #!/bin/bash
