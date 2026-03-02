@@ -736,6 +736,7 @@ int RunMain(int argc, char* argv[]) {
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }
+  cleanup_browser_ids();
 
   return result;
 }

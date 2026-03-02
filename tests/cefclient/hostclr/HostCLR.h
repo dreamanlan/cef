@@ -56,6 +56,9 @@ extern on_receive_js_message_fn on_receive_js_message_fptr;
 extern on_execute_metadsl_fn on_execute_metadsl_fptr;
 extern on_before_command_line_processing_fn on_before_command_line_processing_fptr;
 
+// Cleanup browser id list (call after on_finalize_fptr on process exit)
+extern void cleanup_browser_ids();
+
 // Cross-platform function to terminate renderer processes
 // Returns the number of renderer processes terminated, or -1 on error
 extern int TerminateRenderProcess();

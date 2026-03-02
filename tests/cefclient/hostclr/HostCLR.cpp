@@ -1,11 +1,13 @@
 #include "HostCLR.h"
 #include "include/base/cef_logging.h"
+#include "include/cef_command_line.h"
 #include "include/cef_browser.h"
 #include "include/cef_frame.h"
 #include "JavaScriptCaller.h"
 #include "path_utils.h"
 
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -488,6 +490,51 @@ typedef void (*command_line_append_switch_fn)(void* command_line, const char* na
 typedef void (*command_line_append_switch_with_value_fn)(void* command_line, const char* name, const char* value);
 typedef void (*command_line_remove_switch_fn)(void* command_line, const char* name);
 
+// Browser traversal
+typedef const char* (*get_all_browser_ids_fn)();
+typedef void* (*get_browser_by_id_fn)(int browser_id);
+typedef void (*notify_browser_created_fn)(void* browser);
+typedef void (*notify_browser_destroyed_fn)(void* browser);
+
+// Browser properties (both processes)
+typedef int (*browser_get_id_fn)(void* browser);
+typedef const char* (*browser_get_url_fn)(void* browser);
+typedef bool (*browser_is_loading_fn)(void* browser);
+typedef bool (*browser_is_popup_fn)(void* browser);
+typedef bool (*browser_has_document_fn)(void* browser);
+
+// Browser frame access (both processes)
+typedef int (*browser_get_frame_count_fn)(void* browser);
+typedef const char* (*browser_get_frame_identifiers_fn)(void* browser);
+typedef const char* (*browser_get_frame_names_fn)(void* browser);
+typedef void* (*browser_get_main_frame_fn)(void* browser);
+typedef void* (*browser_get_focused_frame_fn)(void* browser);
+typedef void* (*browser_get_frame_by_identifier_fn)(void* browser, const char* identifier);
+typedef void* (*browser_get_frame_by_name_fn)(void* browser, const char* name);
+
+// Browser actions (both processes)
+typedef void (*browser_reload_fn)(void* browser);
+typedef void (*browser_reload_ignore_cache_fn)(void* browser);
+typedef void (*browser_stop_load_fn)(void* browser);
+
+// Browser host actions (browser process only, no-op in renderer)
+typedef void (*browser_close_fn)(void* browser, int force_close);
+typedef void (*browser_set_focus_fn)(void* browser, int focus);
+typedef int (*browser_get_opener_id_fn)(void* browser);
+
+// Frame properties
+typedef const char* (*frame_get_url_fn)(void* frame);
+typedef const char* (*frame_get_name_fn)(void* frame);
+typedef const char* (*frame_get_identifier_fn)(void* frame);
+typedef bool (*frame_is_main_fn)(void* frame);
+typedef bool (*frame_is_valid_fn)(void* frame);
+typedef bool (*frame_is_focused_fn)(void* frame);
+typedef void* (*frame_get_parent_fn)(void* frame);
+typedef void* (*frame_get_browser_fn)(void* frame);
+
+// Frame actions
+typedef void (*frame_load_url_fn)(void* frame, const char* url);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -500,6 +547,44 @@ typedef struct {
     command_line_append_switch_fn CommandLineAppendSwitch;
     command_line_append_switch_with_value_fn CommandLineAppendSwitchWithValue;
     command_line_remove_switch_fn CommandLineRemoveSwitch;
+    // Browser traversal
+    get_all_browser_ids_fn GetAllBrowserIds;
+    get_browser_by_id_fn GetBrowserById;
+    notify_browser_created_fn NotifyBrowserCreated;
+    notify_browser_destroyed_fn NotifyBrowserDestroyed;
+    // Browser properties
+    browser_get_id_fn BrowserGetId;
+    browser_get_url_fn BrowserGetUrl;
+    browser_is_loading_fn BrowserIsLoading;
+    browser_is_popup_fn BrowserIsPopup;
+    browser_has_document_fn BrowserHasDocument;
+    // Browser frame access
+    browser_get_frame_count_fn BrowserGetFrameCount;
+    browser_get_frame_identifiers_fn BrowserGetFrameIdentifiers;
+    browser_get_frame_names_fn BrowserGetFrameNames;
+    browser_get_main_frame_fn BrowserGetMainFrame;
+    browser_get_focused_frame_fn BrowserGetFocusedFrame;
+    browser_get_frame_by_identifier_fn BrowserGetFrameByIdentifier;
+    browser_get_frame_by_name_fn BrowserGetFrameByName;
+    // Browser actions
+    browser_reload_fn BrowserReload;
+    browser_reload_ignore_cache_fn BrowserReloadIgnoreCache;
+    browser_stop_load_fn BrowserStopLoad;
+    // Browser host actions
+    browser_close_fn BrowserClose;
+    browser_set_focus_fn BrowserSetFocus;
+    browser_get_opener_id_fn BrowserGetOpenerId;
+    // Frame properties
+    frame_get_url_fn FrameGetUrl;
+    frame_get_name_fn FrameGetName;
+    frame_get_identifier_fn FrameGetIdentifier;
+    frame_is_main_fn FrameIsMain;
+    frame_is_valid_fn FrameIsValid;
+    frame_is_focused_fn FrameIsFocused;
+    frame_get_parent_fn FrameGetParent;
+    frame_get_browser_fn FrameGetBrowser;
+    // Frame actions
+    frame_load_url_fn FrameLoadUrl;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -675,6 +760,293 @@ void command_line_remove_switch(void* command_line, const char* name)
     pCommandLine->RemoveSwitch(name);
 }
 
+// Global browser id list (maintained by NotifyBrowserCreated/NotifyBrowserDestroyed)
+static std::vector<int>* g_browser_ids = new std::vector<int>();
+static std::mutex* g_browser_ids_mutex = new std::mutex();
+// Returns true if running in browser process (lazily initialized on first call)
+static bool is_browser_process()
+{
+    static std::once_flag s_flag;
+    static bool s_result = false;
+    std::call_once(s_flag, []() {
+        auto cmd_line = CefCommandLine::GetGlobalCommandLine();
+        if (cmd_line) {
+            // Browser process has no --type switch; all sub-processes have one
+            s_result = cmd_line->GetSwitchValue("type").ToString().empty();
+        }
+    });
+    return s_result;
+}
+
+// Helper: allocate a copy of std::string as char* (caller must free with delete[])
+static char* alloc_string(const std::string& s)
+{
+    char* p = new char[s.length() + 1];
+    strcpy(p, s.c_str());
+    return p;
+}
+
+// --- Browser traversal ---
+
+void notify_browser_created(void* browser)
+{
+    if (!browser) return;
+    int id = reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
+    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
+    for (int existing : *g_browser_ids) {
+        if (existing == id) return;
+    }
+    g_browser_ids->push_back(id);
+}
+
+void notify_browser_destroyed(void* browser)
+{
+    if (!browser) return;
+    int id = reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
+    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
+    g_browser_ids->erase(std::remove(g_browser_ids->begin(), g_browser_ids->end(), id), g_browser_ids->end());
+}
+
+const char* get_all_browser_ids()
+{
+    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
+    if (g_browser_ids->empty()) return nullptr;
+    std::string result;
+    for (int id : *g_browser_ids) {
+        if (!result.empty()) result += "\n";
+        result += std::to_string(id);
+    }
+    return alloc_string(result);
+}
+
+void cleanup_browser_ids()
+{
+    delete g_browser_ids_mutex;
+    g_browser_ids_mutex = nullptr;
+    delete g_browser_ids;
+    g_browser_ids = nullptr;
+}
+
+void* get_browser_by_id(int browser_id)
+{
+if (!is_browser_process()) return nullptr;
+    auto browser = CefBrowserHost::GetBrowserByIdentifier(browser_id);
+    return browser.get();
+}
+
+// --- Browser properties ---
+
+int browser_get_id(void* browser)
+{
+    if (!browser) return 0;
+    return reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
+}
+
+const char* browser_get_url(void* browser)
+{
+    if (!browser) return nullptr;
+    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    auto frame = pBrowser->GetMainFrame();
+    if (!frame) return nullptr;
+    std::string url = frame->GetURL().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+bool browser_is_loading(void* browser)
+{
+    if (!browser) return false;
+    return reinterpret_cast<CefBrowser*>(browser)->IsLoading();
+}
+
+bool browser_is_popup(void* browser)
+{
+    if (!browser) return false;
+    return reinterpret_cast<CefBrowser*>(browser)->IsPopup();
+}
+
+bool browser_has_document(void* browser)
+{
+    if (!browser) return false;
+    return reinterpret_cast<CefBrowser*>(browser)->HasDocument();
+}
+
+// --- Browser frame access ---
+
+int browser_get_frame_count(void* browser)
+{
+    if (!browser) return 0;
+    return static_cast<int>(reinterpret_cast<CefBrowser*>(browser)->GetFrameCount());
+}
+
+const char* browser_get_frame_identifiers(void* browser)
+{
+    if (!browser) return nullptr;
+    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    std::vector<CefString> identifiers;
+    pBrowser->GetFrameIdentifiers(identifiers);
+    std::string result;
+    for (auto& id : identifiers) {
+        if (!result.empty()) result += "\n";
+        result += id.ToString();
+    }
+    if (result.empty()) return nullptr;
+    return alloc_string(result);
+}
+
+const char* browser_get_frame_names(void* browser)
+{
+    if (!browser) return nullptr;
+    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    std::vector<CefString> names;
+    pBrowser->GetFrameNames(names);
+    std::string result;
+    for (auto& name : names) {
+        if (!result.empty()) result += "\n";
+        result += name.ToString();
+    }
+    if (result.empty()) return nullptr;
+    return alloc_string(result);
+}
+
+void* browser_get_main_frame(void* browser)
+{
+    if (!browser) return nullptr;
+    return reinterpret_cast<CefBrowser*>(browser)->GetMainFrame().get();
+}
+
+void* browser_get_focused_frame(void* browser)
+{
+    if (!browser) return nullptr;
+    return reinterpret_cast<CefBrowser*>(browser)->GetFocusedFrame().get();
+}
+
+void* browser_get_frame_by_identifier(void* browser, const char* identifier)
+{
+    if (!browser || !identifier) return nullptr;
+    return reinterpret_cast<CefBrowser*>(browser)->GetFrameByIdentifier(identifier).get();
+}
+
+void* browser_get_frame_by_name(void* browser, const char* name)
+{
+    if (!browser || !name) return nullptr;
+    return reinterpret_cast<CefBrowser*>(browser)->GetFrameByName(name).get();
+}
+
+// --- Browser actions ---
+
+void browser_reload(void* browser)
+{
+    if (!browser) return;
+    reinterpret_cast<CefBrowser*>(browser)->Reload();
+}
+
+void browser_reload_ignore_cache(void* browser)
+{
+    if (!browser) return;
+    reinterpret_cast<CefBrowser*>(browser)->ReloadIgnoreCache();
+}
+
+void browser_stop_load(void* browser)
+{
+    if (!browser) return;
+    reinterpret_cast<CefBrowser*>(browser)->StopLoad();
+}
+
+// --- Browser host actions (browser process only) ---
+
+void browser_close(void* browser, int force_close)
+{
+    if (!browser || !is_browser_process()) return;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (host) {
+        host->CloseBrowser(force_close != 0);
+    }
+}
+
+void browser_set_focus(void* browser, int focus)
+{
+    if (!browser || !is_browser_process()) return;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (host) {
+        host->SetFocus(focus != 0);
+    }
+}
+
+int browser_get_opener_id(void* browser)
+{
+    if (!browser || !is_browser_process()) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (host) {
+        return host->GetOpenerIdentifier();
+    }
+    return 0;
+}
+
+// --- Frame properties ---
+
+const char* frame_get_url(void* frame)
+{
+    if (!frame) return nullptr;
+    std::string url = reinterpret_cast<CefFrame*>(frame)->GetURL().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+const char* frame_get_name(void* frame)
+{
+    if (!frame) return nullptr;
+    std::string name = reinterpret_cast<CefFrame*>(frame)->GetName().ToString();
+    if (name.empty()) return nullptr;
+    return alloc_string(name);
+}
+
+const char* frame_get_identifier(void* frame)
+{
+    if (!frame) return nullptr;
+    std::string id = reinterpret_cast<CefFrame*>(frame)->GetIdentifier().ToString();
+    if (id.empty()) return nullptr;
+    return alloc_string(id);
+}
+
+bool frame_is_main(void* frame)
+{
+    if (!frame) return false;
+    return reinterpret_cast<CefFrame*>(frame)->IsMain();
+}
+
+bool frame_is_valid(void* frame)
+{
+    if (!frame) return false;
+    return reinterpret_cast<CefFrame*>(frame)->IsValid();
+}
+
+bool frame_is_focused(void* frame)
+{
+    if (!frame) return false;
+    return reinterpret_cast<CefFrame*>(frame)->IsFocused();
+}
+
+void* frame_get_parent(void* frame)
+{
+    if (!frame) return nullptr;
+    return reinterpret_cast<CefFrame*>(frame)->GetParent().get();
+}
+
+void* frame_get_browser(void* frame)
+{
+    if (!frame) return nullptr;
+    return reinterpret_cast<CefFrame*>(frame)->GetBrowser().get();
+}
+
+// --- Frame actions ---
+
+void frame_load_url(void* frame, const char* url)
+{
+    if (!frame || !url) return;
+    reinterpret_cast<CefFrame*>(frame)->LoadURL(url);
+}
+
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
@@ -693,6 +1065,37 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.CommandLineAppendSwitch = &command_line_append_switch;
     api.CommandLineAppendSwitchWithValue = &command_line_append_switch_with_value;
     api.CommandLineRemoveSwitch = &command_line_remove_switch;
+    api.GetAllBrowserIds = &get_all_browser_ids;
+    api.GetBrowserById = &get_browser_by_id;
+    api.NotifyBrowserCreated = &notify_browser_created;
+    api.NotifyBrowserDestroyed = &notify_browser_destroyed;
+    api.BrowserGetId = &browser_get_id;
+    api.BrowserGetUrl = &browser_get_url;
+    api.BrowserIsLoading = &browser_is_loading;
+    api.BrowserIsPopup = &browser_is_popup;
+    api.BrowserHasDocument = &browser_has_document;
+    api.BrowserGetFrameCount = &browser_get_frame_count;
+    api.BrowserGetFrameIdentifiers = &browser_get_frame_identifiers;
+    api.BrowserGetFrameNames = &browser_get_frame_names;
+    api.BrowserGetMainFrame = &browser_get_main_frame;
+    api.BrowserGetFocusedFrame = &browser_get_focused_frame;
+    api.BrowserGetFrameByIdentifier = &browser_get_frame_by_identifier;
+    api.BrowserGetFrameByName = &browser_get_frame_by_name;
+    api.BrowserReload = &browser_reload;
+    api.BrowserReloadIgnoreCache = &browser_reload_ignore_cache;
+    api.BrowserStopLoad = &browser_stop_load;
+    api.BrowserClose = &browser_close;
+    api.BrowserSetFocus = &browser_set_focus;
+    api.BrowserGetOpenerId = &browser_get_opener_id;
+    api.FrameGetUrl = &frame_get_url;
+    api.FrameGetName = &frame_get_name;
+    api.FrameGetIdentifier = &frame_get_identifier;
+    api.FrameIsMain = &frame_is_main;
+    api.FrameIsValid = &frame_is_valid;
+    api.FrameIsFocused = &frame_is_focused;
+    api.FrameGetParent = &frame_get_parent;
+    api.FrameGetBrowser = &frame_get_browser;
+    api.FrameLoadUrl = &frame_load_url;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
