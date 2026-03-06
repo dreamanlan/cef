@@ -53,6 +53,11 @@ enum ControlIds {
   // Reserved range of top menu button IDs.
   ID_TOP_MENU_FIRST,
   ID_TOP_MENU_LAST = ID_TOP_MENU_FIRST + 10,
+
+  // Custom titlebar button IDs (Windows frameless + Chrome toolbar mode).
+  ID_TITLEBAR_MINIMIZE,
+  ID_TITLEBAR_MAXIMIZE,
+  ID_TITLEBAR_CLOSE,
 };
 
 typedef std::vector<CefRefPtr<CefLabelButton>> LabelButtons;
@@ -289,6 +294,11 @@ void ViewsWindow::SetTitle(const std::string& title) {
   if (window_) {
     window_->SetTitle(title);
   }
+#if defined(OS_WIN)
+  if (title_label_) {
+    title_label_->SetText(title);
+  }
+#endif
 }
 
 void ViewsWindow::SetFavicon(CefRefPtr<CefImage> image) {
@@ -300,6 +310,12 @@ void ViewsWindow::SetFavicon(CefRefPtr<CefImage> image) {
   if (window_) {
     window_->SetWindowIcon(image);
   }
+#if defined(OS_WIN)
+  if (title_label_) {
+    title_label_->SetImage(CEF_BUTTON_STATE_NORMAL, image);
+    title_label_->SetImage(CEF_BUTTON_STATE_DISABLED, image);
+  }
+#endif
 }
 
 void ViewsWindow::SetFullscreen(bool fullscreen) {
@@ -370,6 +386,32 @@ void ViewsWindow::SetDraggableRegions(
     // Exclude all regions obscured by overlays.
     overlay_controls_->UpdateDraggableRegions(window_regions);
   }
+
+#if defined(OS_WIN)
+  if (with_custom_titlebar_ && title_bar_) {
+    // Make the titlebar draggable, excluding the button area on the right.
+    const CefRect tb_bounds = title_bar_->GetBoundsInScreen();
+    CefPoint tb_origin(tb_bounds.x, tb_bounds.y);
+    window_->ConvertPointFromScreen(tb_origin);
+
+    // Draggable: full titlebar row.
+    CefDraggableRegion drag_region;
+    drag_region.bounds = CefRect(tb_origin.x, tb_origin.y,
+                                 tb_bounds.width, tb_bounds.height);
+    drag_region.draggable = true;
+    window_regions.push_back(drag_region);
+
+    // Non-draggable: right portion where buttons live (menu + min + max + close).
+    // Approximate: last 4 buttons each ~32px wide = 128px.
+    constexpr int kButtonAreaWidth = 128;
+    CefDraggableRegion no_drag_region;
+    no_drag_region.bounds =
+        CefRect(tb_origin.x + tb_bounds.width - kButtonAreaWidth,
+                tb_origin.y, kButtonAreaWidth, tb_bounds.height);
+    no_drag_region.draggable = false;
+    window_regions.push_back(no_drag_region);
+  }
+#endif
 
   if (overlay_browser_) {
     // Exclude all regions obscured by overlays.
@@ -556,11 +598,34 @@ cef_runtime_style_t ViewsWindow::GetBrowserRuntimeStyle() {
 
 void ViewsWindow::OnButtonPressed(CefRefPtr<CefButton> button) {
   CEF_REQUIRE_UI_THREAD();
-  DCHECK(with_controls_);
+  DCHECK(with_controls_ || with_custom_titlebar_);
 
   if (!browser_view_) {
     return;
   }
+
+#if defined(OS_WIN)
+  // Handle custom titlebar window control buttons.
+  if (with_custom_titlebar_ && window_) {
+    switch (button->GetID()) {
+      case ID_TITLEBAR_MINIMIZE:
+        window_->Minimize();
+        return;
+      case ID_TITLEBAR_MAXIMIZE:
+        if (window_->IsMaximized()) {
+          window_->Restore();
+        } else {
+          window_->Maximize();
+        }
+        return;
+      case ID_TITLEBAR_CLOSE:
+        Close(false);
+        return;
+      default:
+        break;
+    }
+  }
+#endif
 
   CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
   if (!browser) {
@@ -594,7 +659,7 @@ void ViewsWindow::OnMenuButtonPressed(
     CefRefPtr<CefMenuButtonPressedLock> button_pressed_lock) {
   CEF_REQUIRE_UI_THREAD();
 
-  DCHECK(with_controls_ || with_overlay_controls_);
+  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_);
   DCHECK_EQ(ID_MENU_BUTTON, menu_button->GetID());
 
   const auto button_bounds = menu_button->GetBoundsInScreen();
@@ -633,7 +698,7 @@ void ViewsWindow::ExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
                                  int command_id,
                                  cef_event_flags_t event_flags) {
   CEF_REQUIRE_UI_THREAD();
-  DCHECK(with_controls_ || with_overlay_controls_);
+  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_);
 
   if (command_id == ID_QUIT) {
     delegate_->OnExit();
@@ -812,6 +877,10 @@ void ViewsWindow::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
     menu_bar_ = nullptr;
   }
   menu_button_ = nullptr;
+#if defined(OS_WIN)
+  title_bar_ = nullptr;
+  title_label_ = nullptr;
+#endif
   window_ = nullptr;
 }
 
@@ -831,6 +900,14 @@ void ViewsWindow::OnWindowBoundsChanged(CefRefPtr<CefWindow> window,
     // Track the last visible bounds for window restore purposes.
     last_visible_bounds_ = new_bounds;
   }
+
+#if defined(OS_WIN)
+  // Re-apply draggable regions when window size changes so titlebar bounds
+  // are recalculated correctly.
+  if (with_custom_titlebar_) {
+    UpdateDraggableRegions();
+  }
+#endif
 
 #if defined(OS_MAC)
   if (frameless_ && with_standard_buttons_ && toolbar_) {
@@ -1075,6 +1152,12 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
       toolbar_ = nullptr;
       location_bar_ = nullptr;
     }
+#if defined(OS_WIN)
+    if (title_bar_) {
+      title_bar_ = nullptr;
+      title_label_ = nullptr;
+    }
+#endif
     if (overlay_browser_) {
       overlay_browser_->Destroy();
       overlay_browser_ = nullptr;
@@ -1103,6 +1186,17 @@ void ViewsWindow::OnLayoutChanged(CefRefPtr<CefView> view,
 void ViewsWindow::OnThemeChanged(CefRefPtr<CefView> view) {
   // Apply colors when the theme changes.
   views_style::OnThemeChanged(view);
+
+#if defined(OS_WIN)
+  // Also apply theme to custom titlebar children when the titlebar panel
+  // itself changes theme.
+  if (with_custom_titlebar_ && title_bar_ &&
+      view->GetID() == title_bar_->GetID()) {
+    for (size_t i = 0; i < title_bar_->GetChildViewCount(); ++i) {
+      views_style::OnThemeChanged(title_bar_->GetChildViewAt(i));
+    }
+  }
+#endif
 }
 
 void ViewsWindow::MenuBarExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
@@ -1146,6 +1240,13 @@ ViewsWindow::ViewsWindow(WindowType type,
 
   // With an overlay that mimics window controls.
   with_overlay_controls_ = show_overlays;
+
+#if defined(OS_WIN)
+  // Custom titlebar: frameless + hide-top-menu + Chrome toolbar on Windows.
+  with_custom_titlebar_ =
+      is_normal_type && hide_frame &&
+      command_line->HasSwitch(switches::kHideTopMenu) && with_controls_;
+#endif
 
   // If window has frame or flag passed explicitly
   with_standard_buttons_ = !frameless_ || show_window_buttons;
@@ -1193,11 +1294,11 @@ void ViewsWindow::SetBrowserView(CefRefPtr<CefBrowserView> browser_view) {
 
 void ViewsWindow::CreateMenuModel() {
   // Create the menu button model.
+  // Flatten the menu: show test items directly, then separator + Exit.
   button_menu_model_ = CefMenuModel::CreateMenuModel(this);
-  CefRefPtr<CefMenuModel> test_menu =
-      button_menu_model_->AddSubMenu(0, "&Tests");
   views_style::ApplyTo(button_menu_model_);
-  AddTestMenuItems(test_menu);
+  AddTestMenuItems(button_menu_model_);
+  button_menu_model_->AddSeparator();
   AddFileMenuItems(button_menu_model_);
 
   if (menu_bar_) {
@@ -1337,6 +1438,66 @@ void ViewsWindow::AddControls() {
     if (menu_panel) {
       window_->AddChildViewAt(menu_panel, index++);
     }
+#if defined(OS_WIN)
+    if (with_custom_titlebar_) {
+      // Build the custom titlebar panel above the Chrome toolbar.
+      title_bar_ = CefPanel::CreatePanel(this);
+
+      CefBoxLayoutSettings tb_layout_settings;
+      tb_layout_settings.horizontal = true;
+      CefRefPtr<CefBoxLayout> tb_layout =
+          title_bar_->SetToBoxLayout(tb_layout_settings);
+
+      // Title label (left-aligned, grows to fill space).
+      title_label_ = CefLabelButton::CreateLabelButton(this, CefString());
+      title_label_->SetEnabled(false);
+      title_label_->SetFocusable(false);
+      title_label_->SetInkDropEnabled(false);
+      title_bar_->AddChildView(title_label_);
+      tb_layout->SetFlexForView(title_label_, 1);
+
+      // Hamburger menu button.
+      CefRefPtr<CefMenuButton> tb_menu = CreateMenuButton();
+      tb_menu->SetTooltipText("Main menu");
+      title_bar_->AddChildView(tb_menu);
+
+      // Minimize button.
+      CefRefPtr<CefLabelButton> btn_min =
+          CefLabelButton::CreateLabelButton(this, u8"\u2212");
+      btn_min->SetID(ID_TITLEBAR_MINIMIZE);
+      btn_min->SetFocusable(false);
+      btn_min->SetInkDropEnabled(true);
+      btn_min->SetTooltipText("Minimize");
+      title_bar_->AddChildView(btn_min);
+
+      // Maximize button.
+      CefRefPtr<CefLabelButton> btn_max =
+          CefLabelButton::CreateLabelButton(this, u8"\u25A1");
+      btn_max->SetID(ID_TITLEBAR_MAXIMIZE);
+      btn_max->SetFocusable(false);
+      btn_max->SetInkDropEnabled(true);
+      btn_max->SetTooltipText("Maximize");
+      title_bar_->AddChildView(btn_max);
+
+      // Close button.
+      CefRefPtr<CefLabelButton> btn_close =
+          CefLabelButton::CreateLabelButton(this, u8"\u00D7");
+      btn_close->SetID(ID_TITLEBAR_CLOSE);
+      btn_close->SetFocusable(false);
+      btn_close->SetInkDropEnabled(true);
+      btn_close->SetTooltipText("Close");
+      title_bar_->AddChildView(btn_close);
+
+      // Apply theme colors to titlebar buttons.
+      views_style::OnThemeChanged(title_label_);
+      views_style::OnThemeChanged(tb_menu);
+      views_style::OnThemeChanged(btn_min);
+      views_style::OnThemeChanged(btn_max);
+      views_style::OnThemeChanged(btn_close);
+
+      window_->AddChildViewAt(title_bar_, index++);
+    }
+#endif
     window_->AddChildViewAt(toolbar_, index);
   }
 
@@ -1369,6 +1530,13 @@ void ViewsWindow::AddControls() {
   // Apply the state that we may have missed when SetLoadingState was called
   // initially.
   UpdateToolbarButtonState();
+
+#if defined(OS_WIN)
+  // Initialize titlebar draggable region now that layout is complete.
+  if (with_custom_titlebar_) {
+    SetDraggableRegions({});
+  }
+#endif
 }
 
 void ViewsWindow::AddAccelerators() {
@@ -1415,6 +1583,13 @@ void ViewsWindow::ShowTopControls(bool show) {
     toolbar_->SetVisible(show);
     toolbar_->InvalidateLayout();
   }
+
+#if defined(OS_WIN)
+  if (title_bar_ && title_bar_->IsVisible() != show) {
+    title_bar_->SetVisible(show);
+    title_bar_->InvalidateLayout();
+  }
+#endif
 }
 
 #if !defined(OS_MAC)
