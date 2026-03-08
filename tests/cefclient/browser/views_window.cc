@@ -1235,8 +1235,9 @@ ViewsWindow::ViewsWindow(WindowType type,
       command_line->HasSwitch(switches::kShowWindowButtons);
   accepts_first_mouse_ = command_line->HasSwitch(switches::kAcceptsFirstMouse);
 
-  // Without a window frame.
-  frameless_ = hide_frame;
+  // Without a window frame. DevTools windows should always have a frame
+  // so they remain draggable.
+  frameless_ = hide_frame && (type_ != WindowType::DEVTOOLS);
 
   // With an overlay that mimics window controls.
   with_overlay_controls_ = show_overlays;
