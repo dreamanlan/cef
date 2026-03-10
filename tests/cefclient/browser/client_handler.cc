@@ -1172,20 +1172,20 @@ void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     if (!use_custom_code) {
       //std::string file = MainContext::Get()->GetAppWorkingDirectory() + "managed/inject.js";
 #if defined(__APPLE__)
-    std::string baseDir = GetMacAppDirPath();
-    std::string lastDirName = GetMacAppDirName();
-    if (lastDirName == "cefclientdbg.app") {
-      baseDir += "/../cefclient.app/Contents";
-    }
-    else {
-      baseDir += "/Contents";
-    }
+      std::string baseDir = GetMacAppDirPath();
+      std::string lastDirName = GetMacAppDirName();
+      if (lastDirName == "cefclientdbg.app") {
+        baseDir += "/../cefclient.app/Contents";
+      }
+      else {
+        baseDir += "/Contents";
+      }
 #else
-    std::string baseDir = GetExeDir();
-    std::string lastDirName = GetExeLastDirName();
-    if (lastDirName == "cefclientdbg") {
-      baseDir += "/../cefclient";
-    }
+      std::string baseDir = GetExeDir();
+      std::string lastDirName = GetExeLastDirName();
+      if (lastDirName == "cefclientdbg") {
+        baseDir += "/../cefclient";
+      }
 #endif
       std::string file = baseDir + "/managed/inject.js";
       FILE* fp = fopen(file.c_str(), "rb");
