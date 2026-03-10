@@ -468,7 +468,12 @@ on_renderer_finalize_fn on_renderer_finalize_fptr = nullptr;
 on_loading_state_change_fn on_loading_state_change_fptr = nullptr;
 on_load_error_fn on_load_error_fptr = nullptr;
 on_render_process_terminated_fn on_render_process_terminated_fptr = nullptr;
+on_load_start_fn on_load_start_fptr = nullptr;
 on_load_end_fn on_load_end_fptr = nullptr;
+on_renderer_load_start_fn on_renderer_load_start_fptr = nullptr;
+on_renderer_load_end_fn on_renderer_load_end_fptr = nullptr;
+on_renderer_loading_state_change_fn on_renderer_loading_state_change_fptr = nullptr;
+on_renderer_load_error_fn on_renderer_load_error_fptr = nullptr;
 
 on_receive_cef_message_fn on_receive_cef_message_fptr = nullptr;
 on_receive_js_message_fn on_receive_js_message_fptr = nullptr;
@@ -1252,12 +1257,67 @@ int load_dotnet_method(bool is_debug, int& rc)
     rc = load_assembly_and_get_function_pointer(
     dotnet_assembly_path.c_str(),
     dotnet_class_name,
+    CHAR_T_LITERAL("OnLoadStart"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnLoadStartDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_load_start_fptr);
+    if (rc || !on_load_start_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_load_start");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
     CHAR_T_LITERAL("OnLoadEnd"),
     CHAR_T_LITERAL("DotNetLib.Lib+OnLoadEndDelegation, CefDotnetApp"), // Delegate type
     nullptr,
     (void**)&on_load_end_fptr);
     if (rc || !on_load_end_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_load_end");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnRendererLoadStart"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererLoadStartDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_renderer_load_start_fptr);
+    if (rc || !on_renderer_load_start_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_renderer_load_start");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnRendererLoadEnd"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererLoadEndDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_renderer_load_end_fptr);
+    if (rc || !on_renderer_load_end_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_renderer_load_end");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnRendererLoadingStateChange"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererLoadingStateChangeDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_renderer_loading_state_change_fptr);
+    if (rc || !on_renderer_loading_state_change_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_renderer_loading_state_change");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnRendererLoadError"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRendererLoadErrorDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_renderer_load_error_fptr);
+    if (rc || !on_renderer_load_error_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_renderer_load_error");
     }
 
     rc = load_assembly_and_get_function_pointer(

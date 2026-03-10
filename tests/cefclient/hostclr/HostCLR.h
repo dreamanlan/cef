@@ -31,7 +31,12 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_finalize_fn)(void* browser,
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_loading_state_change_fn)(void* browser, void* frame, const char* url, bool is_loading, bool can_go_back, bool can_go_forward);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_load_error_fn)(void* browser, void* frame, int error_code, const char* error_text, const char* failed_url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_render_process_terminated_fn)(void* browser, void* frame, const char* startup_url, const char* url, int status, int error_code, const char* error_string);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_load_start_fn)(void* browser, void* frame, const char* url, int transition_type, bool is_main);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_load_end_fn)(void* browser, void* frame, const char* url, int http_status_code, bool inject_all_frame, bool is_main, char* js_code, int& code_size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_start_fn)(void* browser, void* frame, const char* url, int transition_type, bool is_main);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_end_fn)(void* browser, void* frame, const char* url, int http_status_code, bool is_main, char* js_code, int& code_size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_loading_state_change_fn)(void* browser, void* frame, const char* url, bool is_loading, bool can_go_back, bool can_go_forward);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_error_fn)(void* browser, void* frame, int error_code, const char* error_text, const char* failed_url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_cef_message_fn)(const char* message, const char** args, int arg_count, void* browser, void* frame, int source_process_id);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_js_message_fn)(const char* message, const char** args, int arg_count, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
@@ -49,7 +54,12 @@ extern on_renderer_finalize_fn on_renderer_finalize_fptr;
 extern on_loading_state_change_fn on_loading_state_change_fptr;
 extern on_load_error_fn on_load_error_fptr;
 extern on_render_process_terminated_fn on_render_process_terminated_fptr;
+extern on_load_start_fn on_load_start_fptr;
 extern on_load_end_fn on_load_end_fptr;
+extern on_renderer_load_start_fn on_renderer_load_start_fptr;
+extern on_renderer_load_end_fn on_renderer_load_end_fptr;
+extern on_renderer_loading_state_change_fn on_renderer_loading_state_change_fptr;
+extern on_renderer_load_error_fn on_renderer_load_error_fptr;
 
 extern on_receive_cef_message_fn on_receive_cef_message_fptr;
 extern on_receive_js_message_fn on_receive_js_message_fptr;

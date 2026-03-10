@@ -254,6 +254,10 @@ class ClientHandler : public BaseClientHandler,
                             bool canGoBack,
                             bool canGoForward) override;
 
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    TransitionType transition_type) override;
+
   void OnLoadEnd(CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,
     int httpStatusCode) override;

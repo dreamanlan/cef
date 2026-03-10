@@ -104,9 +104,76 @@ public:
   IMPLEMENT_REFCOUNTING(JsBridgeV8Handler);
 };
 
+// CefLoadHandler implementation for renderer process
+class RendererLoadHandler : public CefLoadHandler {
+ public:
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                            bool isLoading,
+                            bool canGoBack,
+                            bool canGoForward) override {
+    if (on_renderer_loading_state_change_fptr) {
+      CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+      std::string url_str;
+      if (frame) {
+        url_str = frame->GetURL();
+      }
+      on_renderer_loading_state_change_fptr(browser.get(), frame.get(), url_str.empty() ? "" : url_str.c_str(), isLoading, canGoBack, canGoForward);
+    }
+  }
+
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   TransitionType transition_type) override {
+    if (on_renderer_load_start_fptr) {
+      std::string url = frame->GetURL();
+      on_renderer_load_start_fptr(browser.get(), frame.get(), url.c_str(), static_cast<int>(transition_type), frame->IsMain());
+    }
+  }
+
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override {
+    printf_log(LOG_SEVERITY_INFO, "RendererLoadHandler::OnLoadEnd: Browser %d frame=%s httpStatusCode=%d isMain=%d", browser->GetIdentifier(), frame->GetURL().ToString().c_str(), httpStatusCode, frame->IsMain());
+
+    if (on_renderer_load_end_fptr) {
+      const int max_size = 4 * 1024 * 1024;
+      char* buf = new char[max_size + 1];
+      memset(buf, 0, max_size + 1);
+
+      std::string url = frame->GetURL();
+      int code_size = max_size;
+      bool use_custom_code = on_renderer_load_end_fptr(browser.get(), frame.get(), url.c_str(), httpStatusCode, frame->IsMain(), buf, code_size);
+
+      if (use_custom_code && code_size > 0) {
+        buf[code_size] = '\0';
+        frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
+      }
+      delete[] buf;
+    }
+  }
+
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString& errorText,
+                   const CefString& failedUrl) override {
+    if (on_renderer_load_error_fptr) {
+      on_renderer_load_error_fptr(browser.get(), frame.get(), errorCode, errorText.ToString().c_str(), failedUrl.ToString().c_str());
+    }
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(RendererLoadHandler);
+};
+
 class ClientRenderDelegate : public ClientAppRenderer::Delegate {
  public:
-  ClientRenderDelegate() = default;
+  ClientRenderDelegate() : renderer_load_handler_(new RendererLoadHandler()) {}
+
+  CefRefPtr<CefLoadHandler> GetLoadHandler(
+      CefRefPtr<ClientAppRenderer> app) override {
+    return renderer_load_handler_;
+  }
 
   void OnWebKitInitialized(CefRefPtr<ClientAppRenderer> app) override {
     if (CefCrashReportingEnabled()) {
@@ -204,6 +271,9 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
 
  private:
   bool last_node_is_editable_ = false;
+
+  // Renderer load handler for load callbacks
+  CefRefPtr<RendererLoadHandler> renderer_load_handler_;
 
   // Handles the renderer side of query routing.
   CefRefPtr<CefMessageRouterRendererSide> message_router_;

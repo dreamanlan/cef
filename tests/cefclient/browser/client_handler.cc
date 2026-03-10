@@ -1148,6 +1148,18 @@ void ClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
   }
 }
 
+void ClientHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
+  CefRefPtr<CefFrame> frame,
+  TransitionType transition_type)
+{
+  printf_log(LOG_SEVERITY_INFO, "OnLoadStart: Browser %d frame=%s transition_type=%d isMain=%d", browser->GetIdentifier(), frame->GetURL().ToString().c_str(), static_cast<int>(transition_type), frame->IsMain());
+
+  if (on_load_start_fptr) {
+    std::string url = frame->GetURL();
+    on_load_start_fptr(browser.get(), frame.get(), url.c_str(), static_cast<int>(transition_type), frame->IsMain());
+  }
+}
+
 void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
   CefRefPtr<CefFrame> frame,
   int httpStatusCode)
