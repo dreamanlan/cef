@@ -99,10 +99,9 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
 
     // Call C# callback to allow DSL script to handle app relaunch
     if (on_already_running_app_relaunch_fptr) {
-      bool ret = false;
       std::string cur_dir = current_directory.ToString();
-      if (on_already_running_app_relaunch_fptr(command_line.get(), cur_dir.c_str(), &ret)) {
-        return ret;
+      if (on_already_running_app_relaunch_fptr(command_line.get(), cur_dir.c_str())) {
+        return false;
       }
     }
 
