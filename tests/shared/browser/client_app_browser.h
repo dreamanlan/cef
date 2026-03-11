@@ -38,6 +38,10 @@ class ClientAppBrowser : public ClientApp, public CefBrowserProcessHandler {
       return false;
     }
 
+    virtual void OnBeforeChildProcessLaunch(
+        CefRefPtr<ClientAppBrowser> app,
+        CefRefPtr<CefCommandLine> command_line) {}
+
     virtual CefRefPtr<CefClient> GetDefaultClient(
         CefRefPtr<ClientAppBrowser> app) {
       return nullptr;
@@ -78,6 +82,8 @@ class ClientAppBrowser : public ClientApp, public CefBrowserProcessHandler {
   void OnContextInitialized() override;
   bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine> command_line,
                                    const CefString& current_directory) override;
+  void OnBeforeChildProcessLaunch(
+      CefRefPtr<CefCommandLine> command_line) override;
   void OnScheduleMessagePumpWork(int64_t delay) override;
   CefRefPtr<CefClient> GetDefaultClient() override;
 

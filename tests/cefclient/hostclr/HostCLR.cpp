@@ -479,6 +479,8 @@ on_receive_cef_message_fn on_receive_cef_message_fptr = nullptr;
 on_receive_js_message_fn on_receive_js_message_fptr = nullptr;
 on_execute_metadsl_fn on_execute_metadsl_fptr = nullptr;
 on_before_command_line_processing_fn on_before_command_line_processing_fptr = nullptr;
+on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
+on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
 
 // Native api
 typedef void (*host_native_log_fn)(const char* msg, void* browser, void* frame);
@@ -494,6 +496,19 @@ typedef const char* (*command_line_get_switch_value_fn)(void* command_line, cons
 typedef void (*command_line_append_switch_fn)(void* command_line, const char* name);
 typedef void (*command_line_append_switch_with_value_fn)(void* command_line, const char* name, const char* value);
 typedef void (*command_line_remove_switch_fn)(void* command_line, const char* name);
+typedef bool (*command_line_is_valid_fn)(void* command_line);
+typedef bool (*command_line_is_read_only_fn)(void* command_line);
+typedef bool (*command_line_has_switches_fn)(void* command_line);
+typedef bool (*command_line_has_arguments_fn)(void* command_line);
+typedef const char* (*command_line_get_program_fn)(void* command_line);
+typedef void (*command_line_set_program_fn)(void* command_line, const char* program);
+typedef const char* (*command_line_get_command_line_string_fn)(void* command_line);
+typedef const char* (*command_line_get_argv_fn)(void* command_line);
+typedef const char* (*command_line_get_switches_fn)(void* command_line);
+typedef const char* (*command_line_get_arguments_fn)(void* command_line);
+typedef void (*command_line_append_argument_fn)(void* command_line, const char* argument);
+typedef void (*command_line_prepend_wrapper_fn)(void* command_line, const char* wrapper);
+typedef void* (*command_line_get_global_fn)();
 
 // Browser traversal
 typedef const char* (*get_all_browser_ids_fn)();
@@ -552,6 +567,19 @@ typedef struct {
     command_line_append_switch_fn CommandLineAppendSwitch;
     command_line_append_switch_with_value_fn CommandLineAppendSwitchWithValue;
     command_line_remove_switch_fn CommandLineRemoveSwitch;
+    command_line_is_valid_fn CommandLineIsValid;
+    command_line_is_read_only_fn CommandLineIsReadOnly;
+    command_line_has_switches_fn CommandLineHasSwitches;
+    command_line_has_arguments_fn CommandLineHasArguments;
+    command_line_get_program_fn CommandLineGetProgram;
+    command_line_set_program_fn CommandLineSetProgram;
+    command_line_get_command_line_string_fn CommandLineGetCommandLineString;
+    command_line_get_argv_fn CommandLineGetArgv;
+    command_line_get_switches_fn CommandLineGetSwitches;
+    command_line_get_arguments_fn CommandLineGetArguments;
+    command_line_append_argument_fn CommandLineAppendArgument;
+    command_line_prepend_wrapper_fn CommandLinePrependWrapper;
+    command_line_get_global_fn CommandLineGetGlobal;
     // Browser traversal
     get_all_browser_ids_fn GetAllBrowserIds;
     get_browser_by_id_fn GetBrowserById;
@@ -763,6 +791,119 @@ void command_line_remove_switch(void* command_line, const char* name)
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
     pCommandLine->RemoveSwitch(name);
+}
+
+bool command_line_is_valid(void* command_line)
+{
+    if (!command_line) return false;
+    return reinterpret_cast<CefCommandLine*>(command_line)->IsValid();
+}
+
+bool command_line_is_read_only(void* command_line)
+{
+    if (!command_line) return false;
+    return reinterpret_cast<CefCommandLine*>(command_line)->IsReadOnly();
+}
+
+bool command_line_has_switches(void* command_line)
+{
+    if (!command_line) return false;
+    return reinterpret_cast<CefCommandLine*>(command_line)->HasSwitches();
+}
+
+bool command_line_has_arguments(void* command_line)
+{
+    if (!command_line) return false;
+    return reinterpret_cast<CefCommandLine*>(command_line)->HasArguments();
+}
+
+// Forward declaration
+static char* alloc_string(const std::string& s);
+
+const char* command_line_get_program(void* command_line)
+{
+    if (!command_line) return nullptr;
+    auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
+    CefString program = pCommandLine->GetProgram();
+    if (program.empty()) return nullptr;
+    return alloc_string(program.ToString());
+}
+
+void command_line_set_program(void* command_line, const char* program)
+{
+    if (!command_line || !program) return;
+    reinterpret_cast<CefCommandLine*>(command_line)->SetProgram(program);
+}
+
+const char* command_line_get_command_line_string(void* command_line)
+{
+    if (!command_line) return nullptr;
+    auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
+    CefString str = pCommandLine->GetCommandLineString();
+    if (str.empty()) return nullptr;
+    return alloc_string(str.ToString());
+}
+
+const char* command_line_get_argv(void* command_line)
+{
+    if (!command_line) return nullptr;
+    auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
+    std::vector<CefString> argv;
+    pCommandLine->GetArgv(argv);
+    if (argv.empty()) return nullptr;
+    std::string result;
+    for (const auto& arg : argv) {
+        if (!result.empty()) result += "|";
+        result += arg.ToString();
+    }
+    return alloc_string(result);
+}
+
+const char* command_line_get_switches(void* command_line)
+{
+    if (!command_line) return nullptr;
+    auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
+    CefCommandLine::SwitchMap switches;
+    pCommandLine->GetSwitches(switches);
+    if (switches.empty()) return nullptr;
+    std::string result;
+    for (const auto& pair : switches) {
+        if (!result.empty()) result += "|";
+        result += pair.first.ToString() + "=" + pair.second.ToString();
+    }
+    return alloc_string(result);
+}
+
+const char* command_line_get_arguments(void* command_line)
+{
+    if (!command_line) return nullptr;
+    auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
+    CefCommandLine::ArgumentList arguments;
+    pCommandLine->GetArguments(arguments);
+    if (arguments.empty()) return nullptr;
+    std::string result;
+    for (const auto& arg : arguments) {
+        if (!result.empty()) result += "|";
+        result += arg.ToString();
+    }
+    return alloc_string(result);
+}
+
+void command_line_append_argument(void* command_line, const char* argument)
+{
+    if (!command_line || !argument) return;
+    reinterpret_cast<CefCommandLine*>(command_line)->AppendArgument(argument);
+}
+
+void command_line_prepend_wrapper(void* command_line, const char* wrapper)
+{
+    if (!command_line || !wrapper) return;
+    reinterpret_cast<CefCommandLine*>(command_line)->PrependWrapper(wrapper);
+}
+
+void* command_line_get_global()
+{
+    return CefCommandLine::GetGlobalCommandLine().get();
 }
 
 // Global browser id list (maintained by NotifyBrowserCreated/NotifyBrowserDestroyed)
@@ -1070,6 +1211,19 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.CommandLineAppendSwitch = &command_line_append_switch;
     api.CommandLineAppendSwitchWithValue = &command_line_append_switch_with_value;
     api.CommandLineRemoveSwitch = &command_line_remove_switch;
+    api.CommandLineIsValid = &command_line_is_valid;
+    api.CommandLineIsReadOnly = &command_line_is_read_only;
+    api.CommandLineHasSwitches = &command_line_has_switches;
+    api.CommandLineHasArguments = &command_line_has_arguments;
+    api.CommandLineGetProgram = &command_line_get_program;
+    api.CommandLineSetProgram = &command_line_set_program;
+    api.CommandLineGetCommandLineString = &command_line_get_command_line_string;
+    api.CommandLineGetArgv = &command_line_get_argv;
+    api.CommandLineGetSwitches = &command_line_get_switches;
+    api.CommandLineGetArguments = &command_line_get_arguments;
+    api.CommandLineAppendArgument = &command_line_append_argument;
+    api.CommandLinePrependWrapper = &command_line_prepend_wrapper;
+    api.CommandLineGetGlobal = &command_line_get_global;
     api.GetAllBrowserIds = &get_all_browser_ids;
     api.GetBrowserById = &get_browser_by_id;
     api.NotifyBrowserCreated = &notify_browser_created;
@@ -1362,6 +1516,28 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_before_command_line_processing_fptr);
     if (rc || !on_before_command_line_processing_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_command_line_processing");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnBeforeChildProcessLaunch"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBeforeChildProcessLaunchDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_before_child_process_launch_fptr);
+    if (rc || !on_before_child_process_launch_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_child_process_launch");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnAlreadyRunningAppRelaunch"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnAlreadyRunningAppRelaunchDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_already_running_app_relaunch_fptr);
+    if (rc || !on_already_running_app_relaunch_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_already_running_app_relaunch");
     }
 
     return 0;

@@ -12,6 +12,15 @@ ClientAppRenderer::ClientAppRenderer() {
   CreateDelegates(delegates_);
 }
 
+void ClientAppRenderer::OnBeforeCommandLineProcessing(
+    const CefString& process_type,
+    CefRefPtr<CefCommandLine> command_line) {
+  DelegateSet::iterator it = delegates_.begin();
+  for (; it != delegates_.end(); ++it) {
+    (*it)->OnBeforeCommandLineProcessing(this, command_line);
+  }
+}
+
 void ClientAppRenderer::OnWebKitInitialized() {
   DelegateSet::iterator it = delegates_.begin();
   for (; it != delegates_.end(); ++it) {

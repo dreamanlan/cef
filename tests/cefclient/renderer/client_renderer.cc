@@ -12,6 +12,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_message_router.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
+#include "tests/shared/common/client_app.h"
 
 namespace client::renderer {
 
@@ -169,6 +170,15 @@ class RendererLoadHandler : public CefLoadHandler {
 class ClientRenderDelegate : public ClientAppRenderer::Delegate {
  public:
   ClientRenderDelegate() : renderer_load_handler_(new RendererLoadHandler()) {}
+
+  void OnBeforeCommandLineProcessing(
+      CefRefPtr<ClientAppRenderer> app,
+      CefRefPtr<CefCommandLine> command_line) override {
+    if (on_before_command_line_processing_fptr) {
+      int process_type = static_cast<int>(ClientApp::GetProcessType(command_line));
+      on_before_command_line_processing_fptr(process_type, command_line.get());
+    }
+  }
 
   CefRefPtr<CefLoadHandler> GetLoadHandler(
       CefRefPtr<ClientAppRenderer> app) override {

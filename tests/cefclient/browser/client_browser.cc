@@ -70,6 +70,16 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     }
   }
 
+  void OnBeforeChildProcessLaunch(
+      CefRefPtr<ClientAppBrowser> app,
+      CefRefPtr<CefCommandLine> command_line) override {
+    // Call C# callback to allow DSL script to process child process command line
+    if (on_before_child_process_launch_fptr) {
+      int process_type = static_cast<int>(ClientApp::GetProcessType(command_line));
+      on_before_child_process_launch_fptr(process_type, command_line.get());
+    }
+  }
+
   bool OnAlreadyRunningAppRelaunch(
       CefRefPtr<ClientAppBrowser> app,
       CefRefPtr<CefCommandLine> command_line,
@@ -84,6 +94,15 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
       if (command_line->HasSwitch(kIgnoredSwitche)) {
         LOG(WARNING) << "The --" << kIgnoredSwitche
                      << " command-line switch is ignored on app relaunch.";
+      }
+    }
+
+    // Call C# callback to allow DSL script to handle app relaunch
+    if (on_already_running_app_relaunch_fptr) {
+      bool ret = false;
+      std::string cur_dir = current_directory.ToString();
+      if (on_already_running_app_relaunch_fptr(command_line.get(), cur_dir.c_str(), &ret)) {
+        return ret;
       }
     }
 

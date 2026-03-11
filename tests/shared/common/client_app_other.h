@@ -15,6 +15,11 @@ class ClientAppOther : public ClientApp {
  public:
   ClientAppOther();
 
+  // CefApp methods.
+  void OnBeforeCommandLineProcessing(
+      const CefString& process_type,
+      CefRefPtr<CefCommandLine> command_line) override;
+
  private:
   IMPLEMENT_REFCOUNTING(ClientAppOther);
   DISALLOW_COPY_AND_ASSIGN(ClientAppOther);

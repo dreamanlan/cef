@@ -130,6 +130,13 @@ bool ClientAppBrowser::OnAlreadyRunningAppRelaunch(
   return false;
 }
 
+void ClientAppBrowser::OnBeforeChildProcessLaunch(
+    CefRefPtr<CefCommandLine> command_line) {
+  for (auto& delegate : delegates_) {
+    delegate->OnBeforeChildProcessLaunch(this, command_line);
+  }
+}
+
 void ClientAppBrowser::OnScheduleMessagePumpWork(int64_t delay) {
   // Only used when `--external-message-pump` is passed via the command-line.
   MainMessageLoopExternalPump* message_pump =
