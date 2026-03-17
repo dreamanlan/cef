@@ -3,6 +3,7 @@
 #include "include/cef_command_line.h"
 #include "include/cef_browser.h"
 #include "include/cef_frame.h"
+#include "include/cef_request.h"
 #include "JavaScriptCaller.h"
 #include "path_utils.h"
 
@@ -481,6 +482,8 @@ on_execute_metadsl_fn on_execute_metadsl_fptr = nullptr;
 on_before_command_line_processing_fn on_before_command_line_processing_fptr = nullptr;
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
+on_before_browse_fn on_before_browse_fptr = nullptr;
+on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
 
 // Native api
 typedef void (*host_native_log_fn)(const char* msg, void* browser, void* frame);
@@ -555,6 +558,20 @@ typedef void* (*frame_get_browser_fn)(void* frame);
 // Frame actions
 typedef void (*frame_load_url_fn)(void* frame, const char* url);
 
+// CefRequest properties
+typedef bool (*request_is_read_only_fn)(void* request);
+typedef const char* (*request_get_url_fn)(void* request);
+typedef const char* (*request_get_method_fn)(void* request);
+typedef const char* (*request_get_referrer_url_fn)(void* request);
+typedef int (*request_get_referrer_policy_fn)(void* request);
+typedef const char* (*request_get_header_map_fn)(void* request);
+typedef const char* (*request_get_header_by_name_fn)(void* request, const char* name);
+typedef int (*request_get_flags_fn)(void* request);
+typedef const char* (*request_get_first_party_for_cookies_fn)(void* request);
+typedef int (*request_get_resource_type_fn)(void* request);
+typedef int (*request_get_transition_type_fn)(void* request);
+typedef uint64_t (*request_get_identifier_fn)(void* request);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -618,6 +635,19 @@ typedef struct {
     frame_get_browser_fn FrameGetBrowser;
     // Frame actions
     frame_load_url_fn FrameLoadUrl;
+    // CefRequest properties
+    request_is_read_only_fn RequestIsReadOnly;
+    request_get_url_fn RequestGetUrl;
+    request_get_method_fn RequestGetMethod;
+    request_get_referrer_url_fn RequestGetReferrerUrl;
+    request_get_referrer_policy_fn RequestGetReferrerPolicy;
+    request_get_header_map_fn RequestGetHeaderMap;
+    request_get_header_by_name_fn RequestGetHeaderByName;
+    request_get_flags_fn RequestGetFlags;
+    request_get_first_party_for_cookies_fn RequestGetFirstPartyForCookies;
+    request_get_resource_type_fn RequestGetResourceType;
+    request_get_transition_type_fn RequestGetTransitionType;
+    request_get_identifier_fn RequestGetIdentifier;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -853,7 +883,7 @@ const char* command_line_get_argv(void* command_line)
     if (argv.empty()) return nullptr;
     std::string result;
     for (const auto& arg : argv) {
-        if (!result.empty()) result += "|";
+        if (!result.empty()) result += "\n";
         result += arg.ToString();
     }
     return alloc_string(result);
@@ -868,7 +898,7 @@ const char* command_line_get_switches(void* command_line)
     if (switches.empty()) return nullptr;
     std::string result;
     for (const auto& pair : switches) {
-        if (!result.empty()) result += "|";
+        if (!result.empty()) result += "\n";
         result += pair.first.ToString() + "=" + pair.second.ToString();
     }
     return alloc_string(result);
@@ -883,7 +913,7 @@ const char* command_line_get_arguments(void* command_line)
     if (arguments.empty()) return nullptr;
     std::string result;
     for (const auto& arg : arguments) {
-        if (!result.empty()) result += "|";
+        if (!result.empty()) result += "\n";
         result += arg.ToString();
     }
     return alloc_string(result);
@@ -1193,6 +1223,98 @@ void frame_load_url(void* frame, const char* url)
     reinterpret_cast<CefFrame*>(frame)->LoadURL(url);
 }
 
+// --- CefRequest properties ---
+
+bool request_is_read_only(void* request)
+{
+    if (!request) return true;
+    return reinterpret_cast<CefRequest*>(request)->IsReadOnly();
+}
+
+const char* request_get_url(void* request)
+{
+    if (!request) return nullptr;
+    std::string url = reinterpret_cast<CefRequest*>(request)->GetURL().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+const char* request_get_method(void* request)
+{
+    if (!request) return nullptr;
+    std::string method = reinterpret_cast<CefRequest*>(request)->GetMethod().ToString();
+    if (method.empty()) return nullptr;
+    return alloc_string(method);
+}
+
+const char* request_get_referrer_url(void* request)
+{
+    if (!request) return nullptr;
+    std::string url = reinterpret_cast<CefRequest*>(request)->GetReferrerURL().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+int request_get_referrer_policy(void* request)
+{
+    if (!request) return 0;
+    return static_cast<int>(reinterpret_cast<CefRequest*>(request)->GetReferrerPolicy());
+}
+
+const char* request_get_header_map(void* request)
+{
+    if (!request) return nullptr;
+    CefRequest::HeaderMap headerMap;
+    reinterpret_cast<CefRequest*>(request)->GetHeaderMap(headerMap);
+    if (headerMap.empty()) return nullptr;
+    std::string result;
+    for (const auto& pair : headerMap) {
+        if (!result.empty()) result += "\n";
+        result += pair.first.ToString() + ":" + pair.second.ToString();
+    }
+    return alloc_string(result);
+}
+
+const char* request_get_header_by_name(void* request, const char* name)
+{
+    if (!request || !name) return nullptr;
+    std::string value = reinterpret_cast<CefRequest*>(request)->GetHeaderByName(name).ToString();
+    if (value.empty()) return nullptr;
+    return alloc_string(value);
+}
+
+int request_get_flags(void* request)
+{
+    if (!request) return 0;
+    return reinterpret_cast<CefRequest*>(request)->GetFlags();
+}
+
+const char* request_get_first_party_for_cookies(void* request)
+{
+    if (!request) return nullptr;
+    std::string url = reinterpret_cast<CefRequest*>(request)->GetFirstPartyForCookies().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+int request_get_resource_type(void* request)
+{
+    if (!request) return 0;
+    return static_cast<int>(reinterpret_cast<CefRequest*>(request)->GetResourceType());
+}
+
+int request_get_transition_type(void* request)
+{
+    if (!request) return 0;
+    return static_cast<int>(reinterpret_cast<CefRequest*>(request)->GetTransitionType());
+}
+
+uint64_t request_get_identifier(void* request)
+{
+    if (!request) return 0;
+    return reinterpret_cast<CefRequest*>(request)->GetIdentifier();
+}
+
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
@@ -1255,6 +1377,18 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.FrameGetParent = &frame_get_parent;
     api.FrameGetBrowser = &frame_get_browser;
     api.FrameLoadUrl = &frame_load_url;
+    api.RequestIsReadOnly = &request_is_read_only;
+    api.RequestGetUrl = &request_get_url;
+    api.RequestGetMethod = &request_get_method;
+    api.RequestGetReferrerUrl = &request_get_referrer_url;
+    api.RequestGetReferrerPolicy = &request_get_referrer_policy;
+    api.RequestGetHeaderMap = &request_get_header_map;
+    api.RequestGetHeaderByName = &request_get_header_by_name;
+    api.RequestGetFlags = &request_get_flags;
+    api.RequestGetFirstPartyForCookies = &request_get_first_party_for_cookies;
+    api.RequestGetResourceType = &request_get_resource_type;
+    api.RequestGetTransitionType = &request_get_transition_type;
+    api.RequestGetIdentifier = &request_get_identifier;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -1538,6 +1672,28 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_already_running_app_relaunch_fptr);
     if (rc || !on_already_running_app_relaunch_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_already_running_app_relaunch");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnBeforeBrowse"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBeforeBrowseDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_before_browse_fptr);
+    if (rc || !on_before_browse_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_browse");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnBeforeResourceLoad"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBeforeResourceLoadDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_before_resource_load_fptr);
+    if (rc || !on_before_resource_load_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_resource_load");
     }
 
     return 0;

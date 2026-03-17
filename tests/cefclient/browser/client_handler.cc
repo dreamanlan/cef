@@ -500,13 +500,13 @@ ClientHandler::ClientHandler(Delegate* delegate,
                              bool is_osr,
                              bool with_controls,
                              const std::string& startup_url)
-    : use_views_(delegate ? delegate->UseViews()
+    : BaseClientHandler(startup_url),
+      use_views_(delegate ? delegate->UseViews()
                           : MainContext::Get()->UseViewsGlobal()),
       use_alloy_style_(delegate ? delegate->UseAlloyStyle()
                                 : MainContext::Get()->UseAlloyStyleGlobal()),
       is_osr_(is_osr),
       with_controls_(with_controls),
-      startup_url_(startup_url),
       delegate_(delegate),
       console_log_file_(MainContext::Get()->GetConsoleLogPath()) {
   // This handler is used with RootWindows that are explicitly tracked by
@@ -605,23 +605,6 @@ bool ClientHandler::OnProcessMessageReceived(
 
   if (message_name == bv_utils::kTestSendSMRProcessMessage) {
     OnTestSMRProcessMessageReceived(frame, message, finish_time);
-    return true;
-  }
-
-  if (on_receive_cef_message_fptr) {
-    size_t size = message->GetArgumentList()->GetSize();
-    std::vector<std::string> args_vec;
-    std::vector<const char*> args_ptrs;
-
-    for (size_t i = 0; i < size; i++) {
-      args_vec.push_back(message->GetArgumentList()->GetString(i).ToString());
-    }
-
-    for (const auto& arg : args_vec) {
-      args_ptrs.push_back(arg.c_str());
-    }
-
-    on_receive_cef_message_fptr(message_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(size), browser.get(), frame.get(), static_cast<int>(source_process));
     return true;
   }
 
@@ -1093,10 +1076,6 @@ void ClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   }
 
   NotifyBrowserCreated(browser);
-
-  if (on_browser_init_fptr) {
-    on_browser_init_fptr(browser.get());
-  }
 }
 
 bool ClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
@@ -1112,12 +1091,6 @@ bool ClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
 void ClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
-  printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Browser %d closing", browser->GetIdentifier());
-
-  if (on_browser_finalize_fptr) {
-    printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Calling on_browser_finalize_fptr");
-    on_browser_finalize_fptr(browser.get());
-  }
   // Close all popups that have this browser as the opener.
   OnBeforePopupAborted(browser, /*popup_id=*/-1);
 
@@ -1135,130 +1108,6 @@ void ClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
                                           canGoForward);
 
   NotifyLoadingState(isLoading, canGoBack, canGoForward);
-
-  printf_log(LOG_SEVERITY_INFO, "OnLoadingStateChange: Browser %d isLoading=%d canGoBack=%d canGoForward=%d", browser->GetIdentifier(), isLoading, canGoBack, canGoForward);
-
-  if (on_loading_state_change_fptr) {
-    CefRefPtr<CefFrame> frame = browser->GetMainFrame();
-    std::string url_str;
-    if (frame) {
-      url_str = frame->GetURL();
-    }
-    on_loading_state_change_fptr(browser.get(), frame.get(), url_str.empty() ? "" : url_str.c_str(), isLoading, canGoBack, canGoForward);
-  }
-}
-
-void ClientHandler::OnLoadStart(CefRefPtr<CefBrowser> browser,
-  CefRefPtr<CefFrame> frame,
-  TransitionType transition_type)
-{
-  printf_log(LOG_SEVERITY_INFO, "OnLoadStart: Browser %d frame=%s transition_type=%d isMain=%d", browser->GetIdentifier(), frame->GetURL().ToString().c_str(), static_cast<int>(transition_type), frame->IsMain());
-
-  if (on_load_start_fptr) {
-    std::string url = frame->GetURL();
-    on_load_start_fptr(browser.get(), frame.get(), url.c_str(), static_cast<int>(transition_type), frame->IsMain());
-  }
-}
-
-void ClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
-  CefRefPtr<CefFrame> frame,
-  int httpStatusCode)
-{
-  printf_log(LOG_SEVERITY_INFO, "OnLoadEnd: Browser %d frame=%s httpStatusCode=%d inject_all_frame=%d isMain=%d", browser->GetIdentifier(), frame->GetURL().ToString().c_str(), httpStatusCode, my_menu_state_.inject_all_frame, frame->IsMain());
-
-  const int max_size = 4 * 1024 * 1024;
-  if (my_menu_state_.inject_all_frame || frame->IsMain()) {
-    char* buf = new char[max_size + 1];
-    memset(buf, 0, max_size + 1);
-
-    bool use_custom_code = false;
-    if (on_load_end_fptr) {
-      std::string url = frame->GetURL().ToString();
-      int code_size = max_size;
-      use_custom_code = on_load_end_fptr(browser.get(), frame.get(), url.c_str(), httpStatusCode, my_menu_state_.inject_all_frame, frame->IsMain(), buf, code_size);
-      if (use_custom_code && code_size > 0) {
-        buf[code_size] = '\0';
-      }
-    }
-
-    if (!use_custom_code) {
-      //std::string file = MainContext::Get()->GetAppWorkingDirectory() + "managed/inject.js";
-#if defined(__APPLE__)
-      std::string baseDir = GetMacAppDirPath();
-      std::string lastDirName = GetMacAppDirName();
-      if (lastDirName == "cefclientdbg.app") {
-        baseDir += "/../cefclient.app/Contents";
-      }
-      else {
-        baseDir += "/Contents";
-      }
-#else
-      std::string baseDir = GetExeDir();
-      std::string lastDirName = GetExeLastDirName();
-      if (lastDirName == "cefclientdbg") {
-        baseDir += "/../cefclient";
-      }
-#endif
-      std::string file = baseDir + "/managed/inject.js";
-      FILE* fp = fopen(file.c_str(), "rb");
-      if (fp != NULL) {
-        fread(buf, 1, max_size, fp);
-        fclose(fp);
-      } else {
-        // Log error if file cannot be opened
-        std::string error_msg = "Failed to open inject.js from: " + file;
-        printf_log(LOG_SEVERITY_ERROR, "%s", error_msg.c_str());
-        delete[] buf;
-        return;
-      }
-    }
-
-    if (buf[0] != '\0') {
-      frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
-    }
-    delete[] buf;
-  }
-}
-
-std::string GetDataURI(const std::string& data, const std::string& mime_type) {
-  return "data:" + mime_type + ";base64," +
-         CefURIEncode(CefBase64Encode(data.data(), data.size()), false)
-             .ToString();
-}
-
-void ClientHandler::OnLoadError(CefRefPtr<CefBrowser> browser,
-                                CefRefPtr<CefFrame> frame,
-                                ErrorCode errorCode,
-                                const CefString& errorText,
-                                const CefString& failedUrl) {
-  CEF_REQUIRE_UI_THREAD();
-
-  // Don't display an error for downloaded files.
-  if (errorCode == ERR_ABORTED) {
-    return;
-  }
-
-  // Don't display an error for external protocols that we allow the OS to
-  // handle. See OnProtocolExecution().
-  if (errorCode == ERR_UNKNOWN_URL_SCHEME) {
-    std::string urlStr = frame->GetURL();
-    if (urlStr.find("spotify:") == 0) {
-      return;
-    }
-  }
-
-  // Display a load error message using a data: URI.
-  std::stringstream ss;
-  ss << "<html><body bgcolor=\"white\">"
-        "<h2>Failed to load URL "
-     << std::string(failedUrl) << " with error " << std::string(errorText)
-     << " (" << errorCode << ").</h2></body></html>";
-
-  frame->LoadURL(GetDataURI(ss.str(), "text/html"));
-
-  if (on_load_error_fptr) {
-    on_load_error_fptr(browser.get(), frame.get(), errorCode, errorText.ToString().c_str(), failedUrl.ToString().c_str());
-  }
 }
 
 bool ClientHandler::OnRequestMediaAccessPermission(
@@ -1385,49 +1234,6 @@ bool ClientHandler::OnSelectClientCertificate(
   }
 
   return true;
-}
-
-void ClientHandler::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
-                                              TerminationStatus status,
-                                              int error_code,
-                                              const CefString& error_string) {
-  CEF_REQUIRE_UI_THREAD();
-  BaseClientHandler::OnRenderProcessTerminated(browser, status, error_code,
-                                               error_string);
-
-  printf_log(LOG_SEVERITY_INFO,
-            "OnRenderProcessTerminated: Browser %d, status=%d, error_code=%d, error_string=%s",
-            browser->GetIdentifier(), static_cast<int>(status), error_code,
-            error_string.ToString().c_str());
-
-  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
-  std::string url = frame ? frame->GetURL() : "";
-
-  if (on_render_process_terminated_fptr) {
-    on_render_process_terminated_fptr(browser.get(), frame.get(), startup_url_.c_str(), url.c_str(), static_cast<int>(status), error_code, error_string.ToString().c_str());
-  }
-
-  // Don't reload if there's no start URL, or if the crash URL was specified.
-  if (startup_url_.empty() || startup_url_ == "chrome://crash") {
-    return;
-  }
-
-  // Don't reload if the termination occurred before any URL had successfully
-  // loaded.
-  if (url.empty()) {
-    return;
-  }
-
-  // Convert URLs to lowercase for easier comparison.
-  url = AsciiStrToLower(url);
-  const std::string& start_url = AsciiStrToLower(startup_url_);
-
-  // Don't reload the URL that just resulted in termination.
-  if (url.find(start_url) == 0) {
-    return;
-  }
-
-  frame->LoadURL(startup_url_);
 }
 
 void ClientHandler::OnDocumentAvailableInMainFrame(
@@ -1720,7 +1526,7 @@ void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
   model->AddCheckItem(CLIENT_ID_INJECT_ALL_FRAME, "Inject All Frame");
 
   // Check the check item.
-  if (my_menu_state_.inject_all_frame) {
+  if (inject_all_frame_) {
     model->SetChecked(CLIENT_ID_INJECT_ALL_FRAME, true);
   }
 
@@ -1792,7 +1598,7 @@ void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
 bool ClientHandler::ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command_id) {
   if (command_id == CLIENT_ID_INJECT_ALL_FRAME) {
     // Toggle the check item.
-    my_menu_state_.inject_all_frame = !my_menu_state_.inject_all_frame;
+    inject_all_frame_ = !inject_all_frame_;
     return true;
   } else if (command_id >= CLIENT_ID_THEME_MODE_FIRST &&
              command_id <= CLIENT_ID_THEME_COLOR_LAST) {

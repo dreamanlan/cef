@@ -9,8 +9,10 @@
 
 namespace client {
 
-DefaultClientHandler::DefaultClientHandler(std::optional<bool> use_alloy_style)
-    : use_alloy_style_(
+DefaultClientHandler::DefaultClientHandler(std::optional<bool> use_alloy_style,
+                                           const std::string& startup_url)
+    : BaseClientHandler(startup_url),
+      use_alloy_style_(
           use_alloy_style.value_or(MainContext::Get()->UseAlloyStyleGlobal())) {
 }
 

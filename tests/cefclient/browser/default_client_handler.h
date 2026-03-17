@@ -18,7 +18,8 @@ class DefaultClientHandler : public BaseClientHandler {
  public:
   // If |use_alloy_style| is nullopt the global default will be used.
   explicit DefaultClientHandler(
-      std::optional<bool> use_alloy_style = std::nullopt);
+      std::optional<bool> use_alloy_style = std::nullopt,
+      const std::string& startup_url = std::string());
 
   // Returns the DefaultClientHandler for |client|, or nullptr if |client| is
   // not a DefaultClientHandler.

@@ -254,20 +254,6 @@ class ClientHandler : public BaseClientHandler,
                             bool canGoBack,
                             bool canGoForward) override;
 
-  void OnLoadStart(CefRefPtr<CefBrowser> browser,
-    CefRefPtr<CefFrame> frame,
-    TransitionType transition_type) override;
-
-  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
-    CefRefPtr<CefFrame> frame,
-    int httpStatusCode) override;
-
-  void OnLoadError(CefRefPtr<CefBrowser> browser,
-                   CefRefPtr<CefFrame> frame,
-                   ErrorCode errorCode,
-                   const CefString& errorText,
-                   const CefString& failedUrl) override;
-
   // CefPermissionHandler methods
   bool OnRequestMediaAccessPermission(
       CefRefPtr<CefBrowser> browser,
@@ -311,10 +297,6 @@ class ClientHandler : public BaseClientHandler,
       int port,
       const X509CertificateList& certificates,
       CefRefPtr<CefSelectClientCertificateCallback> callback) override;
-  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
-                                 TerminationStatus status,
-                                 int error_code,
-                                 const CefString& error_string) override;
   void OnDocumentAvailableInMainFrame(CefRefPtr<CefBrowser> browser) override;
 
   // CefResourceRequestHandler methods
@@ -341,6 +323,7 @@ class ClientHandler : public BaseClientHandler,
 
   // Returns the startup URL.
   std::string startup_url() const { return startup_url_; }
+
 
   // Set/get whether the client should download favicon images. Only safe to
   // call immediately after client creation or on the browser process UI thread.
@@ -399,7 +382,7 @@ class ClientHandler : public BaseClientHandler,
   const bool with_controls_;
 
   // The startup URL.
-  const std::string startup_url_;
+  // Note: startup_url_ is inherited from BaseClientHandler.
 
   // True if mouse cursor change is disabled.
   bool mouse_cursor_change_disabled_;
@@ -432,7 +415,6 @@ class ClientHandler : public BaseClientHandler,
   // Track state information for the text context menu.
   struct MyMenuState {
     MyMenuState() = default;
-    bool inject_all_frame = false;
     int chrome_theme_mode_item = -1;
     int chrome_theme_color_item = -1;
   } my_menu_state_;

@@ -43,6 +43,8 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** arg
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int* out_return_value);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -69,6 +71,8 @@ extern on_execute_metadsl_fn on_execute_metadsl_fptr;
 extern on_before_command_line_processing_fn on_before_command_line_processing_fptr;
 extern on_before_child_process_launch_fn on_before_child_process_launch_fptr;
 extern on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr;
+extern on_before_browse_fn on_before_browse_fptr;
+extern on_before_resource_load_fn on_before_resource_load_fptr;
 
 // Cleanup browser id list (call after on_finalize_fptr on process exit)
 extern void cleanup_browser_ids();

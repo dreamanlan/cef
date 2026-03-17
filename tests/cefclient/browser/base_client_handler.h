@@ -6,6 +6,8 @@
 #define CEF_TESTS_CEFCLIENT_BROWSER_BASE_CLIENT_HANDLER_H_
 #pragma once
 
+#include <string>
+
 #include "include/cef_client.h"
 #include "include/wrapper/cef_message_router.h"
 #include "tests/cefclient/browser/test_runner.h"
@@ -20,7 +22,7 @@ class BaseClientHandler : public CefClient,
                           public CefRequestHandler,
                           public CefResourceRequestHandler {
  public:
-  BaseClientHandler();
+  explicit BaseClientHandler(const std::string& startup_url = std::string());
 
   // Returns the BaseClientHandler associated with |browser|.
   static CefRefPtr<BaseClientHandler> GetForBrowser(
@@ -51,6 +53,17 @@ class BaseClientHandler : public CefClient,
                             bool isLoading,
                             bool canGoBack,
                             bool canGoForward) override;
+  void OnLoadStart(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   TransitionType transition_type) override;
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override;
+  void OnLoadError(CefRefPtr<CefBrowser> browser,
+                   CefRefPtr<CefFrame> frame,
+                   ErrorCode errorCode,
+                   const CefString& errorText,
+                   const CefString& failedUrl) override;
 
   // CefRequestHandler methods
   bool OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
@@ -119,6 +132,11 @@ class BaseClientHandler : public CefClient,
   }
 
   void set_track_as_other_browser(bool val) { track_as_other_browser_ = val; }
+
+  // The startup URL.
+  std::string startup_url_;
+  // Whether to inject JS into all frames (shared across all handlers).
+  static bool inject_all_frame_;
 
  private:
   // True if this handler should call
