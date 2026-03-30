@@ -198,12 +198,15 @@ void MainContextImpl::PopulateSettings(CefSettings* settings) {
 
   // Set application-specific cache path to avoid process singleton conflicts
 #if defined(__APPLE__)
-  CefString(&settings->cache_path) = GetMacAppDirPath() + "/Contents/cefclient_cache";
+  CefString(&settings->root_cache_path) =
+      GetMacAppDirPath() + "/Contents/cefclient_cache";
 #else
   CefString(&settings->root_cache_path) = GetExeDir() + "/cefclient_cache";
 #endif
-  CefString(&settings->cache_path) =
-      command_line_->GetSwitchValue(switches::kCachePath);
+  if (command_line_->HasSwitch(switches::kCachePath)) {
+    CefString(&settings->cache_path) =
+        command_line_->GetSwitchValue(switches::kCachePath);
+  }
 
   if (use_windowless_rendering_) {
     settings->windowless_rendering_enabled = true;
