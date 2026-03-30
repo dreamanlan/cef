@@ -146,7 +146,11 @@ CefRefPtr<CefCommandLine> MainContextImpl::GetCommandLine() {
 }
 
 std::string MainContextImpl::GetConsoleLogPath() {
+#if defined(__APPLE__)
+  return GetMacAppSupportDir() + "console.log";
+#else
   return GetAppWorkingDirectory() + "console.log";
+#endif
 }
 
 std::string MainContextImpl::GetMainURL(
@@ -198,8 +202,9 @@ void MainContextImpl::PopulateSettings(CefSettings* settings) {
 
   // Set application-specific cache path to avoid process singleton conflicts
 #if defined(__APPLE__)
-  CefString(&settings->root_cache_path) =
-      GetMacAppDirPath() + "/Contents/cefclient_cache";
+  std::string appSupportDir = GetMacAppSupportDir();
+  CefString(&settings->root_cache_path) = appSupportDir + "cache";
+  CefString(&settings->log_file) = appSupportDir + "debug.log";
 #else
   CefString(&settings->root_cache_path) = GetExeDir() + "/cefclient_cache";
 #endif

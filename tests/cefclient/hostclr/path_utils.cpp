@@ -124,6 +124,19 @@ std::string GetMacAppDirPath() {
 #endif
 }
 
+std::string GetMacAppSupportDir() {
+#if defined(__APPLE__)
+    const char* home = getenv("HOME");
+    if (!home || home[0] == '\0')
+        return std::string();
+
+    std::string dir = std::string(home) + "/Library/Application Support/cefclient/";
+    return dir;
+#else
+    return std::string();
+#endif
+}
+
 std::string GetMacAppDirName() {
     std::string appPath = GetMacAppDirPath();
     if (appPath.empty())
