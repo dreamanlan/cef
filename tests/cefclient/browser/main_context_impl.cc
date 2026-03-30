@@ -204,7 +204,6 @@ void MainContextImpl::PopulateSettings(CefSettings* settings) {
 #if defined(__APPLE__)
   std::string appSupportDir = GetMacAppSupportDir();
   CefString(&settings->root_cache_path) = appSupportDir + "cache";
-  CefString(&settings->cache_path) = appSupportDir + "cache";
   CefString(&settings->log_file) = appSupportDir + "debug.log";
 #else
   CefString(&settings->root_cache_path) = GetExeDir() + "/cefclient_cache";
