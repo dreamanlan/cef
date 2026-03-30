@@ -115,3 +115,16 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
  cd ..
  autoninja -C out\Release_GN_x64 cef
 
+<<<<<<======
+注意：在mac上，如果使用打开了chrome风格的窗口（非cefclient root窗口），关闭这个窗口或退出cefclient时会crash，修复方法如下：
+
+修改 1：析构函数中移除 tab_search_bubble_host_.reset()
+在 BrowserView::~BrowserView() 中，删掉原来的 tab_search_bubble_host_.reset();（因为它放在这里太晚了，toolbar 子 View 已经被销毁了）。
+
+修改 2：WillDestroyToolbar() 中添加 tab_search_bubble_host_.reset()
+在 BrowserView::WillDestroyToolbar() 方法中，在 autofill_bubble_handler_.reset() 之前添加 tab_search_bubble_host_.reset();，确保在 toolbar 子 View 被销毁前先释放掉持有 anchor_view_（raw_ptr<views::View>）的 WebUIBubbleManager。
+
+本质就是把 tab_search_bubble_host_.reset() 从析构函数挪到了 WillDestroyToolbar() 中，让它在正确的时机（toolbar 子 View 销毁之前）执行，从而避免 DanglingPtr 崩溃。
+
+然后 patch 文件 chrome_runtime_views.patch 需要同步更新，记录这两处对 browser_view.cc 的修改。
+>>>>>>======

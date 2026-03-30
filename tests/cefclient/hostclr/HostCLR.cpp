@@ -65,7 +65,6 @@ bool IsMemoryReadable(HANDLE process, LPCVOID address) {
 #include <signal.h>
 #include <sys/sysctl.h>
 #include <mach-o/dyld.h>
-#include <os/log.h>
 #include "coreclr/nethost.h"
 #include "coreclr/coreclr_delegates.h"
 #include "coreclr/hostfxr.h"
@@ -214,8 +213,14 @@ void printf_log(LogSeverity severity, const char* fmt, ...)
     va_start(vl, fmt);
     char buffer[4097];
     int len = vsnprintf(buffer, sizeof(buffer) - 1, fmt, vl);
-    buffer[len] = '\0';
     va_end(vl);
+    // Guard against vsnprintf returning negative (error) or exceeding buffer size
+    if (len < 0) {
+        len = 0;
+    } else if (len >= static_cast<int>(sizeof(buffer) - 1)) {
+        len = static_cast<int>(sizeof(buffer) - 1);
+    }
+    buffer[len] = '\0';
 
     if (severity == LOG_SEVERITY_ERROR) {
         LOG(ERROR) << buffer;
@@ -229,9 +234,9 @@ void printf_log(LogSeverity severity, const char* fmt, ...)
     std::wstring wbuffer = Utf8ToWstring(buffer);
     ::OutputDebugStringW(wbuffer.c_str());
 #elif defined(__APPLE__)
-    os_log_with_type(OS_LOG_DEFAULT,
-        severity == LOG_SEVERITY_ERROR ? OS_LOG_TYPE_ERROR : OS_LOG_TYPE_DEFAULT,
-        "%{public}s", buffer);
+    // Avoid os_log_with_type which can conflict with .NET CLR signal handlers,
+    // causing the main thread to hang during PAL_DispatchException.
+    fprintf(stderr, "%s\n", buffer);
 #elif defined(__linux__)
     syslog(severity == LOG_SEVERITY_ERROR ? LOG_ERR : LOG_WARNING,
         "%s", buffer);
@@ -675,7 +680,8 @@ void host_native_log(const char* msg, void* browser, void* frame)
     std::wstring wmsg = Utf8ToWstring(msg);
     ::OutputDebugStringW(wmsg.c_str());
 #elif defined(__APPLE__)
-    os_log(OS_LOG_DEFAULT, "%{public}s", msg);
+    // Avoid os_log which can conflict with .NET CLR signal handlers.
+    fprintf(stderr, "%s\n", msg);
 #elif defined(__linux__)
     syslog(LOG_WARNING, "%s", msg);
 #endif
