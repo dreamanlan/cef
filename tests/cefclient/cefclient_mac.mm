@@ -545,7 +545,10 @@ namespace client {
 namespace {
 
 int RunMain(int argc, char* argv[]) {
-  // Initialize ScopedEarlySupport for early logging support before CEF initialization
+  // Scope block for ScopedEarlySupport - must end before CEF library is loaded,
+  // otherwise all LOG() calls will go through ScopedEarlySupport (stderr) instead
+  // of cef_log (debug.log file) after CEF initialization.
+  {
   cef::logging::ScopedEarlySupport::Config config = {
       cef::logging::LOG_WARNING,  // min_log_level
       0,                         // vlog_level
@@ -596,8 +599,7 @@ int RunMain(int argc, char* argv[]) {
       break;
     }
 
-    // Log error without CEF logging (CEF not loaded yet)
-    fprintf(stderr, "Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d\n",
+    printf_log(LOG_SEVERITY_ERROR, "Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d",
             r, detailed_rc, attempt, max_attempts, clr_process_type);
 
     if (attempt < max_attempts) {
@@ -609,9 +611,9 @@ int RunMain(int argc, char* argv[]) {
   if (r != 0) {
     // Only show alert in browser process to avoid crashes in sub-processes
     if (clr_process_type == 0) {
-      fprintf(stderr, "CLR initialization failed after %d attempts.\n"
-                      "Return code: %d\nDetailed error code: %d (0x%08X)\n"
-                      "Please check .NET runtime installation and restart later.\n",
+      printf_log(LOG_SEVERITY_ERROR, "CLR initialization failed after %d attempts. "
+                      "Return code: %d, Detailed error code: %d (0x%08X). "
+                      "Please check .NET runtime installation and restart later.",
               max_attempts, r, detailed_rc, static_cast<unsigned int>(detailed_rc));
     }
     return 1;  // Exit with error code before CEF initialization
@@ -620,8 +622,7 @@ int RunMain(int argc, char* argv[]) {
   // Load .NET methods
   r = load_dotnet_method(is_debug, detailed_rc);
   if (r != 0) {
-    // Log error without CEF logging (CEF not loaded yet)
-    fprintf(stderr, "Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d\n",
+    printf_log(LOG_SEVERITY_ERROR, "Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d",
             r, detailed_rc, clr_process_type);
     return 1;
   }
@@ -639,6 +640,8 @@ int RunMain(int argc, char* argv[]) {
     }
     on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type, appDir.c_str(), true);
   }
+
+  }  // End of ScopedEarlySupport scope - LOG() will now use cef_log after CEF loads.
 
   // Load the CEF framework library at runtime instead of linking directly
   // as required by the macOS sandbox implementation.
@@ -688,6 +691,12 @@ int RunMain(int argc, char* argv[]) {
 
     // Populate the settings based on command line arguments.
     context->PopulateSettings(&settings);
+
+    // Set log severity to INFO to enable all log levels (INFO, WARNING, ERROR, FATAL)
+    // By default, only WARNING and above are written to the log file
+    if (settings.log_severity == LOGSEVERITY_DEFAULT) {
+      settings.log_severity = LOGSEVERITY_INFO;
+    }
 
     // Create the main message loop object.
     std::unique_ptr<MainMessageLoop> message_loop;

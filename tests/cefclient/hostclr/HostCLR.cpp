@@ -65,10 +65,13 @@ bool IsMemoryReadable(HANDLE process, LPCVOID address) {
 #include <signal.h>
 #include <sys/sysctl.h>
 #include <mach-o/dyld.h>
+#include <os/log.h>
 #include "coreclr/nethost.h"
 #include "coreclr/coreclr_delegates.h"
 #include "coreclr/hostfxr.h"
 #endif
+#elif defined(__linux__)
+#include <syslog.h>
 #endif
 
 // Cross-platform character set conversion functions
@@ -225,6 +228,13 @@ void printf_log(LogSeverity severity, const char* fmt, ...)
     // Convert UTF-8 to wide char for OutputDebugString
     std::wstring wbuffer = Utf8ToWstring(buffer);
     ::OutputDebugStringW(wbuffer.c_str());
+#elif defined(__APPLE__)
+    os_log_with_type(OS_LOG_DEFAULT,
+        severity == LOG_SEVERITY_ERROR ? OS_LOG_TYPE_ERROR : OS_LOG_TYPE_DEFAULT,
+        "%{public}s", buffer);
+#elif defined(__linux__)
+    syslog(severity == LOG_SEVERITY_ERROR ? LOG_ERR : LOG_WARNING,
+        "%s", buffer);
 #endif
 }
 
@@ -384,7 +394,7 @@ int load_hostfxr(bool is_debug, int& out_rc)
         out_rc = rc0;
         return -1;
     }
-    printf("[native] hostfxr path: %s\n", hostfxr_path);
+    printf_log(LOG_SEVERITY_INFO, "[native] hostfxr path: %s\n", hostfxr_path);
 #endif
 
 #ifdef _WIN32
@@ -397,6 +407,8 @@ int load_hostfxr(bool is_debug, int& out_rc)
 #else
     void* hostfxr_lib = load_library(hostfxr_path);
     if (!hostfxr_lib) {
+        const char* dl_err = dlerror();
+        printf_log(LOG_SEVERITY_ERROR, "dlopen failed: %s\n", dl_err ? dl_err : "unknown error");
         return -2;
     }
 #endif
@@ -662,6 +674,10 @@ void host_native_log(const char* msg, void* browser, void* frame)
     // Convert UTF-8 to wide char for OutputDebugString
     std::wstring wmsg = Utf8ToWstring(msg);
     ::OutputDebugStringW(wmsg.c_str());
+#elif defined(__APPLE__)
+    os_log(OS_LOG_DEFAULT, "%{public}s", msg);
+#elif defined(__linux__)
+    syslog(LOG_WARNING, "%s", msg);
 #endif
 }
 void send_cef_message(const char* msg_str, const char** args, int argCount, void* browser, void* frame, int source_process_id)

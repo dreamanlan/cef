@@ -158,7 +158,10 @@ int RunMain(HINSTANCE hInstance,
             int nCmdShow,
             void* sandbox_info,
             cef_version_info_t* version_info) {
-  // Initialize ScopedEarlySupport for early logging support before CEF initialization
+  // Scope block for ScopedEarlySupport - must end before CEF library is loaded,
+  // otherwise all LOG() calls will go through ScopedEarlySupport (stderr) instead
+  // of cef_log (debug.log file) after CEF initialization.
+  {
   cef::logging::ScopedEarlySupport::Config config = {
       cef::logging::LOG_WARNING,  // min_log_level
       0,                         // vlog_level
@@ -193,12 +196,8 @@ int RunMain(HINSTANCE hInstance,
       break;
     }
 
-    // Log error without CEF logging (CEF not loaded yet)
-    wchar_t error_msg[512];
-    swprintf(error_msg, 512,
-             L"Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d",
+    printf_log(LOG_SEVERITY_ERROR, "Failed to load hostfxr: %d, detailed_rc: %d, attempt: %d/%d, process_type: %d",
              r, detailed_rc, attempt, max_attempts, static_cast<int>(simple_process_type));
-    ::OutputDebugStringW(error_msg);
 
     if (attempt < max_attempts) {
       const DWORD delay_ms = fixed_ms + (::GetTickCount() % delta_ms);
@@ -207,29 +206,12 @@ int RunMain(HINSTANCE hInstance,
   }
 
   if (r != 0) {
-    // Only show MessageBox in browser process to avoid crashes in sub-processes
+    // Only show error in browser process to avoid crashes in sub-processes
     if (simple_process_type == PROCESS_TYPE_BROWSER) {
-      // Use std::string for safer string handling
-      std::string msg = "CLR initialization failed after ";
-      msg += std::to_string(max_attempts);
-      msg += " attempts.\n\nReturn code: ";
-      msg += std::to_string(r);
-      msg += "\nDetailed error code: ";
-      msg += std::to_string(detailed_rc);
-      msg += " (0x";
-
-      char hex_buf[16];
-      snprintf(hex_buf, sizeof(hex_buf), "%08X", static_cast<unsigned int>(detailed_rc));
-      msg += hex_buf;
-      msg += ")\n\nPlease check .NET runtime installation and restart later.";
-
-      // Convert to wide char for MessageBox
-      int wide_size = ::MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, nullptr, 0);
-      if (wide_size > 0) {
-        std::wstring wide_msg(wide_size - 1, L'\0');
-        ::MultiByteToWideChar(CP_UTF8, 0, msg.c_str(), -1, &wide_msg[0], wide_size);
-        ::MessageBoxW(nullptr, wide_msg.c_str(), L"CLR Initialization Failed", MB_OK | MB_ICONERROR);
-      }
+      printf_log(LOG_SEVERITY_ERROR, "CLR initialization failed after %d attempts. "
+                      "Return code: %d, Detailed error code: %d (0x%08X). "
+                      "Please check .NET runtime installation and restart later.",
+              max_attempts, r, detailed_rc, static_cast<unsigned int>(detailed_rc));
     }
     return 1;  // Exit with error code before CEF initialization
   }
@@ -237,12 +219,8 @@ int RunMain(HINSTANCE hInstance,
   // Load .NET methods
   r = load_dotnet_method(is_debug, detailed_rc);
   if (r != 0) {
-    // Log error without CEF logging (CEF not loaded yet)
-    wchar_t error_msg[512];
-    swprintf(error_msg, 512,
-             L"Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d",
+    printf_log(LOG_SEVERITY_ERROR, "Failed to load dotnet method: %d, detailed_rc: %d, process_type: %d",
              r, detailed_rc, static_cast<int>(simple_process_type));
-    ::OutputDebugStringW(error_msg);
     return 1;
   }
 
@@ -256,6 +234,8 @@ int RunMain(HINSTANCE hInstance,
     }
     on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), static_cast<int>(simple_process_type), appDir.c_str(), false);
   }
+
+  }  // End of ScopedEarlySupport scope - LOG() will now use cef_log after CEF loads.
 
   // Now load CEF library after CLR initialization succeeded
   CefMainArgs main_args(hInstance);
