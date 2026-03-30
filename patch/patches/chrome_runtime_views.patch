@@ -201,7 +201,7 @@ index 673a1bf2acb2467aa3ac5746c4d6193fba8487f2..121986d07d325c7d628c431733a104a8
    // Adds actionable global error menu items to the menu.
    // Examples: Extension permissions and sign in errors.
 diff --git chrome/browser/ui/views/frame/browser_view.cc chrome/browser/ui/views/frame/browser_view.cc
-index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd532d5a62be 100644
+index d0cac58da0356..7be596bd1fd3b 100644
 --- chrome/browser/ui/views/frame/browser_view.cc
 +++ chrome/browser/ui/views/frame/browser_view.cc
 @@ -844,13 +844,23 @@ class BrowserView::AccessibilityModeObserver : public ui::AXModeObserver {
@@ -256,7 +256,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  
    top_container_separator_ = top_container_->AddChildView(
        ContentsSeparator::CreateContentsSeparator());
-@@ -1056,6 +1073,10 @@ BrowserView::BrowserView(Browser* browser)
+@@ -1056,19 +1073,23 @@ BrowserView::BrowserView(Browser* browser)
  }
  
  BrowserView::~BrowserView() {
@@ -267,7 +267,12 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
    // Remove the layout manager to avoid dangling. This needs to be earlier than
    // other cleanups that destroy views referenced in the layout manager.
    SetLayoutManager(nullptr);
-@@ -1068,7 +1089,9 @@ BrowserView::~BrowserView() {
+ 
+-  tab_search_bubble_host_.reset();
+-
+   // Destroy the top controls slide controller first as it depends on the
+   // tabstrip model and the browser frame.
+   top_controls_slide_controller_.reset();
  
    // All the tabs should have been destroyed already. If we were closed by the
    // OS with some tabs than the BrowserNativeWidget should have destroyed them.
@@ -278,7 +283,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  
    // Stop the animation timer explicitly here to avoid running it in a nested
    // message loop, which may run by Browser destructor.
-@@ -1166,7 +1189,7 @@ void BrowserView::SetDisableRevealerDelayForTesting(bool disable) {
+@@ -1166,7 +1187,7 @@ void BrowserView::SetDisableRevealerDelayForTesting(bool disable) {
    g_disable_revealer_delay_for_testing = disable;
  }
  
@@ -287,7 +292,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
    gfx::Rect contents_bounds = contents_container_->ConvertRectToWidget(
        contents_container_->GetLocalBounds());
  
-@@ -1188,6 +1211,16 @@ gfx::Rect BrowserView::GetFindBarBoundingBox() const {
+@@ -1188,6 +1209,16 @@ gfx::Rect BrowserView::GetFindBarBoundingBox() const {
    return contents_container_->GetMirroredRect(contents_bounds);
  }
  
@@ -304,11 +309,18 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  int BrowserView::GetTabStripHeight() const {
    // We want to return tabstrip_->height(), but we might be called in the midst
    // of layout, when that hasn't yet been updated to reflect the current state.
-@@ -1748,6 +1781,28 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
+@@ -1748,6 +1779,35 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
        ThemeProperties::kFrameHeightAboveTabs - browser_view_origin.y());
  }
  
 +void BrowserView::WillDestroyToolbar() {
++  // Reset tab search bubble host before destroying toolbar, as its
++  // WebUIBubbleManager holds a raw_ptr<views::View> anchor_view_ that
++  // points to a toolbar child view (e.g. tab_search_button). This must
++  // happen before the toolbar child views are destroyed to avoid a
++  // dangling raw_ptr when BrowserView is destroyed later (e.g. in CEF).
++  tab_search_bubble_host_.reset();
++
 +  // Reset autofill bubble handler to make sure it does not out-live toolbar,
 +  // since it is responsible for showing autofill related bubbles from toolbar's
 +  // child views and it is an observer for avatar toolbar button if any.
@@ -333,7 +345,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  bool BrowserView::IsLoadingAnimationRunning() const {
    return loading_animation_timer_.IsRunning();
  }
-@@ -2078,7 +2133,11 @@ void BrowserView::Restore() {
+@@ -2078,7 +2138,11 @@ void BrowserView::Restore() {
  
  bool BrowserView::ShouldHideUIForFullscreen() const {
    // Immersive mode needs UI for the slide-down top panel.
@@ -346,7 +358,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
      return false;
    }
  
-@@ -3258,6 +3317,9 @@ void BrowserView::ShowOneClickSigninConfirmation(
+@@ -3258,6 +3322,9 @@ void BrowserView::ShowOneClickSigninConfirmation(
  
  DownloadBubbleUIController* BrowserView::GetDownloadBubbleUIController() {
  #if !BUILDFLAG(IS_CHROMEOS)
@@ -356,7 +368,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
    if (auto* download_controller =
            browser_->GetFeatures().download_toolbar_ui_controller()) {
      return download_controller->bubble_controller();
-@@ -4372,9 +4434,10 @@ bool BrowserView::GetSavedWindowPlacement(
+@@ -4372,9 +4439,10 @@ bool BrowserView::GetSavedWindowPlacement(
  views::View* BrowserView::GetContentsView() {
    if (multi_contents_view_) {
      return multi_contents_view_->GetActiveContentsView();
@@ -368,7 +380,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  }
  
  views::ClientView* BrowserView::CreateClientView(views::Widget* widget) {
-@@ -4553,9 +4616,22 @@ void BrowserView::DeleteBrowserWindow() {
+@@ -4553,9 +4621,22 @@ void BrowserView::DeleteBrowserWindow() {
    // before the frame is destroyed to mitigate UAF risk.
    browser_widget_->SaveWindowPlacementIfNeeded();
  
@@ -394,7 +406,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  }
  
  void BrowserView::SetForceShowBookmarkBarFlag(
-@@ -4870,11 +4946,36 @@ void BrowserView::GetAccessiblePanes(std::vector<views::View*>* panes) {
+@@ -4870,11 +4951,36 @@ void BrowserView::GetAccessiblePanes(std::vector<views::View*>* panes) {
  bool BrowserView::ShouldDescendIntoChildForEventHandling(
      gfx::NativeView child,
      const gfx::Point& location) {
@@ -433,7 +445,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
      // Draggable regions are defined relative to the web contents.
      gfx::Point point_in_contents_web_view_coords(location);
      views::View::ConvertPointToTarget(GetWidget()->GetRootView(),
-@@ -4883,9 +4984,8 @@ bool BrowserView::ShouldDescendIntoChildForEventHandling(
+@@ -4883,9 +4989,8 @@ bool BrowserView::ShouldDescendIntoChildForEventHandling(
  
      // Draggable regions should be ignored for clicks into any browser view's
      // owned widgets, for example alerts, permission prompts or find bar.
@@ -445,7 +457,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
             WidgetOwnedByAnchorContainsPoint(point_in_contents_web_view_coords);
    }
  
-@@ -5139,7 +5239,9 @@ void BrowserView::Layout(PassKey) {
+@@ -5139,7 +5244,9 @@ void BrowserView::Layout(PassKey) {
  
    // TODO(jamescook): Why was this in the middle of layout code?
    toolbar_->location_bar()->omnibox_view()->SetFocusBehavior(
@@ -456,7 +468,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
    GetFrameView()->UpdateMinimumSize();
  
    // Some of the situations when the BrowserView is laid out are:
-@@ -5208,6 +5310,12 @@ void BrowserView::AddedToWidget() {
+@@ -5208,6 +5315,12 @@ void BrowserView::AddedToWidget() {
    SetThemeProfileForWindow(GetNativeWindow(), browser_->GetProfile());
  #endif
  
@@ -469,7 +481,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
    toolbar_->Init();
  
    UpdateTabSearchBubbleHost();
-@@ -5306,12 +5414,6 @@ void BrowserView::AddedToWidget() {
+@@ -5306,12 +5419,6 @@ void BrowserView::AddedToWidget() {
  
    EnsureFocusOrder();
  
@@ -482,7 +494,7 @@ index d0cac58da0356babfb5adc80032675d790e779ec..3b22a9debe2a8aa77f4d31b07913fd53
  #if !BUILDFLAG(IS_CHROMEOS)
    browser_->GetFeatures().download_toolbar_ui_controller()->Init();
  #endif
-@@ -5345,6 +5447,13 @@ void BrowserView::AddedToWidget() {
+@@ -5345,6 +5452,13 @@ void BrowserView::AddedToWidget() {
                  weak_ptr_factory_.GetWeakPtr()));
    }
  

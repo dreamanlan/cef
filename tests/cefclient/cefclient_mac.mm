@@ -591,7 +591,7 @@ int RunMain(int argc, char* argv[]) {
   const unsigned int fixed_ms = 3000;
   const unsigned int delta_ms = 6000;
 
-  std::string appDirName = GetMacAppDirName();
+  std::string appDirName = GetMacMainAppDirName();
   bool is_debug = (appDirName == "cefclientdbg.app");
   for (int attempt = 1; attempt <= max_attempts; ++attempt) {
     r = load_hostfxr(is_debug, detailed_rc);
@@ -629,14 +629,15 @@ int RunMain(int argc, char* argv[]) {
 
   // Call on_init callback with UTF-8 strings
   if (on_init_fptr) {
-    std::string baseDir = GetMacAppDirPath();
-    std::string appDir = GetMacAppDirPath();
-    std::string lastDirName = GetMacAppDirName();
-    if (lastDirName == "cefclientdbg.app") {
-      baseDir += "/../cefclient.app/Contents";
+    std::string mainAppDir = GetMacMainAppDirPath();
+    std::string appDir = GetMacMainAppDirPath();
+    std::string mainAppDirName = GetMacMainAppDirName();
+    std::string baseDir;
+    if (mainAppDirName == "cefclientdbg.app") {
+      baseDir = mainAppDir + "/../cefclient.app/Contents";
     }
     else {
-      baseDir += "/Contents";
+      baseDir = mainAppDir + "/Contents";
     }
     on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type, appDir.c_str(), true);
   }

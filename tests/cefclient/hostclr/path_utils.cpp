@@ -131,8 +131,10 @@ std::string GetMacAppSupportDir() {
     if (!home || home[0] == '\0')
         return std::string();
 
-    // Derive app name from .app bundle name (e.g. "cefclient.app" -> "cefclient")
-    std::string appName = GetMacAppDirName();
+    // Derive app name from the outermost (main) .app bundle name
+    // (e.g. "cefclient.app" -> "cefclient")
+    // Use GetMacMainAppDirName to ensure Helper processes also use the main app's name
+    std::string appName = GetMacMainAppDirName();
     if (appName.length() > 4 && appName.substr(appName.length() - 4) == ".app") {
         appName = appName.substr(0, appName.length() - 4);
     }
@@ -145,6 +147,47 @@ std::string GetMacAppSupportDir() {
 #else
     return std::string();
 #endif
+}
+
+std::string GetMacMainAppDirPath() {
+#if defined(__APPLE__)
+    std::string path = GetExePath();
+    if (path.empty())
+        return std::string();
+
+    // Find the outermost .app bundle by traversing up the directory tree
+    // and remembering the last .app we found.
+    // For Helper: .../cefclient.app/Contents/Frameworks/cefclient Helper.app/Contents/MacOS/helper
+    //   -> finds cefclient Helper.app first, then cefclient.app (outermost)
+    // For Browser: .../cefclient.app/Contents/MacOS/cefclient
+    //   -> finds cefclient.app (only one)
+    std::string outermost_app;
+    while (!path.empty()) {
+        size_t pos = path.find_last_of("/\\");
+        if (pos == std::string::npos)
+            break;
+
+        path = path.substr(0, pos);
+
+        // Check if current path ends with .app
+        if (path.length() > 4 && path.substr(path.length() - 4) == ".app") {
+            outermost_app = path;
+            // Don't break - keep looking for an outer .app
+        }
+    }
+
+    return outermost_app;
+#else
+    return std::string();
+#endif
+}
+
+std::string GetMacMainAppDirName() {
+    std::string appPath = GetMacMainAppDirPath();
+    if (appPath.empty())
+        return std::string();
+
+    return GetLastNameFromPath(appPath);
 }
 
 std::string GetMacAppDirName() {

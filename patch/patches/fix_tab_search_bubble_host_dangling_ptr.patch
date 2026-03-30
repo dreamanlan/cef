@@ -1,0 +1,27 @@
+diff --git chrome/browser/ui/views/frame/browser_view.cc chrome/browser/ui/views/frame/browser_view.cc
+index aaaaaaa..bbbbbbb 100644
+--- chrome/browser/ui/views/frame/browser_view.cc
++++ chrome/browser/ui/views/frame/browser_view.cc
+@@ -1080,8 +1080,6 @@ BrowserView::~BrowserView() {
+   // other cleanups that destroy views referenced in the layout manager.
+   SetLayoutManager(nullptr);
+ 
+-  tab_search_bubble_host_.reset();
+-
+   // Destroy the top controls slide controller first as it depends on the
+   // tabstrip model and the browser frame.
+   top_controls_slide_controller_.reset();
+@@ -1781,6 +1779,13 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
+ }
+ 
+ void BrowserView::WillDestroyToolbar() {
++  // Reset tab search bubble host before destroying toolbar, as its
++  // WebUIBubbleManager holds a raw_ptr<views::View> anchor_view_ that
++  // points to a toolbar child view (e.g. tab_search_button). This must
++  // happen before the toolbar child views are destroyed to avoid a
++  // dangling raw_ptr when BrowserView is destroyed later (e.g. in CEF).
++  tab_search_bubble_host_.reset();
++
+   // Reset autofill bubble handler to make sure it does not out-live toolbar,
+   // since it is responsible for showing autofill related bubbles from toolbar's
+   // child views and it is an observer for avatar toolbar button if any.

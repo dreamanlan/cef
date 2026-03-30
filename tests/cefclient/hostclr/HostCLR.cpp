@@ -290,8 +290,9 @@ typedef std::string string_t;
 
 static string_t GetAppBaseDirString() {
 #if defined(__APPLE__)
-    // On macOS, return .app directory path with trailing separator
-    std::string appPath = GetMacAppDirPath();
+    // On macOS, return the outermost (main) .app directory path with trailing separator.
+    // This ensures Helper processes (inside Frameworks/) also find the main app's path.
+    std::string appPath = GetMacMainAppDirPath();
     if (appPath.empty()) {
         return GetExeDirWithSeparator();
     }

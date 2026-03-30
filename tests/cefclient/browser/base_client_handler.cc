@@ -275,8 +275,8 @@ void BaseClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
 
     if (!use_custom_code) {
 #if defined(__APPLE__)
-      std::string baseDir = GetMacAppDirPath();
-      std::string lastDirName = GetMacAppDirName();
+      std::string baseDir = GetMacMainAppDirPath();
+      std::string lastDirName = GetMacMainAppDirName();
       if (lastDirName == "cefclientdbg.app") {
         baseDir += "/../cefclient.app/Contents";
       } else {

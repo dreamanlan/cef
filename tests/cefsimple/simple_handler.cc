@@ -117,8 +117,8 @@ void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
     memset(buf, 0, max_size + 1);
     //std::string file = "managed/simple_inject.js";
 #if defined(__APPLE__)
-    std::string baseDir = GetMacAppDirPath();
-    std::string lastDirName = GetMacAppDirName();
+    std::string baseDir = GetMacMainAppDirPath();
+    std::string lastDirName = GetMacMainAppDirName();
     if (lastDirName == "cefsimpledbg.app") {
       baseDir += "/../cefsimple.app/Contents";
     }
