@@ -4,6 +4,7 @@
   #include <windows.h>
 #elif defined(__APPLE__)
   #include <mach-o/dyld.h>
+  #include <cstdlib>
   #include <limits.h>
 #elif defined(__linux__)
   #include <unistd.h>
