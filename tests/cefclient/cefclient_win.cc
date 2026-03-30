@@ -158,6 +158,7 @@ int RunMain(HINSTANCE hInstance,
             int nCmdShow,
             void* sandbox_info,
             cef_version_info_t* version_info) {
+  SimpleProcessType simple_process_type = PROCESS_TYPE_BROWSER;
   // Scope block for ScopedEarlySupport - must end before CEF library is loaded,
   // otherwise all LOG() calls will go through ScopedEarlySupport (stderr) instead
   // of cef_log (debug.log file) after CEF initialization.
@@ -179,7 +180,7 @@ int RunMain(HINSTANCE hInstance,
   std::string raw_command_line_utf8 = WideStringToUtf8(raw_command_line_w);
 
   // Determine process type from UTF-8 command line
-  SimpleProcessType simple_process_type = GetProcessTypeFromCommandLine(raw_command_line_utf8.c_str());
+  simple_process_type = GetProcessTypeFromCommandLine(raw_command_line_utf8.c_str());
 
   // Load hostfxr and initialize CLR before loading CEF
   int r = 0;
