@@ -131,7 +131,16 @@ std::string GetMacAppSupportDir() {
     if (!home || home[0] == '\0')
         return std::string();
 
-    std::string dir = std::string(home) + "/Library/Application Support/cefclient/";
+    // Derive app name from .app bundle name (e.g. "cefclient.app" -> "cefclient")
+    std::string appName = GetMacAppDirName();
+    if (appName.length() > 4 && appName.substr(appName.length() - 4) == ".app") {
+        appName = appName.substr(0, appName.length() - 4);
+    }
+    if (appName.empty()) {
+        appName = "cefclient";  // fallback
+    }
+
+    std::string dir = std::string(home) + "/Library/Application Support/" + appName + "/";
     return dir;
 #else
     return std::string();
