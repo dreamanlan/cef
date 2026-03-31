@@ -19,7 +19,7 @@ extern void printf_log(LogSeverity severity, const char* fmt, ...);
 extern int load_hostfxr(bool is_debug, int& out_rc);
 extern int load_dotnet_method(bool is_debug, int& out_rc);
 
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_init_fn)(const char* cmd_line, const char* base_path, int process_type, const char* app_dir, bool is_mac);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_init_fn)(const char* cmd_line, const char* base_path, int process_type, const char* app_dir, bool is_mac);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_finalize_fn)();
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_init_fn)(void* browser);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_finalize_fn)(void* browser);

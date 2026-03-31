@@ -545,6 +545,7 @@ namespace client {
 namespace {
 
 int RunMain(int argc, char* argv[]) {
+  bool no_sandbox = false;
   // Scope block for ScopedEarlySupport - must end before CEF library is loaded,
   // otherwise all LOG() calls will go through ScopedEarlySupport (stderr) instead
   // of cef_log (debug.log file) after CEF initialization.
@@ -639,7 +640,7 @@ int RunMain(int argc, char* argv[]) {
     else {
       baseDir = mainAppDir + "/Contents";
     }
-    on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type, appDir.c_str(), true);
+    no_sandbox = on_init_fptr(raw_command_line_utf8.c_str(), baseDir.c_str(), clr_process_type, appDir.c_str(), true);
   }
 
   }  // End of ScopedEarlySupport scope - LOG() will now use cef_log after CEF loads.
@@ -682,6 +683,7 @@ int RunMain(int argc, char* argv[]) {
         new MainContextImpl(command_line, true));
 
     CefSettings settings;
+    settings.no_sandbox = no_sandbox;
 
 // When generating projects with CMake the CEF_USE_SANDBOX value will be defined
 // automatically. Pass -DUSE_SANDBOX=OFF to the CMake command-line to disable
