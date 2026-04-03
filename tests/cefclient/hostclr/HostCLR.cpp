@@ -4,9 +4,11 @@
 #include "include/cef_browser.h"
 #include "include/cef_frame.h"
 #include "include/cef_request.h"
+#include "include/cef_task.h"
 #include "JavaScriptCaller.h"
 #include "path_utils.h"
 
+#include <chrono>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -502,6 +504,108 @@ on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
 on_before_browse_fn on_before_browse_fptr = nullptr;
 on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
+on_heart_beat_fn on_heart_beat_fptr = nullptr;
+on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
+
+// Global browser id list (maintained by NotifyBrowserCreated/NotifyBrowserDestroyed)
+static std::vector<int>* g_browser_ids = new std::vector<int>();
+static std::mutex* g_browser_ids_mutex = new std::mutex();
+
+// Heartbeat implementation
+static bool g_heartbeat_running = false;
+static int g_heartbeat_process_type = 0;
+static int g_heartbeat_interval_ms = 100;
+static std::chrono::steady_clock::time_point g_heartbeat_last_time;
+// Renderer process: cached browser/frame for heartbeat callback
+// Raw pointers to avoid static destruction order issues with CefRefPtr
+static CefBrowser* g_heartbeat_browser = nullptr;
+static CefFrame* g_heartbeat_frame = nullptr;
+
+class HeartbeatTask : public CefTask {
+ public:
+  HeartbeatTask() = default;
+  void Execute() override {
+    if (!g_heartbeat_running || !on_heart_beat_fptr) {
+      return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    float delta_ms = std::chrono::duration<float, std::milli>(now - g_heartbeat_last_time).count();
+    g_heartbeat_last_time = now;
+    // Resolve browser/frame per process type (raw pointers for callback)
+    CefBrowser* browser = nullptr;
+    CefFrame* frame = nullptr;
+    CefRefPtr<CefBrowser> browser_ref;
+    CefRefPtr<CefFrame> frame_ref;
+    if (g_heartbeat_process_type == 0) {
+      // Browser process: pick first tracked browser and its main frame
+      // Use CefRefPtr locals to hold reference during callback
+      if (g_browser_ids_mutex && g_browser_ids) {
+        int first_id = -1;
+        {
+          std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
+          if (!g_browser_ids->empty()) {
+            first_id = (*g_browser_ids)[0];
+          }
+        }
+        if (first_id >= 0) {
+          browser_ref = CefBrowserHost::GetBrowserByIdentifier(first_id);
+          if (browser_ref) {
+            frame_ref = browser_ref->GetMainFrame();
+            browser = browser_ref.get();
+            frame = frame_ref.get();
+          }
+        }
+      }
+    } else if (g_heartbeat_process_type == 1) {
+      // Renderer process: use cached raw pointers (no AddRef)
+      browser = g_heartbeat_browser;
+      frame = g_heartbeat_frame;
+    }
+    on_heart_beat_fptr(g_heartbeat_process_type, browser, frame, delta_ms);
+    // Schedule next heartbeat
+    if (g_heartbeat_running) {
+      cef_thread_id_t tid = (g_heartbeat_process_type == 0) ? TID_UI : TID_RENDERER;
+      CefPostDelayedTask(tid, new HeartbeatTask(), g_heartbeat_interval_ms);
+    }
+  }
+ private:
+  IMPLEMENT_REFCOUNTING(HeartbeatTask);
+  DISALLOW_COPY_AND_ASSIGN(HeartbeatTask);
+};
+
+void StartHeartbeat(int process_type) {
+  if (g_heartbeat_running) {
+    return;
+  }
+  g_heartbeat_running = true;
+  g_heartbeat_process_type = process_type;
+  g_heartbeat_last_time = std::chrono::steady_clock::now();
+  cef_thread_id_t tid = (process_type == 0) ? TID_UI : TID_RENDERER;
+  CefPostDelayedTask(tid, new HeartbeatTask(), g_heartbeat_interval_ms);
+  printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat started for process_type=%d interval=%dms", process_type, g_heartbeat_interval_ms);
+}
+
+void StopHeartbeat() {
+  g_heartbeat_running = false;
+  printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat stopped");
+}
+
+void SetHeartbeatIntervalMs(int interval_ms) {
+  if (interval_ms < 10) interval_ms = 10;
+  if (interval_ms > 60000) interval_ms = 60000;
+  g_heartbeat_interval_ms = interval_ms;
+  printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat interval set to %dms", interval_ms);
+}
+
+void SetHeartbeatBrowserFrame(void* browser, void* frame) {
+  g_heartbeat_browser = reinterpret_cast<CefBrowser*>(browser);
+  g_heartbeat_frame = reinterpret_cast<CefFrame*>(frame);
+}
+
+void ClearHeartbeatBrowserFrame() {
+  g_heartbeat_browser = nullptr;
+  g_heartbeat_frame = nullptr;
+}
 
 // Native api
 typedef void (*host_native_log_fn)(const char* msg, void* browser, void* frame);
@@ -590,6 +694,9 @@ typedef int (*request_get_resource_type_fn)(void* request);
 typedef int (*request_get_transition_type_fn)(void* request);
 typedef uint64_t (*request_get_identifier_fn)(void* request);
 
+// Heartbeat control
+typedef void (*set_heartbeat_interval_fn)(int interval_ms);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -666,6 +773,8 @@ typedef struct {
     request_get_resource_type_fn RequestGetResourceType;
     request_get_transition_type_fn RequestGetTransitionType;
     request_get_identifier_fn RequestGetIdentifier;
+    // Heartbeat control
+    set_heartbeat_interval_fn SetHeartbeatInterval;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -959,9 +1068,6 @@ void* command_line_get_global()
     return CefCommandLine::GetGlobalCommandLine().get();
 }
 
-// Global browser id list (maintained by NotifyBrowserCreated/NotifyBrowserDestroyed)
-static std::vector<int>* g_browser_ids = new std::vector<int>();
-static std::mutex* g_browser_ids_mutex = new std::mutex();
 // Returns true if running in browser process (lazily initialized on first call)
 static bool is_browser_process()
 {
@@ -1344,7 +1450,7 @@ int load_dotnet_method(bool is_debug, int& rc)
     string_t dotnet_assembly_path = BuildAssemblyPath(is_debug);
     const char_t* dotnet_class_name = c_dotnet_class_name;
     // native api
-    HostApi api;
+    HostApi api = {};
     api.NativeLog = &host_native_log;
     api.SendCefMessage = &send_cef_message;
     api.SendJavascriptCode = &send_javascript_code;
@@ -1412,6 +1518,8 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.RequestGetResourceType = &request_get_resource_type;
     api.RequestGetTransitionType = &request_get_transition_type;
     api.RequestGetIdentifier = &request_get_identifier;
+    // Heartbeat control
+    api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -1717,6 +1825,28 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_before_resource_load_fptr);
     if (rc || !on_before_resource_load_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_resource_load");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnHeartBeat"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnHeartBeatDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_heart_beat_fptr);
+    if (rc || !on_heart_beat_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_heart_beat");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnCallMetaDSL"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnCallMetaDSLDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_call_metadsl_fptr);
+    if (rc || !on_call_metadsl_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_call_metadsl");
     }
 
     return 0;

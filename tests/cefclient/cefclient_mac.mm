@@ -744,6 +744,7 @@ int RunMain(int argc, char* argv[]) {
     context.reset();
   }  // @autoreleasepool
 
+  StopHeartbeat();
   // Call on_finalize callback
   if (on_finalize_fptr) {
     on_finalize_fptr();

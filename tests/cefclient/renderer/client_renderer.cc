@@ -98,6 +98,49 @@ public:
         return true;
       }
     }
+    else if (name == "callMetaDSL") {
+      if (arguments.size() > 0 && arguments[0]->IsString()) {
+        std::string func_name = arguments[0]->GetStringValue();
+
+        CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
+        CefRefPtr<CefBrowser> browser = context->GetBrowser();
+        CefRefPtr<CefFrame> frame = context->GetFrame();
+
+        if (on_call_metadsl_fptr) {
+          size_t size = arguments.size();
+          std::vector<std::string> args_vec;
+          std::vector<const char*> args_ptrs;
+
+          for (size_t i = 1; i < size; i++) {
+            if (arguments[i]->IsString()) {
+              args_vec.push_back(arguments[i]->GetStringValue());
+            } else {
+              args_vec.push_back("");
+            }
+          }
+
+          for (const auto& arg : args_vec) {
+            args_ptrs.push_back(arg.c_str());
+          }
+
+          const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
+          std::vector<uint8_t> result_buffer(c_result_buffer_size);
+          int result_size = static_cast<int>(result_buffer.size());
+          bool success = on_call_metadsl_fptr(func_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
+
+          if (success && result_size > 0 && result_size < c_result_buffer_size) {
+            result_buffer[result_size] = '\0';
+            retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
+          } else {
+            retval = CefV8Value::CreateString("");
+            if (result_size >= c_result_buffer_size) {
+              printf_log(LOG_SEVERITY_ERROR, "callMetaDSL failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
+            }
+          }
+          return true;
+        }
+      }
+    }
 
     return false;
   }
@@ -217,9 +260,22 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
     CefRefPtr<CefV8Value> execFunc = CefV8Value::CreateFunction("executeMetaDSL", handler);
     global->SetValue("executeMetaDSL", execFunc, V8_PROPERTY_ATTRIBUTE_NONE);
 
+    CefRefPtr<CefV8Value> callFunc = CefV8Value::CreateFunction("callMetaDSL", handler);
+    global->SetValue("callMetaDSL", callFunc, V8_PROPERTY_ATTRIBUTE_NONE);
+
     if (on_renderer_init_fptr) {
       std::string url = frame->GetURL();
       on_renderer_init_fptr(browser.get(), frame.get(), url.c_str());
+    }
+
+    // Start heartbeat timer for renderer process (process_type=1), only once
+    if (!heartbeat_started_) {
+      heartbeat_started_ = true;
+      StartHeartbeat(1);
+    }
+    // Update heartbeat browser/frame when main frame context is created
+    if (frame->IsMain()) {
+      SetHeartbeatBrowserFrame(browser.get(), frame.get());
     }
   }
 
@@ -229,6 +285,10 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
                          CefRefPtr<CefV8Context> context) override {
     if (on_renderer_finalize_fptr) {
       on_renderer_finalize_fptr(browser.get(), frame.get());
+    }
+    // Clear heartbeat browser/frame when main frame context is released
+    if (frame->IsMain()) {
+      ClearHeartbeatBrowserFrame();
     }
     message_router_->OnContextReleased(browser, frame, context);
   }
@@ -281,6 +341,7 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
 
  private:
   bool last_node_is_editable_ = false;
+  bool heartbeat_started_ = false;
 
   // Renderer load handler for load callbacks
   CefRefPtr<RendererLoadHandler> renderer_load_handler_;

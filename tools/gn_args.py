@@ -549,7 +549,7 @@ def GetConfigArgs(args, is_debug, cpu):
     # definition of 'symbol_level' in //build/config/compiler/compiler.gni.
     if is_debug:
       is_debug = False
-      add_args['dcheck_always_on'] = True
+      add_args['dcheck_always_on'] = False
 
     if platform == 'linux':
       # Use PartitionAlloc-Everywhere (PA-E) instead of the default system

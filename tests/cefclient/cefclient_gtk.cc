@@ -258,6 +258,7 @@ int RunMain(int argc, char* argv[]) {
   message_loop.reset();
   context.reset();
 
+  StopHeartbeat();
   // Call on_finalize callback
   if (on_finalize_fptr) {
     on_finalize_fptr();

@@ -53,6 +53,9 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
       // Load the CRLSets file from the specified path.
       CefLoadCRLSetsFile(crl_sets_path);
     }
+
+    // Start heartbeat timer for browser process (process_type=0)
+    StartHeartbeat(0);
   }
 
   void OnBeforeCommandLineProcessing(

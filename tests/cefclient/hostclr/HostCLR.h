@@ -45,6 +45,8 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int 
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int* out_return_value);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, void* browser, void* frame, float delta_time);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -73,6 +75,16 @@ extern on_before_child_process_launch_fn on_before_child_process_launch_fptr;
 extern on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr;
 extern on_before_browse_fn on_before_browse_fptr;
 extern on_before_resource_load_fn on_before_resource_load_fptr;
+extern on_heart_beat_fn on_heart_beat_fptr;
+extern on_call_metadsl_fn on_call_metadsl_fptr;
+
+// Start/stop heartbeat timer
+extern void StartHeartbeat(int process_type);
+extern void StopHeartbeat();
+extern void SetHeartbeatIntervalMs(int interval_ms);
+// Set/clear browser and frame for renderer heartbeat
+extern void SetHeartbeatBrowserFrame(void* browser, void* frame);
+extern void ClearHeartbeatBrowserFrame();
 
 // Cleanup browser id list (call after on_finalize_fptr on process exit)
 extern void cleanup_browser_ids();
