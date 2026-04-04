@@ -10,7 +10,7 @@
 
 #include <chrono>
 #include <iostream>
-#include <mutex>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -507,20 +507,18 @@ on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
 on_heart_beat_fn on_heart_beat_fptr = nullptr;
 on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
 
-// Global browser id list (maintained by NotifyBrowserCreated/NotifyBrowserDestroyed)
-static std::vector<int>* g_browser_ids = new std::vector<int>();
-static std::mutex* g_browser_ids_mutex = new std::mutex();
+
+
+// Renderer process: hold CefRefPtr to prevent premature release of browser/frame objects.
+// Key is browser_id, value is (browser, frame) pair.
+// Objects are added in OnContextCreated and removed in OnContextReleased.
+static std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>* g_renderer_ref_map = new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
 
 // Heartbeat implementation
 static bool g_heartbeat_running = false;
 static int g_heartbeat_process_type = 0;
 static int g_heartbeat_interval_ms = 100;
 static std::chrono::steady_clock::time_point g_heartbeat_last_time;
-// Renderer process: cached browser/frame for heartbeat callback
-// Raw pointers to avoid static destruction order issues with CefRefPtr
-static CefBrowser* g_heartbeat_browser = nullptr;
-static CefFrame* g_heartbeat_frame = nullptr;
-
 class HeartbeatTask : public CefTask {
  public:
   HeartbeatTask() = default;
@@ -531,37 +529,7 @@ class HeartbeatTask : public CefTask {
     auto now = std::chrono::steady_clock::now();
     float delta_ms = std::chrono::duration<float, std::milli>(now - g_heartbeat_last_time).count();
     g_heartbeat_last_time = now;
-    // Resolve browser/frame per process type (raw pointers for callback)
-    CefBrowser* browser = nullptr;
-    CefFrame* frame = nullptr;
-    CefRefPtr<CefBrowser> browser_ref;
-    CefRefPtr<CefFrame> frame_ref;
-    if (g_heartbeat_process_type == 0) {
-      // Browser process: pick first tracked browser and its main frame
-      // Use CefRefPtr locals to hold reference during callback
-      if (g_browser_ids_mutex && g_browser_ids) {
-        int first_id = -1;
-        {
-          std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
-          if (!g_browser_ids->empty()) {
-            first_id = (*g_browser_ids)[0];
-          }
-        }
-        if (first_id >= 0) {
-          browser_ref = CefBrowserHost::GetBrowserByIdentifier(first_id);
-          if (browser_ref) {
-            frame_ref = browser_ref->GetMainFrame();
-            browser = browser_ref.get();
-            frame = frame_ref.get();
-          }
-        }
-      }
-    } else if (g_heartbeat_process_type == 1) {
-      // Renderer process: use cached raw pointers (no AddRef)
-      browser = g_heartbeat_browser;
-      frame = g_heartbeat_frame;
-    }
-    on_heart_beat_fptr(g_heartbeat_process_type, browser, frame, delta_ms);
+    on_heart_beat_fptr(g_heartbeat_process_type, delta_ms);
     // Schedule next heartbeat
     if (g_heartbeat_running) {
       cef_thread_id_t tid = (g_heartbeat_process_type == 0) ? TID_UI : TID_RENDERER;
@@ -597,16 +565,6 @@ void SetHeartbeatIntervalMs(int interval_ms) {
   printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat interval set to %dms", interval_ms);
 }
 
-void SetHeartbeatBrowserFrame(void* browser, void* frame) {
-  g_heartbeat_browser = reinterpret_cast<CefBrowser*>(browser);
-  g_heartbeat_frame = reinterpret_cast<CefFrame*>(frame);
-}
-
-void ClearHeartbeatBrowserFrame() {
-  g_heartbeat_browser = nullptr;
-  g_heartbeat_frame = nullptr;
-}
-
 // Native api
 typedef void (*host_native_log_fn)(const char* msg, void* browser, void* frame);
 typedef void (*send_javascript_code_fn)(const char* code, void* browser, void* frame);
@@ -636,10 +594,9 @@ typedef void (*command_line_prepend_wrapper_fn)(void* command_line, const char* 
 typedef void* (*command_line_get_global_fn)();
 
 // Browser traversal
-typedef const char* (*get_all_browser_ids_fn)();
 typedef void* (*get_browser_by_id_fn)(int browser_id);
-typedef void (*notify_browser_created_fn)(void* browser);
-typedef void (*notify_browser_destroyed_fn)(void* browser);
+typedef bool (*browser_is_valid_fn)(void* browser);
+typedef bool (*get_renderer_browser_frame_by_id_fn)(int browser_id, void** out_browser, void** out_frame);
 
 // Browser properties (both processes)
 typedef int (*browser_get_id_fn)(void* browser);
@@ -723,10 +680,9 @@ typedef struct {
     command_line_prepend_wrapper_fn CommandLinePrependWrapper;
     command_line_get_global_fn CommandLineGetGlobal;
     // Browser traversal
-    get_all_browser_ids_fn GetAllBrowserIds;
     get_browser_by_id_fn GetBrowserById;
-    notify_browser_created_fn NotifyBrowserCreated;
-    notify_browser_destroyed_fn NotifyBrowserDestroyed;
+    browser_is_valid_fn BrowserIsValid;
+    get_renderer_browser_frame_by_id_fn GetRendererBrowserFrameById;
     // Browser properties
     browser_get_id_fn BrowserGetId;
     browser_get_url_fn BrowserGetUrl;
@@ -1093,43 +1049,51 @@ static char* alloc_string(const std::string& s)
 
 // --- Browser traversal ---
 
-void notify_browser_created(void* browser)
+bool browser_is_valid(void* browser)
 {
-    if (!browser) return;
-    int id = reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
-    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
-    for (int existing : *g_browser_ids) {
-        if (existing == id) return;
+    if (!browser) return false;
+    return reinterpret_cast<CefBrowser*>(browser)->IsValid();
+}
+
+bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void** out_frame)
+{
+    if (!out_browser || !out_frame) return false;
+    *out_browser = nullptr;
+    *out_frame = nullptr;
+    if (!g_renderer_ref_map) return false;
+    auto it = g_renderer_ref_map->find(browser_id);
+    if (it == g_renderer_ref_map->end()) return false;
+    *out_browser = it->second.first.get();
+    *out_frame = it->second.second.get();
+    return true;
+}
+
+// --- Renderer ref map: hold CefRefPtr to prevent premature release ---
+
+void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
+{
+    if (!browser || !frame || !g_renderer_ref_map) return;
+    int id = browser->GetIdentifier();
+    (*g_renderer_ref_map)[id] = std::make_pair(browser, frame);
+}
+
+void renderer_ref_remove(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
+{
+    if (!browser || !g_renderer_ref_map) return;
+    int id = browser->GetIdentifier();
+    auto it = g_renderer_ref_map->find(id);
+    if (it != g_renderer_ref_map->end()) {
+        // Only remove if the frame pointer matches (avoid removing a newer frame)
+        if (it->second.second.get() == frame.get()) {
+            g_renderer_ref_map->erase(it);
+        }
     }
-    g_browser_ids->push_back(id);
 }
 
-void notify_browser_destroyed(void* browser)
+void renderer_ref_clear()
 {
-    if (!browser) return;
-    int id = reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
-    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
-    g_browser_ids->erase(std::remove(g_browser_ids->begin(), g_browser_ids->end(), id), g_browser_ids->end());
-}
-
-const char* get_all_browser_ids()
-{
-    std::lock_guard<std::mutex> lock(*g_browser_ids_mutex);
-    if (g_browser_ids->empty()) return nullptr;
-    std::string result;
-    for (int id : *g_browser_ids) {
-        if (!result.empty()) result += "\n";
-        result += std::to_string(id);
-    }
-    return alloc_string(result);
-}
-
-void cleanup_browser_ids()
-{
-    delete g_browser_ids_mutex;
-    g_browser_ids_mutex = nullptr;
-    delete g_browser_ids;
-    g_browser_ids = nullptr;
+    delete g_renderer_ref_map;
+    g_renderer_ref_map = nullptr;
 }
 
 void* get_browser_by_id(int browser_id)
@@ -1475,10 +1439,9 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.CommandLineAppendArgument = &command_line_append_argument;
     api.CommandLinePrependWrapper = &command_line_prepend_wrapper;
     api.CommandLineGetGlobal = &command_line_get_global;
-    api.GetAllBrowserIds = &get_all_browser_ids;
     api.GetBrowserById = &get_browser_by_id;
-    api.NotifyBrowserCreated = &notify_browser_created;
-    api.NotifyBrowserDestroyed = &notify_browser_destroyed;
+    api.BrowserIsValid = &browser_is_valid;
+    api.GetRendererBrowserFrameById = &get_renderer_browser_frame_by_id;
     api.BrowserGetId = &browser_get_id;
     api.BrowserGetUrl = &browser_get_url;
     api.BrowserIsLoading = &browser_is_loading;

@@ -268,14 +268,13 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
       on_renderer_init_fptr(browser.get(), frame.get(), url.c_str());
     }
 
+    // Hold CefRefPtr to prevent premature release of browser/frame objects
+    renderer_ref_add(browser, frame);
+
     // Start heartbeat timer for renderer process (process_type=1), only once
     if (!heartbeat_started_) {
       heartbeat_started_ = true;
       StartHeartbeat(1);
-    }
-    // Update heartbeat browser/frame when main frame context is created
-    if (frame->IsMain()) {
-      SetHeartbeatBrowserFrame(browser.get(), frame.get());
     }
   }
 
@@ -283,12 +282,11 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
                          CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefFrame> frame,
                          CefRefPtr<CefV8Context> context) override {
+    // Release CefRefPtr for this browser/frame pair
+    renderer_ref_remove(browser, frame);
+
     if (on_renderer_finalize_fptr) {
       on_renderer_finalize_fptr(browser.get(), frame.get());
-    }
-    // Clear heartbeat browser/frame when main frame context is released
-    if (frame->IsMain()) {
-      ClearHeartbeatBrowserFrame();
     }
     message_router_->OnContextReleased(browser, frame, context);
   }
