@@ -7,6 +7,8 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <chrono>
+#include <ctime>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -828,6 +830,53 @@ bool ClientHandler::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
                                      const CefString& source,
                                      int line) {
   CEF_REQUIRE_UI_THREAD();
+
+  // Callback to C# before writing console.log.
+  int max_log_size = 128 * 1024;
+  if (on_console_log_fptr) {
+    std::string msg_str = message.ToString();
+    std::string src_str = source.ToString();
+    bool handled = on_console_log_fptr(browser.get(), (int)level,
+        msg_str.c_str(), src_str.c_str(), line, max_log_size);
+    if (handled) {
+      return false;
+    }
+    if (max_log_size <= 0) {
+      max_log_size = 128 * 1024;
+    }
+  }
+
+  // Rotate log file if size exceeds max_log_size.
+  FILE* check = fopen(console_log_file_.c_str(), "rb");
+  if (check) {
+    fseek(check, 0, SEEK_END);
+    long size = ftell(check);
+    fclose(check);
+    if (size > max_log_size) {
+      auto now = std::chrono::system_clock::now();
+      auto time_t_now = std::chrono::system_clock::to_time_t(now);
+      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    now.time_since_epoch()) %
+                1000;
+      struct tm local_tm;
+#if defined(OS_WIN)
+      localtime_s(&local_tm, &time_t_now);
+#else
+      localtime_r(&time_t_now, &local_tm);
+#endif
+      std::stringstream ts;
+      ts << std::put_time(&local_tm, "%Y%m%d_%H%M%S") << "."
+         << std::setfill('0') << std::setw(3) << ms.count();
+      std::string dir;
+      std::string::size_type pos = console_log_file_.rfind('/');
+      if (pos == std::string::npos)
+        pos = console_log_file_.rfind('\\');
+      if (pos != std::string::npos)
+        dir = console_log_file_.substr(0, pos + 1);
+      std::string rotated = dir + "console_" + ts.str() + ".log";
+      rename(console_log_file_.c_str(), rotated.c_str());
+    }
+  }
 
   FILE* file = fopen(console_log_file_.c_str(), "a");
   if (file) {

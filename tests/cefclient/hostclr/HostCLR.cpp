@@ -506,6 +506,7 @@ on_before_browse_fn on_before_browse_fptr = nullptr;
 on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
 on_heart_beat_fn on_heart_beat_fptr = nullptr;
 on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
+on_console_log_fn on_console_log_fptr = nullptr;
 
 
 
@@ -1810,6 +1811,17 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_call_metadsl_fptr);
     if (rc || !on_call_metadsl_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_call_metadsl");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnConsoleLog"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnConsoleLogDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_console_log_fptr);
+    if (rc || !on_console_log_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_console_log");
     }
 
     return 0;
