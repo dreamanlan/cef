@@ -21,6 +21,9 @@ namespace {
 // Must match the value in client_handler.cc.
 const char kFocusedNodeChangedMessage[] = "ClientRenderer.FocusedNodeChanged";
 
+// Shared result buffer size for sync calls from JS to C# (sendMessage / callMetaDSL / etc.).
+const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
+
 class JsBridgeV8Handler : public CefV8Handler {
 public:
   bool Execute(const CefString& name,
@@ -54,7 +57,19 @@ public:
             args_ptrs.push_back(arg.c_str());
           }
 
-          on_receive_js_message_fptr(msg.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), browser.get(), frame.get());
+          std::vector<uint8_t> result_buffer(c_result_buffer_size);
+          int result_size = static_cast<int>(result_buffer.size());
+          bool success = on_receive_js_message_fptr(msg.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
+
+          if (success && result_size > 0 && result_size < c_result_buffer_size) {
+            result_buffer[result_size] = '\0';
+            retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
+          } else {
+            retval = CefV8Value::CreateString("");
+            if (result_size >= c_result_buffer_size) {
+              printf_log(LOG_SEVERITY_ERROR, "sendMessage failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
+            }
+          }
           return true;
         }
       }
@@ -81,7 +96,6 @@ public:
           args_ptrs.push_back(arg.c_str());
         }
 
-        const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
         std::vector<uint8_t> result_buffer(c_result_buffer_size);
         int result_size = static_cast<int>(result_buffer.size());
         bool success = on_execute_metadsl_fptr(args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
@@ -123,7 +137,6 @@ public:
             args_ptrs.push_back(arg.c_str());
           }
 
-          const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
           std::vector<uint8_t> result_buffer(c_result_buffer_size);
           int result_size = static_cast<int>(result_buffer.size());
           bool success = on_call_metadsl_fptr(func_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
