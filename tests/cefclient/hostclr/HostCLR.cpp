@@ -497,7 +497,6 @@ on_renderer_loading_state_change_fn on_renderer_loading_state_change_fptr = null
 on_renderer_load_error_fn on_renderer_load_error_fptr = nullptr;
 
 on_receive_cef_message_fn on_receive_cef_message_fptr = nullptr;
-on_receive_js_message_fn on_receive_js_message_fptr = nullptr;
 on_execute_metadsl_fn on_execute_metadsl_fptr = nullptr;
 on_before_command_line_processing_fn on_before_command_line_processing_fptr = nullptr;
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
@@ -1712,17 +1711,6 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_receive_cef_message_fptr);
     if (rc || !on_receive_cef_message_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_receive_cef_message");
-    }
-
-    rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path.c_str(),
-    dotnet_class_name,
-    CHAR_T_LITERAL("OnReceiveJsMessage"),
-    CHAR_T_LITERAL("DotNetLib.Lib+OnReceiveJsMessageDelegation, CefDotnetApp"),
-    nullptr,
-    (void**)&on_receive_js_message_fptr);
-    if (rc || !on_receive_js_message_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_receive_js_message");
     }
 
     rc = load_assembly_and_get_function_pointer(

@@ -21,7 +21,7 @@ namespace {
 // Must match the value in client_handler.cc.
 const char kFocusedNodeChangedMessage[] = "ClientRenderer.FocusedNodeChanged";
 
-// Shared result buffer size for sync calls from JS to C# (sendMessage / callMetaDSL / etc.).
+// Shared result buffer size for sync calls from JS to C# (callMetaDSL / executeMetaDSL).
 const int c_result_buffer_size = 4 * 1024 * 1024 + 1;
 
 class JsBridgeV8Handler : public CefV8Handler {
@@ -32,49 +32,7 @@ public:
                 CefRefPtr<CefV8Value>& retval,
                 CefString& exception) override
   {
-    if (name == "sendMessage") {
-      if (arguments.size() > 0 && arguments[0]->IsString()) {
-        std::string msg = arguments[0]->GetStringValue();
-
-        CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
-        CefRefPtr<CefBrowser> browser = context->GetBrowser();
-        CefRefPtr<CefFrame> frame = context->GetFrame();
-
-        if (on_receive_js_message_fptr) {
-          size_t size = arguments.size();
-          std::vector<std::string> args_vec;
-          std::vector<const char*> args_ptrs;
-
-          for (size_t i = 1; i < size; i++) {
-            if (arguments[i]->IsString()) {
-              args_vec.push_back(arguments[i]->GetStringValue());
-            } else {
-              args_vec.push_back("");
-            }
-          }
-
-          for (const auto& arg : args_vec) {
-            args_ptrs.push_back(arg.c_str());
-          }
-
-          std::vector<uint8_t> result_buffer(c_result_buffer_size);
-          int result_size = static_cast<int>(result_buffer.size());
-          bool success = on_receive_js_message_fptr(msg.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
-
-          if (success && result_size > 0 && result_size < c_result_buffer_size) {
-            result_buffer[result_size] = '\0';
-            retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
-          } else {
-            retval = CefV8Value::CreateString("");
-            if (result_size >= c_result_buffer_size) {
-              printf_log(LOG_SEVERITY_ERROR, "sendMessage failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
-            }
-          }
-          return true;
-        }
-      }
-    }
-    else if (name == "executeMetaDSL") {
+    if (name == "executeMetaDSL") {
       CefRefPtr<CefV8Context> context = CefV8Context::GetCurrentContext();
       CefRefPtr<CefBrowser> browser = context->GetBrowser();
       CefRefPtr<CefFrame> frame = context->GetFrame();
@@ -266,9 +224,6 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
 
     CefRefPtr<CefV8Value> global = context->GetGlobal();
     CefRefPtr<JsBridgeV8Handler> handler = new JsBridgeV8Handler();
-
-    CefRefPtr<CefV8Value> func = CefV8Value::CreateFunction("sendMessage", handler);
-    global->SetValue("sendMessage", func, V8_PROPERTY_ATTRIBUTE_NONE);
 
     CefRefPtr<CefV8Value> execFunc = CefV8Value::CreateFunction("executeMetaDSL", handler);
     global->SetValue("executeMetaDSL", execFunc, V8_PROPERTY_ATTRIBUTE_NONE);
