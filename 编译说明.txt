@@ -157,3 +157,10 @@ index aaaaaaa..bbbbbbb 100644
    // child views and it is an observer for avatar toolbar button if any.
 
 >>>>>>======
+
+patch更新方法：
+1、先应用 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
+2、备份patch后的chrome/browser/ui/views/frame/browser_view.cc供重新生成fix_tab_search_bubble_host_dangling_ptr.patch使用
+3、再手动合入或apply_diff D:\GitHub\cef\patch\patches\fix_tab_search_bubble_host_dangling_ptr.patch
+4、重新生成 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
+5、fix_tab_search_bubble_host_dangling_ptr.patch保持不变（如果差异不大可以，因为这个patch总是手动合入，此时步骤2忽略）或使用2中备份和最终chrome/browser/ui/views/frame/browser_view.cc diff生成新patch
