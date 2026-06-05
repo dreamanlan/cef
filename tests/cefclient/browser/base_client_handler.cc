@@ -192,6 +192,15 @@ bool BaseClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
     }
   }
 
+  // Redirect chrome://help/ to chrome://settings/help
+  {
+    std::string url = request->GetURL().ToString();
+    if (url == "chrome://help/" || url == "chrome://help") {
+      frame->LoadURL("chrome://settings/help");
+      return true;
+    }
+  }
+
   if (on_before_browse_fptr) {
     bool out_return_value = false;
     if (on_before_browse_fptr(browser.get(), frame.get(), request.get(),
