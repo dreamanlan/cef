@@ -572,6 +572,7 @@ typedef void (*send_javascript_code_fn)(const char* code, void* browser, void* f
 typedef void (*send_cef_message_fn)(const char* msg, const char** args, int argCount, void* browser, void* frame, int source_process_id);
 typedef void (*send_javascript_call_fn)(const char* func, const char** args, int argCount, void* browser, void* frame);
 typedef const char* (*call_javascript_func_in_renderer_fn)(const char* func, const char** args, int argCount, void* browser, void* frame);
+typedef const char* (*execute_javascript_in_renderer_fn)(const char* code, void* browser, void* frame);
 typedef void (*free_native_string_fn)(const char* str);
 
 typedef bool (*command_line_has_switch_fn)(void* command_line, const char* name);
@@ -660,6 +661,7 @@ typedef struct {
     send_javascript_code_fn SendJavascriptCode;
     send_javascript_call_fn SendJavascriptCall;
     call_javascript_func_in_renderer_fn CallJavascriptFuncInRenderer;
+    execute_javascript_in_renderer_fn ExecuteJavascriptInRenderer;
     free_native_string_fn FreeNativeString;
     command_line_has_switch_fn CommandLineHasSwitch;
     command_line_get_switch_value_fn CommandLineGetSwitchValue;
@@ -841,6 +843,28 @@ const char* call_javascript_func_in_renderer(const char* func, const char** args
         }
         result = JavaScriptCaller::CallInRenderer(pBrowser, pFrame, func, argVec);
     }
+
+    // Allocate memory for result string (caller must free it)
+    if (result.empty()) {
+        return nullptr;
+    }
+    char* result_str = new char[result.length() + 1];
+    strcpy(result_str, result.c_str());
+    return result_str;
+}
+
+const char* execute_javascript_in_renderer(const char* code, void* browser, void* frame)
+{
+    if (!code) {
+        return nullptr;
+    }
+    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    auto* pFrame = reinterpret_cast<CefFrame*>(frame);
+    if (!pBrowser && !pFrame) {
+        return nullptr;
+    }
+
+    std::string result = JavaScriptCaller::ExecuteInRenderer(pBrowser, pFrame, code);
 
     // Allocate memory for result string (caller must free it)
     if (result.empty()) {
@@ -1420,6 +1444,7 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.SendJavascriptCode = &send_javascript_code;
     api.SendJavascriptCall = &send_javascript_call;
     api.CallJavascriptFuncInRenderer = &call_javascript_func_in_renderer;
+    api.ExecuteJavascriptInRenderer = &execute_javascript_in_renderer;
     api.FreeNativeString = &free_native_string;
     api.CommandLineHasSwitch = &command_line_has_switch;
     api.CommandLineGetSwitchValue = &command_line_get_switch_value;

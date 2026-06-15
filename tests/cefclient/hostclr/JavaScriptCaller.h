@@ -136,6 +136,64 @@ public:
         return CallInRenderer(browser, frame, function_name, args);
     }
 
+    // Execute a piece of JavaScript code synchronously in renderer process
+    // and return the result as string
+    static std::string ExecuteInRenderer(CefRefPtr<CefBrowser> browser,
+                                        CefRefPtr<CefFrame> frame,
+                                        const std::string& code) {
+        if (!frame) {
+            if (browser) {
+                frame = browser->GetMainFrame();
+            }
+            if (!frame) {
+                printf_log(LOG_SEVERITY_ERROR, "Frame is null");
+                return "";
+            }
+        }
+
+        // Must be called in renderer process
+        if (!CefCurrentlyOn(TID_RENDERER)) {
+            printf_log(LOG_SEVERITY_ERROR, "ExecuteInRenderer must be called in renderer process");
+            return "";
+        }
+
+        CefRefPtr<CefV8Context> context = frame->GetV8Context();
+        if (!context) {
+            printf_log(LOG_SEVERITY_ERROR, "V8 context is null");
+            return "";
+        }
+
+        if (!context->Enter()) {
+            printf_log(LOG_SEVERITY_ERROR, "Failed to enter V8 context");
+            return "";
+        }
+
+        std::string result_str;
+
+        CefRefPtr<CefV8Value> retval;
+        CefRefPtr<CefV8Exception> exception;
+
+        if (context->Eval(code, frame->GetURL(), 0, retval, exception)) {
+            if (retval) {
+                result_str = V8ValueToString(retval);
+                printf_log(LOG_SEVERITY_INFO, "ExecuteInRenderer succeeded, result: %s",
+                          result_str.c_str());
+            } else {
+                printf_log(LOG_SEVERITY_ERROR, "ExecuteInRenderer returned null value");
+            }
+        } else {
+            if (exception) {
+                printf_log(LOG_SEVERITY_ERROR, "ExecuteInRenderer failed: %s",
+                          exception->GetMessage().ToString().c_str());
+            } else {
+                printf_log(LOG_SEVERITY_ERROR, "ExecuteInRenderer failed with unknown error");
+            }
+        }
+
+        context->Exit();
+        return result_str;
+    }
+
 private:
     // Convert V8 value to string
     static std::string V8ValueToString(CefRefPtr<CefV8Value> value) {
