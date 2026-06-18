@@ -372,9 +372,36 @@ void BaseClientHandler::OnRenderProcessTerminated(
   std::string url = frame ? frame->GetURL() : "";
 
   if (on_render_process_terminated_fptr) {
-    on_render_process_terminated_fptr(browser.get(), frame.get(),
-        startup_url_.c_str(), url.c_str(), static_cast<int>(status),
-        error_code, error_string.ToString().c_str());
+    const int max_size = 4 * 1024;
+    char* buf = new char[max_size + 1];
+    memset(buf, 0, max_size + 1);
+    int reload_url_size = max_size;
+    bool should_reload = on_render_process_terminated_fptr(
+        browser.get(), frame.get(), startup_url_.c_str(), url.c_str(),
+        static_cast<int>(status), error_code,
+        error_string.ToString().c_str(), buf, reload_url_size);
+    if (should_reload) {
+      std::string target_url;
+      if (reload_url_size > max_size) {
+        // C# reported required size exceeds our buffer; fallback to startup_url_.
+        printf_log(LOG_SEVERITY_ERROR,
+                  "OnRenderProcessTerminated: reload_url buffer too small "
+                  "(needed=%d, provided=%d), falling back to startup_url_",
+                  reload_url_size, max_size);
+      } else if (reload_url_size > 0) {
+        buf[reload_url_size] = '\0';
+        target_url = buf;
+      }
+      delete[] buf;
+      if (target_url.empty()) {
+        target_url = startup_url_;
+      }
+      if (frame && !target_url.empty()) {
+        frame->LoadURL(target_url);
+      }
+      return;
+    }
+    delete[] buf;
   }
 
   // Don't reload if there's no start URL, or if the crash URL was specified.
