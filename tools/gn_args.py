@@ -538,6 +538,10 @@ def GetConfigArgs(args, is_debug, cpu):
   """
   add_args = {}
 
+  # Force disable DCHECK for both debug and release to avoid blink DCHECK
+  # SIGABRT crashes (e.g. ComputeContentSize). Overrides any user input.
+  add_args['dcheck_always_on'] = False
+
   if GetArgValue(args, 'is_official_build'):
     # Disable Chromium field trials in official builds.
     add_args['disable_fieldtrial_testing_config'] = True
