@@ -38,8 +38,8 @@ void AddChildrenWithCollapse(AXObject& ax_object,
   HashSet<AXID> from_pruned_ids;
 
   HeapVector<Member<AXObject>> reachable;
-  reachable.AppendRange(ax_object.ChildrenIncludingIgnored().rbegin(),
-                        ax_object.ChildrenIncludingIgnored().rend());
+  reachable.Append(ax_object.ChildrenIncludingIgnored().rbegin(),
+                   ax_object.ChildrenIncludingIgnored().rend());
 
   while (!reachable.empty()) {
     AXObject* descendant = reachable.back();
@@ -53,7 +53,7 @@ void AddChildrenWithCollapse(AXObject& ax_object,
     if (follow_ignored &&
         (descendant->IsIgnoredButIncludedInTree() || !descendant->GetNode())) {
       const auto& children = descendant->ChildrenIncludingIgnored();
-      reachable.AppendRange(children.rbegin(), children.rend());
+      reachable.Append(children.rbegin(), children.rend());
       if (from_pruned) {
         for (const auto& child : children) {
           from_pruned_ids.insert(child->AXObjectID());
@@ -82,7 +82,7 @@ void AddChildrenWithCollapse(AXObject& ax_object,
         // Pruned generic node: still visit children so that position:fixed
         // or position:sticky descendants can escape the off-screen parent.
         const auto& children = descendant->ChildrenIncludingIgnored();
-        reachable.AppendRange(children.rbegin(), children.rend());
+        reachable.Append(children.rbegin(), children.rend());
         for (const auto& child : children) {
           from_pruned_ids.insert(child->AXObjectID());
         }
@@ -159,7 +159,7 @@ std::unique_ptr<protocol::Array<AXNode>> WalkAXNodesToDepthWithCollapse(
     }
     auto filtered = std::make_unique<protocol::Array<AXNodeId>>();
     for (const auto& child_id : *child_ids) {
-      if (serialized_ids.Contains(child_id.ToInt())) {
+      if (serialized_ids.Contains(StringToIntStrict(child_id).value_or(0))) {
         filtered->emplace_back(child_id);
       }
     }

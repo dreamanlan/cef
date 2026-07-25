@@ -83,7 +83,7 @@ std::string MakeStatusLine(int status_code,
   status.append(" ");
 
   if (status_text.empty()) {
-    const std::string& text =
+    std::string_view text =
         net::GetHttpReasonPhrase(static_cast<net::HttpStatusCode>(status_code));
     DCHECK(!text.empty());
     status.append(text);
@@ -146,21 +146,20 @@ scoped_refptr<net::HttpResponseHeaders> MakeResponseHeaders(
     }
   }
 
-  for (const auto& pair : extra_headers) {
+  for (const auto& [key, value] : extra_headers) {
     if (!set_headers_lowercase.empty()) {
       // Check if the header has already been set.
-      const std::string& name_lowercase = base::ToLowerASCII(pair.first);
-      if (set_headers_lowercase.find(name_lowercase) !=
-          set_headers_lowercase.end()) {
+      const std::string& name_lowercase = base::ToLowerASCII(key);
+      if (set_headers_lowercase.contains(name_lowercase)) {
         if (allow_existing_header_override) {
-          headers->RemoveHeader(pair.first);
+          headers->RemoveHeader(key);
         } else {
           continue;
         }
       }
     }
 
-    headers->AddHeader(pair.first, pair.second);
+    headers->AddHeader(key, value);
   }
 
   return headers;

@@ -1,16 +1,16 @@
 diff --git chrome/browser/ui/views/frame/browser_native_widget_mac.h chrome/browser/ui/views/frame/browser_native_widget_mac.h
-index 1423d061aa00c5e8c58bceb09f36d517821f8d06..dd7e20ed4850153fe5e1cc2d69acfd5299bc2693 100644
+index e5a6aaa3e11cc3a60eef9eb8ace0af6fca30a53a..7a6752e46cb0e01f0d0d8623511c1afac828f4e8 100644
 --- chrome/browser/ui/views/frame/browser_native_widget_mac.h
 +++ chrome/browser/ui/views/frame/browser_native_widget_mac.h
-@@ -11,6 +11,7 @@
- #include "ui/base/mojom/window_show_state.mojom-forward.h"
+@@ -15,6 +15,7 @@
+ #include "ui/native_theme/native_theme.h"
  #include "ui/views/widget/native_widget_mac.h"
  
 +class Browser;
  class BrowserWidget;
  class BrowserView;
  @class BrowserWindowTouchBarController;
-@@ -57,6 +58,21 @@ class BrowserNativeWidgetMac : public views::NativeWidgetMac,
+@@ -61,6 +62,21 @@ class BrowserNativeWidgetMac : public views::NativeWidgetMac,
    bool ShouldUseInitialVisibleOnAllWorkspaces() const override;
    void AnnounceTextInInProcessWindow(const std::u16string& text) override;
  
@@ -33,10 +33,10 @@ index 1423d061aa00c5e8c58bceb09f36d517821f8d06..dd7e20ed4850153fe5e1cc2d69acfd52
    ~BrowserNativeWidgetMac() override;
  
 diff --git chrome/browser/ui/views/frame/browser_native_widget_mac.mm chrome/browser/ui/views/frame/browser_native_widget_mac.mm
-index f4a8b323fb6e0647750fbfcffd530a8bbe5b5010..77c52720a2073772936745041941850e50171667 100644
+index aca3df8943f7ed23440dc29901555ff71455274a..f2e84939a52f5b7e9165e9a25f34b72bc2f98a14 100644
 --- chrome/browser/ui/views/frame/browser_native_widget_mac.mm
 +++ chrome/browser/ui/views/frame/browser_native_widget_mac.mm
-@@ -209,7 +209,15 @@ void BrowserNativeWidgetMac::OnWidgetDestroyed(views::Widget* widget) {
+@@ -234,7 +234,15 @@ void BrowserNativeWidgetMac::OnWidgetDestroyed(views::Widget* widget) {
  void BrowserNativeWidgetMac::ValidateUserInterfaceItem(
      int32_t tag,
      remote_cocoa::mojom::ValidateUserInterfaceItemResult* result) {
@@ -53,7 +53,7 @@ index f4a8b323fb6e0647750fbfcffd530a8bbe5b5010..77c52720a2073772936745041941850e
    if (!browser || !chrome::SupportsCommand(browser, tag)) {
      result->enable = false;
      return;
-@@ -364,9 +372,16 @@ bool BrowserNativeWidgetMac::WillExecuteCommand(
+@@ -429,9 +437,16 @@ bool BrowserNativeWidgetMac::WillExecuteCommand(
    if (!browser_view_) {
      return false;
    }
@@ -72,15 +72,20 @@ index f4a8b323fb6e0647750fbfcffd530a8bbe5b5010..77c52720a2073772936745041941850e
    if (is_before_first_responder) {
      // The specification for this private extensions API is incredibly vague.
      // For now, we avoid triggering chrome commands prior to giving the
-@@ -398,13 +413,21 @@ bool BrowserNativeWidgetMac::ExecuteCommand(
+@@ -463,12 +478,23 @@ bool BrowserNativeWidgetMac::ExecuteCommand(
      int32_t command,
      WindowOpenDisposition window_open_disposition,
      bool is_before_first_responder) {
 -  if (!WillExecuteCommand(command, window_open_disposition,
+-                          is_before_first_responder)) {
++  if (!browser_view_) {
+     return false;
+   }
 +  return ExecuteCommand(browser_view_->browser(), command,
 +                        window_open_disposition, is_before_first_responder);
 +}
-+
+ 
+-  Browser* browser = browser_view_->browser();
 +// static
 +bool BrowserNativeWidgetMac::ExecuteCommand(
 +    Browser* browser,
@@ -88,12 +93,27 @@ index f4a8b323fb6e0647750fbfcffd530a8bbe5b5010..77c52720a2073772936745041941850e
 +    WindowOpenDisposition window_open_disposition,
 +    bool is_before_first_responder) {
 +  if (!WillExecuteCommand(browser, command, window_open_disposition,
-                           is_before_first_responder)) {
-     return false;
++                          is_before_first_responder)) {
++    return false;
++  }
+ 
+   if (command == IDC_TOGGLE_VERTICAL_TABS) {
+     if (auto* controller =
+@@ -478,10 +504,13 @@ bool BrowserNativeWidgetMac::ExecuteCommand(
+           is_vertical, tabs::VerticalTabStripEntryPoint::kMacViewMenu);
+     }
+   } else if (command == IDC_CLEAR_BROWSING_DATA) {
+-    views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
+-        browsing_data_important_sites_util::
+-            kOpenClearBrowsingDataDialogViaAcceleratorEventId,
+-        browser_view_);
++    BrowserView* browser_view = BrowserView::GetBrowserViewForBrowser(browser);
++    if (browser_view) {
++      views::ElementTrackerViews::GetInstance()->NotifyCustomEvent(
++          browsing_data_important_sites_util::
++              kOpenClearBrowsingDataDialogViaAcceleratorEventId,
++          browser_view);
++    }
    }
  
--  Browser* browser = browser_view_->browser();
--
    chrome::ExecuteCommandWithDisposition(browser, command,
-                                         window_open_disposition);
-   return true;

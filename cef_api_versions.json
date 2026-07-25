@@ -107,8 +107,49 @@
       "linux": "c64b3f0e5ddf11f2e7d296c4067cd887aa50878c",
       "mac": "fe0dbf4a2ce3b5acb0acc06aac4d7ac3010c2477",
       "windows": "430d1c4e4c958b53a8e383db3a5a38037ca9f51e"
+    },
+    "14500": {
+      "comment": "Added January 20, 2026.",
+      "linux": "f57e722cb70b5ba2567aaaabfda35ab24d1bdf10",
+      "mac": "b2511b07e182653ba558bf1873cc45738ba598da",
+      "windows": "fd311ad9c02d2063d20e6fa3601d66229089b69f"
+    },
+    "14600": {
+      "comment": "Added February 17, 2026.",
+      "linux": "7cec742972d6735aa8a955fc2e098a1f6669c3d5",
+      "mac": "8ba92d4f63306cea46b5992ce65bf2cd2c7740ff",
+      "sandbox_compat": "06ced0d54abb1a72",
+      "windows": "99676a8d58951ffb0a24f6cbae6aa01f3249b29e"
+    },
+    "14700": {
+      "comment": "Added March 24, 2026.",
+      "linux": "ca03ee7aa4d9a766d43302c03689684de0b78966",
+      "mac": "4b5130ce2abe48970a3edf9b3d2e541c007f6938",
+      "sandbox_compat": "2c7f1000da15f67f",
+      "windows": "1cf33dbf355efffcd993ab4d2ea391e6631f95f2"
+    },
+    "14800": {
+      "comment": "Added April 22, 2026.",
+      "linux": "aa2de54c143e9ffffd183177f14c325820b5916a",
+      "mac": "c4a25b0e7f0beb51b9f5db9fb75904d11dd856a1",
+      "sandbox_compat": "2c7f1000da15f67f",
+      "windows": "a9fddb1f86f1fc427a6eee19a370dbedb14468cb"
+    },
+    "14900": {
+      "comment": "Added May 22, 2026.",
+      "linux": "778f64e58ff024840e29fb49bb7b9c3819f12191",
+      "mac": "22fd845554eb5e3f5516965213efca951a3f8256",
+      "sandbox_compat": "6c5b35ad81055c14",
+      "windows": "de5114c34e4c0c3d725313c38f4ed5b18cbfdeb4"
+    },
+    "15000": {
+      "comment": "Added June 04, 2026.",
+      "linux": "210767725a6feb2e4becd3956b648cab6a006712",
+      "mac": "e85c868aa8a947e1e7c9904c0745c60ae490fa05",
+      "sandbox_compat": "6c5b35ad81055c14",
+      "windows": "71146b4350a01d3805e7ea990eb034e6ef4d53db"
     }
   },
-  "last": "14400",
+  "last": "15000",
   "min": "13300"
 }

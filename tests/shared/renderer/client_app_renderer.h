@@ -79,6 +79,9 @@ class ClientAppRenderer : public ClientApp, public CefRenderProcessHandler {
 
   ClientAppRenderer();
 
+  ClientAppRenderer(const ClientAppRenderer&) = delete;
+  ClientAppRenderer& operator=(const ClientAppRenderer&) = delete;
+
  private:
   // Creates all of the Delegate objects. Implemented by cefclient in
   // client_app_delegates_renderer.cc
@@ -122,7 +125,6 @@ class ClientAppRenderer : public ClientApp, public CefRenderProcessHandler {
   DelegateSet delegates_;
 
   IMPLEMENT_REFCOUNTING(ClientAppRenderer);
-  DISALLOW_COPY_AND_ASSIGN(ClientAppRenderer);
 };
 
 }  // namespace client

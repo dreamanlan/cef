@@ -7,7 +7,7 @@
 
 #include "cef/libcef/browser/browser_host_base.h"
 #include "chrome/browser/file_select_helper.h"
-#include "chrome/browser/ui/chrome_select_file_policy.h"
+#include "chrome/browser/ui/select_file_policy/chrome_select_file_policy.h"
 #include "ui/shell_dialogs/select_file_dialog_factory.h"
 #include "ui/shell_dialogs/select_file_policy.h"
 

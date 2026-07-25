@@ -264,8 +264,9 @@ class V8TrackObject : public CefTrackNode {
 
   // Attach this track object to the specified V8 object.
   void AttachTo(v8::Local<v8::Context> context, v8::Local<v8::Object> object) {
-    SetPrivate(context, object, kCefTrackObject,
-               v8::External::New(isolate_, this));
+    SetPrivate(
+        context, object, kCefTrackObject,
+        v8::External::New(isolate_, this, v8::kExternalPointerTypeTagDefault));
   }
 
   // Retrieve the track object for the specified V8 object.
@@ -274,7 +275,8 @@ class V8TrackObject : public CefTrackNode {
     v8::Local<v8::Value> value;
     if (GetPrivate(context, object, kCefTrackObject, &value) &&
         value->IsExternal()) {
-      return static_cast<V8TrackObject*>(v8::External::Cast(*value)->Value());
+      return static_cast<V8TrackObject*>(v8::External::Cast(*value)->Value(
+          v8::kExternalPointerTypeTagDefault));
     }
 
     return nullptr;
@@ -321,8 +323,9 @@ class V8TrackArrayBuffer : public CefTrackNode {
   // Attach this track object to the specified V8 object.
   void AttachTo(v8::Local<v8::Context> context,
                 v8::Local<v8::ArrayBuffer> arrayBuffer) {
-    SetPrivate(context, arrayBuffer, kCefTrackObject,
-               v8::External::New(isolate_, this));
+    SetPrivate(
+        context, arrayBuffer, kCefTrackObject,
+        v8::External::New(isolate_, this, v8::kExternalPointerTypeTagDefault));
   }
 
   // Retrieve the track object for the specified V8 object.
@@ -331,8 +334,8 @@ class V8TrackArrayBuffer : public CefTrackNode {
     v8::Local<v8::Value> value;
     if (GetPrivate(context, object, kCefTrackObject, &value) &&
         value->IsExternal()) {
-      return static_cast<V8TrackArrayBuffer*>(
-          v8::External::Cast(*value)->Value());
+      return static_cast<V8TrackArrayBuffer*>(v8::External::Cast(*value)->Value(
+          v8::kExternalPointerTypeTagDefault));
     }
 
     return nullptr;
@@ -357,7 +360,8 @@ class V8FunctionData {
 
   static V8FunctionData* Unwrap(v8::Local<v8::Value> data) {
     DCHECK(data->IsExternal());
-    return static_cast<V8FunctionData*>(v8::External::Cast(*data)->Value());
+    return static_cast<V8FunctionData*>(
+        v8::External::Cast(*data)->Value(v8::kExternalPointerTypeTagDefault));
   }
 
   CefString function_name() const { return function_name_; }
@@ -386,7 +390,8 @@ class V8FunctionData {
   }
 
   v8::Local<v8::External> CreateExternal() {
-    v8::Local<v8::External> external = v8::External::New(isolate_, this);
+    v8::Local<v8::External> external =
+        v8::External::New(isolate_, this, v8::kExternalPointerTypeTagDefault);
 
     isolate_->AdjustAmountOfExternalAllocatedMemory(
         static_cast<int>(sizeof(V8FunctionData)));
@@ -546,7 +551,7 @@ void AccessorNameGetterCallbackImpl(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Local<v8::Object> obj = info.This();
+  v8::Local<v8::Object> obj = info.HolderV2();
 
   CefRefPtr<CefV8Accessor> accessorPtr;
 
@@ -590,7 +595,7 @@ void AccessorNameSetterCallbackImpl(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Local<v8::Object> obj = info.This();
+  v8::Local<v8::Object> obj = info.HolderV2();
 
   CefRefPtr<CefV8Accessor> accessorPtr;
 
@@ -635,7 +640,7 @@ v8::Intercepted InterceptorGetterCallbackImpl(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Handle<v8::Object> obj = info.This();
+  v8::Handle<v8::Object> obj = info.HolderV2();
   CefRefPtr<CefV8Interceptor> interceptorPtr;
 
   V8TrackObject* tracker = V8TrackObject::Unwrap(context, obj);
@@ -672,7 +677,7 @@ v8::Intercepted InterceptorSetterCallbackImpl(
     const v8::PropertyCallbackInfo<void>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Handle<v8::Object> obj = info.This();
+  v8::Handle<v8::Object> obj = info.HolderV2();
   CefRefPtr<CefV8Interceptor> interceptorPtr;
 
   V8TrackObject* tracker = V8TrackObject::Unwrap(context, obj);
@@ -865,8 +870,8 @@ bool CefRegisterExtension(const CefString& extension_name,
     isolate_manager->AddGlobalTrackObject(object);
   }
 
-  std::unique_ptr<v8::Extension> wrapper(new ExtensionWrapper(
-      name->GetString(), code->GetString(), handler.get()));
+  auto wrapper = std::make_unique<ExtensionWrapper>(
+      name->GetString(), code->GetString(), handler.get());
 
   blink::WebScriptController::RegisterExtension(std::move(wrapper));
   return true;
@@ -1111,9 +1116,9 @@ bool CefV8ContextImpl::Eval(const CefString& code,
   v8::Context::Scope context_scope(context);
 
   const blink::WebString& source =
-      blink::WebString::FromUTF16(code.ToString16());
+      blink::WebString::FromUtf16(code.ToString16());
   const blink::WebString& source_url =
-      blink::WebString::FromUTF16(script_url.ToString16());
+      blink::WebString::FromUtf16(script_url.ToString16());
 
   v8::TryCatch try_catch(isolate);
   try_catch.SetVerbose(true);
@@ -1500,6 +1505,85 @@ CefRefPtr<CefV8Value> CefV8Value::CreateArrayBufferWithCopy(void* buffer,
   CefRefPtr<CefV8ValueImpl> impl = new CefV8ValueImpl(isolate);
   impl->InitObject(ab, tracker);
   return impl;
+}
+
+// CefV8BackingStoreImpl implementation.
+
+CefV8BackingStoreImpl::CefV8BackingStoreImpl(
+    std::unique_ptr<v8::BackingStore> backing_store)
+    : backing_store_(std::move(backing_store)) {}
+
+void* CefV8BackingStoreImpl::Data() {
+  return backing_store_ ? backing_store_->Data() : nullptr;
+}
+
+size_t CefV8BackingStoreImpl::ByteLength() {
+  return backing_store_ ? backing_store_->ByteLength() : 0;
+}
+
+bool CefV8BackingStoreImpl::IsValid() {
+  return backing_store_ != nullptr;
+}
+
+std::unique_ptr<v8::BackingStore> CefV8BackingStoreImpl::TakeBackingStore() {
+  return std::move(backing_store_);
+}
+
+// static
+CefRefPtr<CefV8BackingStore> CefV8BackingStore::Create(size_t byte_length) {
+  CEF_V8_REQUIRE_ISOLATE_RETURN(nullptr);
+
+  if (byte_length == 0) {
+    return nullptr;
+  }
+
+  v8::Isolate* isolate = CefV8IsolateManager::Get()->isolate();
+  std::unique_ptr<v8::BackingStore> backing =
+      v8::ArrayBuffer::NewBackingStore(isolate, byte_length);
+  if (!backing) {
+    return nullptr;
+  }
+
+  return new CefV8BackingStoreImpl(std::move(backing));
+}
+
+// static
+CefRefPtr<CefV8Value> CefV8Value::CreateArrayBufferFromBackingStore(
+    CefRefPtr<CefV8BackingStore> backing_store) {
+  CEF_V8_REQUIRE_ISOLATE_RETURN(nullptr);
+
+  if (!backing_store || !backing_store->IsValid()) {
+    return nullptr;
+  }
+
+  v8::Isolate* isolate = CefV8IsolateManager::Get()->isolate();
+  v8::HandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  if (context.IsEmpty()) {
+    DCHECK(false) << "not currently in a V8 context";
+    return nullptr;
+  }
+
+  CefV8BackingStoreImpl* impl =
+      static_cast<CefV8BackingStoreImpl*>(backing_store.get());
+  std::unique_ptr<v8::BackingStore> store = impl->TakeBackingStore();
+  if (!store) {
+    return nullptr;
+  }
+
+  v8::Local<v8::ArrayBuffer> ab =
+      v8::ArrayBuffer::New(isolate, std::move(store));
+
+  // Create a tracker object that will cause the user data reference to be
+  // released when the V8 object is destroyed.
+  V8TrackObject* tracker = new V8TrackObject(isolate);
+
+  // Attach the tracker object.
+  tracker->AttachTo(context, ab);
+
+  CefRefPtr<CefV8ValueImpl> value = new CefV8ValueImpl(isolate);
+  value->InitObject(ab, tracker);
+  return value.get();
 }
 
 // static

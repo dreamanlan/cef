@@ -141,14 +141,15 @@ void CefWebContentsViewOSR::ShowContextMenu(
 }
 
 void CefWebContentsViewOSR::StartDragging(
+    content::RenderFrameHost& source_rfh,
     const content::DropData& drop_data,
-    const url::Origin& source_origin,
     blink::DragOperationsMask allowed_ops,
     const gfx::ImageSkia& image,
     const gfx::Vector2d& cursor_offset,
     const gfx::Rect& drag_obj_rect,
-    const blink::mojom::DragEventSourceInfo& event_info,
-    content::RenderWidgetHostImpl* source_rwh) {
+    const blink::mojom::DragEventSourceInfo& event_info) {
+  auto* source_rwh = static_cast<content::RenderWidgetHostImpl*>(
+      source_rfh.GetRenderWidgetHost());
   CefRefPtr<AlloyBrowserHostImpl> browser = GetBrowser();
   if (browser.get()) {
     browser->StartDragging(drop_data, allowed_ops, image, cursor_offset,

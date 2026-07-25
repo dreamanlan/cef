@@ -65,11 +65,10 @@ int GetCacheControlHeaderPolicy(CefRequest::HeaderMap headerMap) {
 
   // Extract the Cache-Control header line.
   {
-    CefRequest::HeaderMap::const_iterator it = headerMap.begin();
-    for (; it != headerMap.end(); ++it) {
+    for (const auto& [key, value] : headerMap) {
       if (base::EqualsCaseInsensitiveASCII(
-              it->first.ToString(), net::HttpRequestHeaders::kCacheControl)) {
-        line = it->second;
+              key.ToString(), net::HttpRequestHeaders::kCacheControl)) {
+        line = value;
         break;
       }
     }
@@ -145,14 +144,11 @@ void GetHeaderMap(const CefRequest::HeaderMap& source,
                   CefRequest::HeaderMap& map) {
   map.clear();
 
-  CefRequest::HeaderMap::const_iterator it = source.begin();
-  for (; it != source.end(); ++it) {
-    const CefString& name = it->first;
-
+  for (const auto& [name, value] : source) {
     // Do not include Referer in the header map.
     if (!base::EqualsCaseInsensitiveASCII(name.ToString(),
                                           net::HttpRequestHeaders::kReferer)) {
-      map.insert(std::make_pair(name, it->second));
+      map.insert(std::make_pair(name, value));
     }
   }
 }
@@ -552,14 +548,14 @@ void CefRequestImpl::Get(const cef::mojom::RequestParamsPtr& params,
   request.SetUrl(params->url);
   request.SetRequestorOrigin(blink::WebSecurityOrigin::Create(params->url));
   if (!params->method.empty()) {
-    request.SetHttpMethod(blink::WebString::FromASCII(params->method));
+    request.SetHttpMethod(blink::WebString::FromAscii(params->method));
   }
 
   if (params->referrer && params->referrer->url.is_valid()) {
     const blink::WebString& referrer =
         blink::WebSecurityPolicy::GenerateReferrerHeader(
             params->referrer->policy, params->url,
-            blink::WebString::FromUTF8(params->referrer->url.spec()));
+            blink::WebString::FromUtf8(params->referrer->url.spec()));
     if (!referrer.IsEmpty()) {
       request.SetReferrerString(referrer);
       request.SetReferrerPolicy(params->referrer->policy);
@@ -570,8 +566,8 @@ void CefRequestImpl::Get(const cef::mojom::RequestParamsPtr& params,
   if (!params->headers.empty()) {
     for (net::HttpUtil::HeadersIterator i(params->headers, "\n\r");
          i.GetNext();) {
-      request.AddHttpHeaderField(blink::WebString::FromUTF8(i.name()),
-                                 blink::WebString::FromUTF8(i.values()));
+      request.AddHttpHeaderField(blink::WebString::FromUtf8(i.name()),
+                                 blink::WebString::FromUtf8(i.values()));
       headerMap.insert(std::make_pair(i.name(), i.values()));
     }
   }
@@ -579,17 +575,17 @@ void CefRequestImpl::Get(const cef::mojom::RequestParamsPtr& params,
   if (params->upload_data) {
     const std::u16string& method = request.HttpMethod().Utf16();
     if (method == u"GET" || method == u"HEAD") {
-      request.SetHttpMethod(blink::WebString::FromASCII("POST"));
+      request.SetHttpMethod(blink::WebString::FromAscii("POST"));
     }
 
     // The comparison performed by httpHeaderField() is case insensitive.
     if (request
-            .HttpHeaderField(blink::WebString::FromASCII(
+            .HttpHeaderField(blink::WebString::FromAscii(
                 net::HttpRequestHeaders::kContentType))
             .length() == 0) {
       request.SetHttpHeaderField(
-          blink::WebString::FromASCII(net::HttpRequestHeaders::kContentType),
-          blink::WebString::FromASCII(
+          blink::WebString::FromAscii(net::HttpRequestHeaders::kContentType),
+          blink::WebString::FromAscii(
               net_service::kContentTypeApplicationFormURLEncoded));
     }
 
@@ -941,9 +937,8 @@ bool CefPostDataImpl::AddElement(CefRefPtr<CefPostDataElement> element) {
   CHECK_READONLY_RETURN(false);
 
   // check that the element isn't already in the list before adding
-  ElementVector::const_iterator it = elements_.begin();
-  for (; it != elements_.end(); ++it) {
-    if (it->get() == element.get()) {
+  for (const auto& existing : elements_) {
+    if (existing.get() == element.get()) {
       found = true;
       break;
     }
@@ -998,9 +993,8 @@ void CefPostDataImpl::SetReadOnly(bool read_only) {
 
   read_only_ = read_only;
 
-  ElementVector::const_iterator it = elements_.begin();
-  for (; it != elements_.end(); ++it) {
-    static_cast<CefPostDataElementImpl*>(it->get())->SetReadOnly(read_only);
+  for (const auto& element : elements_) {
+    static_cast<CefPostDataElementImpl*>(element.get())->SetReadOnly(read_only);
   }
 }
 
@@ -1013,10 +1007,9 @@ void CefPostDataImpl::SetTrackChanges(bool track_changes) {
   track_changes_ = track_changes;
   has_changes_ = false;
 
-  ElementVector::const_iterator it = elements_.begin();
-  for (; it != elements_.end(); ++it) {
-    static_cast<CefPostDataElementImpl*>(it->get())->SetTrackChanges(
-        track_changes);
+  for (const auto& element : elements_) {
+    static_cast<CefPostDataElementImpl*>(element.get())
+        ->SetTrackChanges(track_changes);
   }
 }
 
@@ -1026,9 +1019,8 @@ bool CefPostDataImpl::HasChanges() const {
     return true;
   }
 
-  ElementVector::const_iterator it = elements_.begin();
-  for (; it != elements_.end(); ++it) {
-    if (static_cast<CefPostDataElementImpl*>(it->get())->HasChanges()) {
+  for (const auto& element : elements_) {
+    if (static_cast<CefPostDataElementImpl*>(element.get())->HasChanges()) {
       return true;
     }
   }

@@ -848,7 +848,7 @@ bool OsrWindowWin::OnTouchEvent(UINT message, WPARAM wParam, LPARAM lParam) {
   if (num_points < 0 || num_points > 16) {
     return false;
   }
-  std::unique_ptr<TOUCHINPUT[]> input(new TOUCHINPUT[num_points]);
+  auto input = std::make_unique<TOUCHINPUT[]>(num_points);
   if (GetTouchInputInfo(reinterpret_cast<HTOUCHINPUT>(lParam), num_points,
                         input.get(), sizeof(TOUCHINPUT))) {
     CefTouchEvent touch_event;
@@ -1143,9 +1143,8 @@ void OsrWindowWin::OnImeCompositionRangeChanged(
   if (ime_handler_) {
     // Convert from view coordinates to device coordinates.
     CefRenderHandler::RectList device_bounds;
-    CefRenderHandler::RectList::const_iterator it = character_bounds.begin();
-    for (; it != character_bounds.end(); ++it) {
-      device_bounds.push_back(LogicalToDevice(*it, device_scale_factor_));
+    for (const auto& bounds : character_bounds) {
+      device_bounds.push_back(LogicalToDevice(bounds, device_scale_factor_));
     }
 
     ime_handler_->ChangeCompositionRange(selection_range, device_bounds);

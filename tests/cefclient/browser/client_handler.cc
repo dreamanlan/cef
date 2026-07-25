@@ -483,6 +483,10 @@ class ClientDownloadImageCallback : public CefDownloadImageCallback {
   explicit ClientDownloadImageCallback(CefRefPtr<ClientHandler> client_handler)
       : client_handler_(client_handler) {}
 
+  ClientDownloadImageCallback(const ClientDownloadImageCallback&) = delete;
+  ClientDownloadImageCallback& operator=(const ClientDownloadImageCallback&) =
+      delete;
+
   void OnDownloadImageFinished(const CefString& image_url,
                                int http_status_code,
                                CefRefPtr<CefImage> image) override {
@@ -495,7 +499,6 @@ class ClientDownloadImageCallback : public CefDownloadImageCallback {
   CefRefPtr<ClientHandler> client_handler_;
 
   IMPLEMENT_REFCOUNTING(ClientDownloadImageCallback);
-  DISALLOW_COPY_AND_ASSIGN(ClientDownloadImageCallback);
 };
 
 ClientHandler::ClientHandler(Delegate* delegate,
@@ -1239,7 +1242,7 @@ bool ClientHandler::OnCertificateError(CefRefPtr<CefBrowser> browser,
   CEF_REQUIRE_UI_THREAD();
 
   if (cert_error == ERR_CERT_COMMON_NAME_INVALID &&
-      request_url.ToString().find("https://www.magpcss.com/") == 0U) {
+      request_url.ToString().starts_with("https://www.magpcss.com/")) {
     // Allow magpcss.com to load despite having a certificate common name of
     // magpcss.org.
     callback->Continue();
@@ -1272,12 +1275,10 @@ bool ClientHandler::OnSelectClientCertificate(
     return true;
   }
 
-  std::vector<CefRefPtr<CefX509Certificate>>::const_iterator it =
-      certificates.begin();
-  for (; it != certificates.end(); ++it) {
-    CefString subject((*it)->GetSubject()->GetDisplayName());
+  for (const auto& cert : certificates) {
+    CefString subject(cert->GetSubject()->GetDisplayName());
     if (subject == cert_name) {
-      callback->Select(*it);
+      callback->Select(cert);
       return true;
     }
   }
@@ -1305,7 +1306,7 @@ void ClientHandler::OnProtocolExecution(CefRefPtr<CefBrowser> browser,
   std::string urlStr = request->GetURL();
 
   // Allow OS execution of Spotify URIs.
-  if (urlStr.find("spotify:") == 0) {
+  if (urlStr.starts_with("spotify:")) {
     allow_os_execution = true;
   }
 }

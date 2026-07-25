@@ -243,7 +243,7 @@ class TestDOMVisitor : public CefDOMVisitor {
     EXPECT_TRUE(context->Eval("window.devicePixelRatio", CefString(), 0, retval,
                               exception));
     if (exception) {
-      ADD_FAILURE() << exception->GetMessage().c_str();
+      ADD_FAILURE() << exception->GetMessage();
       return 1.0;
     }
 
@@ -384,6 +384,9 @@ class FocusedNodeRendererTest : public ClientAppRenderer::Delegate,
  public:
   FocusedNodeRendererTest() = default;
 
+  FocusedNodeRendererTest(const FocusedNodeRendererTest&) = delete;
+  FocusedNodeRendererTest& operator=(const FocusedNodeRendererTest&) = delete;
+
   void OnBrowserCreated(CefRefPtr<ClientAppRenderer> app,
                         CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDictionaryValue> extra_info) override {
@@ -477,13 +480,15 @@ class FocusedNodeRendererTest : public ClientAppRenderer::Delegate,
   bool got_blur_ = false;
 
   IMPLEMENT_REFCOUNTING(FocusedNodeRendererTest);
-  DISALLOW_COPY_AND_ASSIGN(FocusedNodeRendererTest);
 };
 
 // Browser side test handler
 class FocusedNodeTestHandler : public TestHandler {
  public:
   FocusedNodeTestHandler() = default;
+
+  FocusedNodeTestHandler(const FocusedNodeTestHandler&) = delete;
+  FocusedNodeTestHandler& operator=(const FocusedNodeTestHandler&) = delete;
 
   void RunTest() override {
     const std::string html =
@@ -534,7 +539,6 @@ class FocusedNodeTestHandler : public TestHandler {
   TrackCallback got_success_;
 
   IMPLEMENT_REFCOUNTING(FocusedNodeTestHandler);
-  DISALLOW_COPY_AND_ASSIGN(FocusedNodeTestHandler);
 };
 
 }  // namespace

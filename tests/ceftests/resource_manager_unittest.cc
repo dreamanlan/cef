@@ -212,6 +212,9 @@ class TestProvider : public CefResourceManager::Provider {
     }
   }
 
+  TestProvider(const TestProvider&) = delete;
+  TestProvider& operator=(const TestProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     CEF_REQUIRE_IO_THREAD();
     EXPECT_FALSE(state_->got_on_request_);
@@ -235,8 +238,6 @@ class TestProvider : public CefResourceManager::Provider {
 
  private:
   State* state_;
-
-  DISALLOW_COPY_AND_ASSIGN(TestProvider);
 };
 
 // Helper that blocks on destruction of 1 or more TestProviders.
@@ -357,6 +358,7 @@ class SimpleTestProvider : public TestProvider {
     STOP,
     REMOVE,
     REMOVE_ALL,
+    REMOVE_THEN_REMOVE_ALL,
     DO_NOTHING,
   };
 
@@ -372,6 +374,9 @@ class SimpleTestProvider : public TestProvider {
         manager_(manager),
         do_nothing_callback_(std::move(do_nothing_callback)) {}
 
+  SimpleTestProvider(const SimpleTestProvider&) = delete;
+  SimpleTestProvider& operator=(const SimpleTestProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     TestProvider::OnRequest(request);
 
@@ -385,6 +390,9 @@ class SimpleTestProvider : public TestProvider {
       manager_->RemoveProviders(kProviderId);
     } else if (mode_ == REMOVE_ALL) {
       manager_->RemoveAllProviders();
+    } else if (mode_ == REMOVE_THEN_REMOVE_ALL) {
+      manager_->RemoveProviders(kProviderId);
+      manager_->RemoveAllProviders();
     } else if (mode_ == DO_NOTHING) {
       EXPECT_FALSE(do_nothing_callback_.is_null());
       std::move(do_nothing_callback_).Run();
@@ -397,8 +405,6 @@ class SimpleTestProvider : public TestProvider {
   Mode mode_;
   CefResourceManager* manager_;  // Weak reference.
   base::OnceClosure do_nothing_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(SimpleTestProvider);
 };
 
 }  // namespace
@@ -664,6 +670,66 @@ TEST(ResourceManagerTest, ProviderRemoveAll) {
   EXPECT_EQ(CreateMessage(kDoneMsg, kNotHandled), state.messages_[0]);
 }
 
+// Test removing all providers after a previous removal leaves the current
+// provider pending deletion.
+TEST(ResourceManagerTest, ProviderRemoveThenRemoveAll) {
+  const char kUrl[] = "https://test.com/ResourceManagerTest";
+
+  ResourceManagerTestHandler::State state;
+  state.urls_.push_back(kUrl);
+
+  TestProvider::State provider_state1;
+  TestProvider::State provider_state2;
+  TestProvider::State provider_state3;
+
+  ProviderDestructHelper destruct_helper(3);
+  provider_state1.destruct_callback_ = destruct_helper.callback();
+  provider_state2.destruct_callback_ = destruct_helper.callback();
+  provider_state3.destruct_callback_ = destruct_helper.callback();
+
+  state.manager_->AddProvider(
+      new SimpleTestProvider(&provider_state1,
+                             SimpleTestProvider::REMOVE_THEN_REMOVE_ALL,
+                             state.manager_.get()),
+      0, kProviderId);
+  state.manager_->AddProvider(
+      new SimpleTestProvider(&provider_state2, SimpleTestProvider::CONTINUE,
+                             nullptr),
+      0, kProviderId);
+  state.manager_->AddProvider(
+      new SimpleTestProvider(&provider_state3, SimpleTestProvider::CONTINUE,
+                             nullptr),
+      1, std::string());
+
+  CefRefPtr<ResourceManagerTestHandler> handler =
+      new ResourceManagerTestHandler(&state);
+  handler->ExecuteTest();
+
+  ReleaseAndWaitForDestructor(handler);
+
+  state.manager_ = nullptr;
+
+  // Wait for the manager to be deleted.
+  destruct_helper.Wait();
+
+  // 1st provider is called and canceled.
+  EXPECT_TRUE(provider_state1.got_on_request_);
+  EXPECT_TRUE(provider_state1.got_on_request_canceled_);
+  EXPECT_TRUE(provider_state1.got_destruct_);
+
+  // 2nd and 3rd providers are removed before they can be called.
+  EXPECT_FALSE(provider_state2.got_on_request_);
+  EXPECT_FALSE(provider_state2.got_on_request_canceled_);
+  EXPECT_TRUE(provider_state2.got_destruct_);
+
+  EXPECT_FALSE(provider_state3.got_on_request_);
+  EXPECT_FALSE(provider_state3.got_on_request_canceled_);
+  EXPECT_TRUE(provider_state3.got_destruct_);
+
+  EXPECT_EQ(state.messages_.size(), 1U);
+  EXPECT_EQ(CreateMessage(kDoneMsg, kNotHandled), state.messages_[0]);
+}
+
 // Test with multiple providers that do not continue and will be destroyed when
 // the manager is destroyed.
 TEST(ResourceManagerTest, ProviderDoNothing) {
@@ -902,6 +968,9 @@ class OneShotProvider : public CefResourceManager::Provider {
     std::move(destruct_callback_).Run();
   }
 
+  OneShotProvider(const OneShotProvider&) = delete;
+  OneShotProvider& operator=(const OneShotProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     CEF_REQUIRE_IO_THREAD();
 
@@ -924,8 +993,6 @@ class OneShotProvider : public CefResourceManager::Provider {
   bool done_ = false;
   std::string content_;
   base::OnceClosure destruct_callback_;
-
-  DISALLOW_COPY_AND_ASSIGN(OneShotProvider);
 };
 
 }  // namespace
@@ -1000,6 +1067,9 @@ class EchoProvider : public CefResourceManager::Provider {
     EXPECT_TRUE(!base_url_.empty());
   }
 
+  EchoProvider(const EchoProvider&) = delete;
+  EchoProvider& operator=(const EchoProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     CEF_REQUIRE_IO_THREAD();
 
@@ -1031,8 +1101,6 @@ class EchoProvider : public CefResourceManager::Provider {
 
  private:
   std::string base_url_;
-
-  DISALLOW_COPY_AND_ASSIGN(EchoProvider);
 };
 
 }  // namespace
@@ -1100,6 +1168,9 @@ class OneShotRemovalProvider : public TestProvider {
     EXPECT_FALSE(content.empty());
   }
 
+  OneShotRemovalProvider(const OneShotRemovalProvider&) = delete;
+  OneShotRemovalProvider& operator=(const OneShotRemovalProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     TestProvider::OnRequest(request);
 
@@ -1136,8 +1207,6 @@ class OneShotRemovalProvider : public TestProvider {
   CefResourceManager* manager_;  // Weak reference.
   std::string identifier_;
   bool remove_before_continue_;
-
-  DISALLOW_COPY_AND_ASSIGN(OneShotRemovalProvider);
 };
 
 }  // namespace
@@ -1520,6 +1589,9 @@ class UrlFilterTestProvider : public TestProvider {
         expected_url_(expected_url),
         expected_url_after_filter_(expected_url_after_filter) {}
 
+  UrlFilterTestProvider(const UrlFilterTestProvider&) = delete;
+  UrlFilterTestProvider& operator=(const UrlFilterTestProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     TestProvider::OnRequest(request);
 
@@ -1538,7 +1610,6 @@ class UrlFilterTestProvider : public TestProvider {
  private:
   std::string expected_url_;
   std::string expected_url_after_filter_;
-  DISALLOW_COPY_AND_ASSIGN(UrlFilterTestProvider);
 };
 
 std::string TestUrlFilter(const std::string& url) {
@@ -1729,6 +1800,9 @@ class MimeTypeTestProvider : public TestProvider {
   MimeTypeTestProvider(State* state, const std::string& expected_mime_type)
       : TestProvider(state), expected_mime_type_(expected_mime_type) {}
 
+  MimeTypeTestProvider(const MimeTypeTestProvider&) = delete;
+  MimeTypeTestProvider& operator=(const MimeTypeTestProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     TestProvider::OnRequest(request);
 
@@ -1742,7 +1816,6 @@ class MimeTypeTestProvider : public TestProvider {
 
  private:
   std::string expected_mime_type_;
-  DISALLOW_COPY_AND_ASSIGN(MimeTypeTestProvider);
 };
 
 const char kExpectedMimeType[] = "foo/bar";
@@ -1817,6 +1890,9 @@ class AddingTestProvider : public TestProvider {
         manager_(manager),
         before_(before) {}
 
+  AddingTestProvider(const AddingTestProvider&) = delete;
+  AddingTestProvider& operator=(const AddingTestProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     TestProvider::OnRequest(request);
 
@@ -1833,8 +1909,6 @@ class AddingTestProvider : public TestProvider {
   State* new_state_;
   CefResourceManager* manager_;  // Weak reference.
   bool before_;
-
-  DISALLOW_COPY_AND_ASSIGN(AddingTestProvider);
 };
 
 }  // namespace

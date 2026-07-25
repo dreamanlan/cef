@@ -17,10 +17,10 @@ index fbce13c16ad10420f3f8e0df521e3be6979271d1..0512b2f09937ed0410f23d321b57f77d
  std::unique_ptr<permissions::PermissionPrompt> CreatePermissionPrompt(
      content::WebContents* web_contents,
 diff --git chrome/browser/ui/views/permissions/permission_prompt_factory.cc chrome/browser/ui/views/permissions/permission_prompt_factory.cc
-index a14c5b7313a20da159e516ae9f6b83f9417b0329..4a805a0d67836dd7636eb1b40a36f0857e658e1b 100644
+index a614311803c0a5c69f1f4b7ba27a4faa6036a5f6..257507250c2ad46aaf0579d12c04b8071d86101e 100644
 --- chrome/browser/ui/views/permissions/permission_prompt_factory.cc
 +++ chrome/browser/ui/views/permissions/permission_prompt_factory.cc
-@@ -223,11 +223,28 @@ std::unique_ptr<permissions::PermissionPrompt> CreateQuietPrompt(
+@@ -250,11 +250,28 @@ std::unique_ptr<permissions::PermissionPrompt> CreateQuietPrompt(
    }
  }
  
@@ -46,6 +46,6 @@ index a14c5b7313a20da159e516ae9f6b83f9417b0329..4a805a0d67836dd7636eb1b40a36f085
 +      return nullptr;
 +  }
 +
-   Browser* browser = chrome::FindBrowserWithTab(web_contents);
-   if (!browser) {
-     DLOG(WARNING) << "Permission prompt suppressed because the WebContents is "
+   BrowserWindowInterface* browser_window_interface =
+       GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(web_contents);
+   if (!browser_window_interface) {

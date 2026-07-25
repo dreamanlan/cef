@@ -1,36 +1,38 @@
 diff --git base/message_loop/message_pump_win.cc base/message_loop/message_pump_win.cc
-index 4e20010e351905ec5c1daa576aecf8d6eeec48ac..588c3dbdcc204f235561290493d6ad0ca64d67cb 100644
+index 51709d5ec2f91634992ef0d33603197f6780caa3..d04798ce96badcbc224a20bb4f21cbb6ef5f4c8c 100644
 --- base/message_loop/message_pump_win.cc
 +++ base/message_loop/message_pump_win.cc
-@@ -2,6 +2,7 @@
- // Use of this source code is governed by a BSD-style license that can be
- // found in the LICENSE file.
- 
+@@ -24,6 +24,7 @@
+ #include "base/memory/raw_ptr.h"
+ #include "base/numerics/safe_conversions.h"
+ #include "base/strings/string_number_conversions.h"
 +#include "base/task/current_thread.h"
- #include "base/message_loop/message_pump_win.h"
- 
- #include <windows.h>
-@@ -583,7 +584,17 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
-                 ctx.event()->set_chrome_message_pump();
-             msg_pump_data->set_sent_messages_in_queue(more_work_is_plausible);
-           });
+ #include "base/task/task_features.h"
+ #include "base/trace_event/interned_args_helper.h"
+ #include "base/trace_event/typed_macros.h"
+@@ -585,7 +586,19 @@ bool MessagePumpForUI::ProcessNextWindowsMessage() {
+       if (native_event_observer_) {
+         native_event_observer_->WillRunNativeEvent(next_peek_message_event_id_);
+       }
 -      has_msg = ::PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE) != FALSE;
 +
-+      // We should not process all window messages if we are in the context of an
-+      // OS modal loop, i.e. in the context of a windows API call like MessageBox.
-+      // This is to ensure that these messages are peeked out by the OS modal loop.
++      // We should not process all window messages if we are in the context of
++      // an OS modal loop, i.e. in the context of a windows API call like
++      // MessageBox. This is to ensure that these messages are peeked out by the
++      // OS modal loop.
 +      if (CurrentThread::Get()->os_modal_loop()) {
-+        // We only peek out WM_PAINT and WM_TIMER here for reasons mentioned above.
++        // We only peek out WM_PAINT and WM_TIMER here for reasons mentioned
++        // above.
 +        has_msg = PeekMessage(&msg, NULL, WM_PAINT, WM_PAINT, PM_REMOVE) ||
 +                  PeekMessage(&msg, NULL, WM_TIMER, WM_TIMER, PM_REMOVE);
 +      } else {
 +        has_msg = PeekMessage(&msg, NULL, 0, 0, PM_REMOVE) != FALSE;
 +      }
-     }
-   }
-   if (has_msg) {
+       if (native_event_observer_) {
+         native_event_observer_->DidRunNativeEvent(
+             next_peek_message_event_id_++);
 diff --git base/task/current_thread.cc base/task/current_thread.cc
-index e97435f1705a929ec02848b88b4fe05bdf7399e4..0bacc37506436fab4689a342aedf9dbc776f7b5c 100644
+index ec901a8a1dd3c73165ebb2380507b46af83ec10e..4fbd1882c6974ee7d744d263dad621af04cc3f9a 100644
 --- base/task/current_thread.cc
 +++ base/task/current_thread.cc
 @@ -51,6 +51,8 @@ void CurrentThread::AddDestructionObserver(
@@ -43,10 +45,10 @@ index e97435f1705a929ec02848b88b4fe05bdf7399e4..0bacc37506436fab4689a342aedf9dbc
    current_->RemoveDestructionObserver(destruction_observer);
  }
 diff --git base/task/current_thread.h base/task/current_thread.h
-index d0615fee23ecdddf8e2570d63cbe70b0cf556f1c..311a3da007c36b99cbc00dd6de0e59ec9dea8369 100644
+index 2bf2f919fe5cba57049cb7e80a92603c8d4980b8..72bde82f6b62e3981029d7c9ca876c853b563298 100644
 --- base/task/current_thread.h
 +++ base/task/current_thread.h
-@@ -166,6 +166,12 @@ class BASE_EXPORT CurrentThread {
+@@ -160,6 +160,12 @@ class BASE_EXPORT CurrentThread {
        RegisterOnNextIdleCallbackPasskey,
        OnceClosure on_next_idle_callback);
  
@@ -59,7 +61,7 @@ index d0615fee23ecdddf8e2570d63cbe70b0cf556f1c..311a3da007c36b99cbc00dd6de0e59ec
    // Enables nested task processing in scope of an upcoming native message loop.
    // Some unwanted message loops may occur when using common controls or printer
    // functions. Hence, nested task processing is disabled by default to avoid
-@@ -237,6 +243,13 @@ class BASE_EXPORT CurrentThread {
+@@ -233,6 +239,13 @@ class BASE_EXPORT CurrentThread {
    friend class web::WebTaskEnvironment;
  
    raw_ptr<sequence_manager::internal::SequenceManagerImpl> current_;

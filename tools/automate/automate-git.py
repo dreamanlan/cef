@@ -34,7 +34,7 @@ from urllib.request import urlopen
 depot_tools_url = 'https://chromium.googlesource.com/chromium/tools/depot_tools.git'
 depot_tools_archive_url = 'https://storage.googleapis.com/chrome-infra/depot_tools.zip'
 
-cef_git_url = 'https://bitbucket.org/chromiumembedded/cef.git'
+cef_git_url = 'https://github.com/chromiumembedded/cef.git'
 
 ##
 # Global system variables.
@@ -208,7 +208,7 @@ def copy_directory(source, target, allow_overwrite=False):
   if not options.dryrun and os.path.exists(target):
     if not allow_overwrite:
       raise Exception("Directory %s already exists" % (target))
-    remove_directory(target)
+    delete_directory(target)
   if os.path.exists(source):
     msg("Copying directory %s to %s" % (source, target))
     if not options.dryrun:
@@ -220,7 +220,7 @@ def move_directory(source, target, allow_overwrite=False):
   if not options.dryrun and os.path.exists(target):
     if not allow_overwrite:
       raise Exception("Directory %s already exists" % (target))
-    remove_directory(target)
+    delete_directory(target)
   if os.path.exists(source):
     msg("Moving directory %s to %s" % (source, target))
     if not options.dryrun:
@@ -1434,7 +1434,7 @@ if options.nochromiumhistory and os.path.exists(chromium_src_dir):
           'Current Chromium checkout with --no-chromium-history is incorrect.' +
           error)
 
-    remove_directory(chromium_src_dir)
+    delete_directory(chromium_src_dir)
     force_config = True
 
 if options.chromiumurl != '':
@@ -1635,6 +1635,14 @@ if chromium_checkout != chromium_compat_version:
   else:
     out_file = None
   check_pattern_matches(output_file=out_file)
+
+# On release branches, check for sandbox compat hash changes that require
+# a new API version. This can happen when Chromium updates modify sandbox
+# interface files.
+if not branch_is_master and chromium_checkout_changed:
+  msg('Checking for sandbox compat hash changes...')
+  tool = os.path.join(cef_src_dir, 'tools', 'version_manager.py')
+  run('%s %s -a' % (python_exe, tool), cef_src_dir)
 
 ##
 # Build CEF.

@@ -36,6 +36,9 @@ class ObserverRegistration : public CefRegistration {
     }
   }
 
+  ObserverRegistration(const ObserverRegistration&) = delete;
+  ObserverRegistration& operator=(const ObserverRegistration&) = delete;
+
   void Initialize() {
     CEF_REQUIRE_UI_THREAD();
     Manager::GetOrCreateInstance(https_server_)->AddObserver(observer_);
@@ -62,7 +65,6 @@ class ObserverRegistration : public CefRegistration {
   const bool https_server_;
 
   IMPLEMENT_REFCOUNTING_DELETE_ON_UIT(ObserverRegistration);
-  DISALLOW_COPY_AND_ASSIGN(ObserverRegistration);
 };
 
 Manager::Manager(bool https_server) : https_server_(https_server) {
@@ -216,8 +218,7 @@ void Manager::AddObserver(Observer* observer) {
 void Manager::RemoveObserver(Observer* observer, DoneCallback callback) {
   CEF_REQUIRE_UI_THREAD();
   bool found = false;
-  ObserverList::iterator it = observer_list_.begin();
-  for (; it != observer_list_.end(); ++it) {
+  for (auto it = observer_list_.begin(); it != observer_list_.end(); ++it) {
     if (*it == observer) {
       observer_list_.erase(it);
       found = true;
@@ -286,9 +287,8 @@ void Manager::OnTestServerRequest(CefRefPtr<CefRequest> request,
 
   bool handled = false;
 
-  ObserverList::const_iterator it = list.begin();
-  for (; it != list.end(); ++it) {
-    if ((*it)->OnTestServerRequest(request, response_callback)) {
+  for (const auto& observer : list) {
+    if (observer->OnTestServerRequest(request, response_callback)) {
       handled = true;
       break;
     }

@@ -1,5 +1,5 @@
 diff --git chrome/browser/BUILD.gn chrome/browser/BUILD.gn
-index 61ea8e60d7d26433a847c208aff58632e04d61df..81a353e3a570f0aa5d7265764dce09ab7f823906 100644
+index 311a3dfebc076092e33ff29c502ed77f1b0836c3..685a29c6c7055e23412d8d42f5f9dba8ed567b5b 100644
 --- chrome/browser/BUILD.gn
 +++ chrome/browser/BUILD.gn
 @@ -11,6 +11,7 @@ import("//build/config/compiler/pgo/pgo.gni")
@@ -10,16 +10,7 @@ index 61ea8e60d7d26433a847c208aff58632e04d61df..81a353e3a570f0aa5d7265764dce09ab
  import("//chrome/browser/buildflags.gni")
  import("//chrome/browser/downgrade/buildflags.gni")
  import("//chrome/common/features.gni")
-@@ -358,8 +359,6 @@ static_library("browser") {
-     "data_sharing/data_sharing_navigation_utils.h",
-     "data_sharing/data_sharing_service_factory.cc",
-     "data_sharing/data_sharing_service_factory.h",
--    "data_sharing/migration/migratable_sync_service_coordinator_factory.cc",
--    "data_sharing/migration/migratable_sync_service_coordinator_factory.h",
-     "data_sharing/personal_collaboration_data/personal_collaboration_data_service_factory.cc",
-     "data_sharing/personal_collaboration_data/personal_collaboration_data_service_factory.h",
-     "defaults.cc",
-@@ -1825,6 +1824,7 @@ static_library("browser") {
+@@ -1650,6 +1651,7 @@ static_library("browser") {
      "//build/config/compiler:compiler_buildflags",
      "//build/config/linux/dbus:buildflags",
      "//cc",
@@ -27,8 +18,8 @@ index 61ea8e60d7d26433a847c208aff58632e04d61df..81a353e3a570f0aa5d7265764dce09ab
      "//chrome:extra_resources",
      "//chrome:resources",
      "//chrome:strings",
-@@ -2657,6 +2657,10 @@ static_library("browser") {
-     sources += [ "net/net_error_diagnostics_dialog_stub.cc" ]
+@@ -2659,6 +2661,10 @@ static_library("browser") {
+     ]
    }
  
 +  if (enable_cef) {
@@ -37,4 +28,4 @@ index 61ea8e60d7d26433a847c208aff58632e04d61df..81a353e3a570f0aa5d7265764dce09ab
 +
    if (is_android) {
      sources += [
-       "accessibility/accessibility_prefs/android/accessibility_prefs_controller.cc",
+       "after_startup_task_utils_android.cc",

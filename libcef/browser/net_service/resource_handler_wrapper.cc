@@ -485,8 +485,9 @@ class ResourceResponseWrapper : public ResourceResponse {
     }
 
     if (reason_phrase->empty() && *status_code > 0) {
-      if (const char *text = net::GetHttpReasonPhrase(
-              static_cast<net::HttpStatusCode>(*status_code))) {
+      std::string_view text = net::GetHttpReasonPhrase(
+          static_cast<net::HttpStatusCode>(*status_code));
+      if (!text.empty()) {
         *reason_phrase = text;
       }
     }
@@ -502,8 +503,8 @@ class ResourceResponseWrapper : public ResourceResponse {
 
     CefResponse::HeaderMap headerMap;
     response->GetHeaderMap(headerMap);
-    for (const auto& value : headerMap) {
-      extra_headers->insert(std::make_pair(value.first, value.second));
+    for (const auto& [key, value] : headerMap) {
+      extra_headers->insert(std::make_pair(key, value));
     }
   }
 

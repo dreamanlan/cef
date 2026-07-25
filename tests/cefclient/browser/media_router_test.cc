@@ -61,6 +61,9 @@ class MediaRouteCreateCallback : public CefMediaRouteCreateCallback {
   explicit MediaRouteCreateCallback(CefRefPtr<CallbackType> create_callback)
       : create_callback_(create_callback) {}
 
+  MediaRouteCreateCallback(const MediaRouteCreateCallback&) = delete;
+  MediaRouteCreateCallback& operator=(const MediaRouteCreateCallback&) = delete;
+
   // CefMediaRouteCreateCallback method:
   void OnMediaRouteCreateFinished(RouteCreateResult result,
                                   const CefString& error,
@@ -80,7 +83,6 @@ class MediaRouteCreateCallback : public CefMediaRouteCreateCallback {
   CefRefPtr<CallbackType> create_callback_;
 
   IMPLEMENT_REFCOUNTING(MediaRouteCreateCallback);
-  DISALLOW_COPY_AND_ASSIGN(MediaRouteCreateCallback);
 };
 
 // Observes MediaRouter events. Only accessed on the UI thread.
@@ -95,6 +97,9 @@ class MediaObserver : public CefMediaObserver {
         subscription_callback_(subscription_callback) {}
 
   ~MediaObserver() override { ClearSinkInfoMap(); }
+
+  MediaObserver(const MediaObserver&) = delete;
+  MediaObserver& operator=(const MediaObserver&) = delete;
 
   bool CreateRoute(const std::string& source_urn,
                    const std::string& sink_id,
@@ -152,6 +157,9 @@ class MediaObserver : public CefMediaObserver {
     DeviceInfoCallback(const std::string& sink_id, CallbackType callback)
         : sink_id_(sink_id), callback_(std::move(callback)) {}
 
+    DeviceInfoCallback(const DeviceInfoCallback&) = delete;
+    DeviceInfoCallback& operator=(const DeviceInfoCallback&) = delete;
+
     void OnMediaSinkDeviceInfo(
         const CefMediaSinkDeviceInfo& device_info) override {
       CEF_REQUIRE_UI_THREAD();
@@ -163,7 +171,6 @@ class MediaObserver : public CefMediaObserver {
     CallbackType callback_;
 
     IMPLEMENT_REFCOUNTING(DeviceInfoCallback);
-    DISALLOW_COPY_AND_ASSIGN(DeviceInfoCallback);
   };
 
   // CefMediaObserver methods:
@@ -182,9 +189,7 @@ class MediaObserver : public CefMediaObserver {
       return;
     }
 
-    MediaSinkVector::const_iterator it = sinks.begin();
-    for (size_t idx = 0; it != sinks.end(); ++it, ++idx) {
-      CefRefPtr<CefMediaSink> sink = *it;
+    for (const auto& sink : sinks) {
       const std::string& sink_id = sink->GetId();
       SinkInfo* info = new SinkInfo;
       info->sink = sink;
@@ -207,9 +212,8 @@ class MediaObserver : public CefMediaObserver {
     CefRefPtr<CefListValue> routes_list = CefListValue::Create();
     routes_list->SetSize(routes.size());
 
-    MediaRouteVector::const_iterator it = routes.begin();
-    for (size_t idx = 0; it != routes.end(); ++it, ++idx) {
-      CefRefPtr<CefMediaRoute> route = *it;
+    size_t idx = 0;
+    for (const auto& route : routes) {
       const std::string& route_id = route->GetId();
       route_map_.insert(std::make_pair(route_id, route));
 
@@ -217,7 +221,7 @@ class MediaObserver : public CefMediaObserver {
       route_dict->SetString("id", route_id);
       route_dict->SetString(kSourceKey, route->GetSource()->GetId());
       route_dict->SetString(kSinkKey, route->GetSink()->GetId());
-      routes_list->SetDictionary(idx, route_dict);
+      routes_list->SetDictionary(idx++, route_dict);
     }
 
     payload->SetList("routes_list", routes_list);
@@ -265,9 +269,8 @@ class MediaObserver : public CefMediaObserver {
   }
 
   void ClearSinkInfoMap() {
-    SinkInfoMap::const_iterator it = sink_info_map_.begin();
-    for (; it != sink_info_map_.end(); ++it) {
-      delete it->second;
+    for (const auto& [key, value] : sink_info_map_) {
+      delete value;
     }
     sink_info_map_.clear();
   }
@@ -313,12 +316,10 @@ class MediaObserver : public CefMediaObserver {
     CefRefPtr<CefListValue> sinks_list = CefListValue::Create();
     sinks_list->SetSize(sink_info_map_.size());
 
-    SinkInfoMap::const_iterator it = sink_info_map_.begin();
-    for (size_t idx = 0; it != sink_info_map_.end(); ++it, ++idx) {
-      const SinkInfo* info = it->second;
-
+    size_t idx = 0;
+    for (const auto& [sink_id, info] : sink_info_map_) {
       CefRefPtr<CefDictionaryValue> sink_dict = CefDictionaryValue::Create();
-      sink_dict->SetString("id", it->first);
+      sink_dict->SetString("id", sink_id);
       sink_dict->SetString("name", info->sink->GetName());
       sink_dict->SetInt("icon", info->sink->GetIconType());
       sink_dict->SetString("ip_address",
@@ -329,7 +330,7 @@ class MediaObserver : public CefMediaObserver {
       sink_dict->SetString("type", info->sink->IsCastSink()   ? "cast"
                                    : info->sink->IsDialSink() ? "dial"
                                                               : "unknown");
-      sinks_list->SetDictionary(idx, sink_dict);
+      sinks_list->SetDictionary(idx++, sink_dict);
     }
 
     payload->SetList("sinks_list", sinks_list);
@@ -359,7 +360,6 @@ class MediaObserver : public CefMediaObserver {
   RouteMap route_map_;
 
   IMPLEMENT_REFCOUNTING(MediaObserver);
-  DISALLOW_COPY_AND_ASSIGN(MediaObserver);
 };
 
 // Handle messages in the browser process. Only accessed on the UI thread.
@@ -370,11 +370,13 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
   Handler() { CEF_REQUIRE_UI_THREAD(); }
 
   ~Handler() override {
-    SubscriptionStateMap::iterator it = subscription_state_map_.begin();
-    for (; it != subscription_state_map_.end(); ++it) {
-      delete it->second;
+    for (const auto& [key, value] : subscription_state_map_) {
+      delete value;
     }
   }
+
+  Handler(const Handler&) = delete;
+  Handler& operator=(const Handler&) = delete;
 
   // Called due to cefQuery execution in media_router.html.
   bool OnQuery(CefRefPtr<CefBrowser> browser,
@@ -540,8 +542,7 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
                           int64_t query_id,
                           CefRefPtr<Callback> callback) {
     const int browser_id = browser->GetIdentifier();
-    if (subscription_state_map_.find(browser_id) !=
-        subscription_state_map_.end()) {
+    if (subscription_state_map_.contains(browser_id)) {
       // An subscription already exists for this browser.
       return false;
     }
@@ -584,8 +585,6 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
   // Map of browser ID to SubscriptionState object.
   typedef std::map<int, SubscriptionState*> SubscriptionStateMap;
   SubscriptionStateMap subscription_state_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(Handler);
 };
 
 }  // namespace

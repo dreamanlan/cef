@@ -8,6 +8,7 @@
 #include <cmath>
 #include <set>
 
+#include "base/containers/flat_set.h"
 #include "base/functional/bind.h"
 #include "cef/libcef/browser/osr/render_widget_host_view_osr.h"
 #include "cef/libcef/browser/osr/touch_handle_drawable_osr.h"
@@ -16,6 +17,7 @@
 #include "content/public/browser/context_menu_params.h"
 #include "content/public/browser/render_view_host.h"
 #include "ui/base/clipboard/clipboard.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/base/data_transfer_policy/data_transfer_endpoint.h"
 #include "ui/base/mojom/menu_source_type.mojom-forward.h"
 #include "ui/gfx/geometry/point_conversions.h"
@@ -150,7 +152,7 @@ bool CefTouchSelectionControllerClientOSR::HandleContextMenu(
   if ((params.source_type == ui::mojom::MenuSourceType::kLongPress ||
        params.source_type == ui::mojom::MenuSourceType::kLongTap) &&
       params.is_editable && params.selection_text.empty() &&
-      IsQuickMenuAvailable()) {
+      IsQuickMenuAvailable(/*can_paste=*/true)) {
     quick_menu_requested_ = true;
     UpdateQuickMenu();
     return true;
@@ -186,7 +188,7 @@ void CefTouchSelectionControllerClientOSR::OnClientHitTestRegionUpdated(
     ui::TouchSelectionControllerClient* client) {
   if (client != active_client_ || !rwhv_->selection_controller() ||
       rwhv_->selection_controller()->active_status() ==
-          ui::TouchSelectionController::INACTIVE) {
+          ui::TouchSelectionController::ActiveStatus::kInactive) {
     return;
   }
 
@@ -247,11 +249,13 @@ void CefTouchSelectionControllerClientOSR::RemoveObserver(
   observers_.RemoveObserver(observer);
 }
 
-bool CefTouchSelectionControllerClientOSR::IsQuickMenuAvailable() const {
+bool CefTouchSelectionControllerClientOSR::IsQuickMenuAvailable(
+    bool can_paste) const {
   DCHECK(active_menu_client_);
 
-  const auto is_enabled = [this](cef_quick_menu_edit_state_flags_t command) {
-    return active_menu_client_->IsCommandIdEnabled(command);
+  const auto is_enabled = [this,
+                           can_paste](cef_quick_menu_edit_state_flags_t cmd) {
+    return active_menu_client_->IsCommandIdEnabled(cmd, can_paste);
   };
   return std::any_of(std::cbegin(kMenuCommands), std::cend(kMenuCommands),
                      is_enabled);
@@ -271,6 +275,25 @@ void CefTouchSelectionControllerClientOSR::CloseQuickMenu() {
 }
 
 void CefTouchSelectionControllerClientOSR::ShowQuickMenu() {
+  ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
+      ui::EndpointType::kDefault, {.notify_if_restricted = false});
+  ui::Clipboard::GetForCurrentThread()->GetAllAvailableFormats(
+      ui::ClipboardBuffer::kCopyPaste, data_dst,
+      base::BindOnce(
+          [](base::WeakPtr<CefTouchSelectionControllerClientOSR> weak_this,
+             base::flat_set<ui::ClipboardFormatType> formats) {
+            if (!weak_this) {
+              return;
+            }
+            const bool can_paste =
+                formats.contains(ui::ClipboardFormatType::PlainTextType());
+            weak_this->ShowQuickMenuWithCanPaste(can_paste);
+          },
+          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void CefTouchSelectionControllerClientOSR::ShowQuickMenuWithCanPaste(
+    bool can_paste) {
   auto browser = rwhv_->browser_impl();
   if (auto handler = browser->client()->GetContextMenuHandler()) {
     gfx::RectF rect =
@@ -290,7 +313,7 @@ void CefTouchSelectionControllerClientOSR::ShowQuickMenu() {
 
     int quickmenuflags = 0;
     for (const auto& command : kMenuCommands) {
-      if (active_menu_client_->IsCommandIdEnabled(command)) {
+      if (active_menu_client_->IsCommandIdEnabled(command, can_paste)) {
         quickmenuflags |= command;
       }
     }
@@ -325,8 +348,27 @@ void CefTouchSelectionControllerClientOSR::UpdateQuickMenu() {
     quick_menu_timer_.Stop();
   }
 
+  ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
+      ui::EndpointType::kDefault, {.notify_if_restricted = false});
+  ui::Clipboard::GetForCurrentThread()->GetAllAvailableFormats(
+      ui::ClipboardBuffer::kCopyPaste, data_dst,
+      base::BindOnce(
+          [](base::WeakPtr<CefTouchSelectionControllerClientOSR> weak_this,
+             base::flat_set<ui::ClipboardFormatType> formats) {
+            if (!weak_this) {
+              return;
+            }
+            const bool can_paste =
+                formats.contains(ui::ClipboardFormatType::PlainTextType());
+            weak_this->UpdateQuickMenuWithCanPaste(can_paste);
+          },
+          weak_ptr_factory_.GetWeakPtr()));
+}
+
+void CefTouchSelectionControllerClientOSR::UpdateQuickMenuWithCanPaste(
+    bool can_paste) {
   // Start timer to show quick menu if necessary.
-  if (ShouldShowQuickMenu()) {
+  if (ShouldShowQuickMenu(can_paste)) {
     quick_menu_timer_.Reset();
   }
 }
@@ -458,7 +500,8 @@ void CefTouchSelectionControllerClientOSR::InternalClient::DidScroll() {
 }
 
 bool CefTouchSelectionControllerClientOSR::IsCommandIdEnabled(
-    int command_id) const {
+    int command_id,
+    bool can_paste) const {
   bool editable = rwhv_->GetTextInputType() != ui::TEXT_INPUT_TYPE_NONE;
   bool readable = rwhv_->GetTextInputType() != ui::TEXT_INPUT_TYPE_PASSWORD;
   bool has_selection = !rwhv_->GetSelectedText().empty();
@@ -469,14 +512,8 @@ bool CefTouchSelectionControllerClientOSR::IsCommandIdEnabled(
       return editable && readable && has_selection;
     case QM_EDITFLAG_CAN_COPY:
       return readable && has_selection;
-    case QM_EDITFLAG_CAN_PASTE: {
-      std::u16string result;
-      ui::DataTransferEndpoint data_dst = ui::DataTransferEndpoint(
-          ui::EndpointType::kDefault, {.notify_if_restricted = false});
-      ui::Clipboard::GetForCurrentThread()->ReadText(
-          ui::ClipboardBuffer::kCopyPaste, &data_dst, &result);
-      return editable && !result.empty();
-    }
+    case QM_EDITFLAG_CAN_PASTE:
+      return editable && can_paste;
     default:
       return false;
   }
@@ -542,9 +579,9 @@ void CefTouchSelectionControllerClientOSR::RunContextMenu() {
   rwhv_->selection_controller()->HideAndDisallowShowingAutomatically();
 }
 
-bool CefTouchSelectionControllerClientOSR::ShouldShowQuickMenu() {
+bool CefTouchSelectionControllerClientOSR::ShouldShowQuickMenu(bool can_paste) {
   return quick_menu_requested_ && !touch_down_ && !scroll_in_progress_ &&
-         !handle_drag_in_progress_ && IsQuickMenuAvailable();
+         !handle_drag_in_progress_ && IsQuickMenuAvailable(can_paste);
 }
 
 std::u16string CefTouchSelectionControllerClientOSR::GetSelectedText() {

@@ -12,7 +12,9 @@
 #include "cef/libcef/browser/browser_guest_util.h"
 #include "cef/libcef/browser/browser_host_base.h"
 #include "cef/libcef/browser/browser_platform_delegate.h"
+#include "cef/libcef/browser/context.h"
 #include "cef/libcef/browser/thread_util.h"
+#include "cef/libcef/common/api_version_util.h"
 #include "cef/libcef/common/cef_switches.h"
 #include "cef/libcef/common/frame_util.h"
 #include "cef/libcef/common/values_impl.h"
@@ -380,7 +382,7 @@ void CefBrowserInfoManager::OnGetNewBrowserInfo(
   const int timeout_id = ++next_timeout_id_;
 
   // Queue the request.
-  std::unique_ptr<PendingNewBrowserInfo> pending(new PendingNewBrowserInfo());
+  auto pending = std::make_unique<PendingNewBrowserInfo>();
   pending->global_token = global_token;
   pending->timeout_id = timeout_id;
   pending->callback = std::move(callback);
@@ -463,8 +465,8 @@ void CefBrowserInfoManager::RemoveBrowserInfo(
     scoped_refptr<CefBrowserInfo> browser_info) {
   base::AutoLock lock_scope(browser_info_lock_);
 
-  BrowserInfoList::iterator it = browser_info_list_.begin();
-  for (; it != browser_info_list_.end(); ++it) {
+  for (auto it = browser_info_list_.begin(); it != browser_info_list_.end();
+       ++it) {
     if (*it == browser_info) {
       browser_info_list_.erase(it);
       return;
@@ -484,9 +486,8 @@ void CefBrowserInfoManager::DestroyAllBrowsers() {
 
   // Destroy any remaining browser windows.
   if (!list.empty()) {
-    BrowserInfoList::iterator it = list.begin();
-    for (; it != list.end(); ++it) {
-      CefRefPtr<CefBrowserHostBase> browser = (*it)->browser();
+    for (const auto& browser_info : list) {
+      CefRefPtr<CefBrowserHostBase> browser = browser_info->browser();
       DCHECK(browser.get());
       if (browser.get()) {
         // DestroyBrowser will call RemoveBrowserInfo.
@@ -541,6 +542,11 @@ bool CefBrowserInfoManager::MaybeAllowNavigation(
 bool CefBrowserInfoManager::ShouldCreateViewsHostedPopup(
     CefRefPtr<CefBrowserHostBase> opener,
     bool use_default_browser_creation) {
+  if (CEF_API_IS_ADDED(14600) &&
+      CefContext::Get()->settings().use_views_default_popup) {
+    return true;
+  }
+
   // In most cases, Views-hosted browsers should create Views-hosted popups
   // and native browsers should use default popup handling. With Chrome
   // style, we should additionally use default handling (a) when using an
@@ -637,10 +643,8 @@ void CefBrowserInfoManager::RenderProcessHostDestroyed(
 
   host->RemoveObserver(this);
 
-  // TODO: Change to content::ChildProcessId usage once supported by
-  // GlobalRenderFrameHostToken. See https://crbug.com/379869738.
-  const int render_process_id = host->GetDeprecatedID();
-  DCHECK_GT(render_process_id, 0);
+  const content::ChildProcessId render_process_id = host->GetID();
+  DCHECK(!render_process_id.is_null());
 
   // Remove all pending requests that reference the destroyed host.
   {
@@ -650,7 +654,9 @@ void CefBrowserInfoManager::RenderProcessHostDestroyed(
         pending_new_browser_info_map_.begin();
     while (it != pending_new_browser_info_map_.end()) {
       const auto& info = it->second;
-      if (info->global_token.child_id == render_process_id) {
+      // TODO(crbug.com/379869738): Remove GetUnsafeValue() once
+      // GlobalRenderFrameHostToken is migrated to use ChildProcessId.
+      if (info->global_token.child_id == render_process_id.GetUnsafeValue()) {
         CancelNewBrowserInfoResponse(info.get());
         it = pending_new_browser_info_map_.erase(it);
       } else {

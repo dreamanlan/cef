@@ -1,5 +1,5 @@
 diff --git .gn .gn
-index ae58a0b0a64ae1fdb3f9cd8587041d71a121c6b9..35e01ee64e5d75496b687870abb6a42d1bc96352 100644
+index 8859ecde27105c5256dcbc687e3d8eeacbd8cde6..51eab7fa6fd991c57aea653c348da96effd8d64f 100644
 --- .gn
 +++ .gn
 @@ -156,6 +156,8 @@ exec_script_allowlist =
@@ -12,10 +12,10 @@ index ae58a0b0a64ae1fdb3f9cd8587041d71a121c6b9..35e01ee64e5d75496b687870abb6a42d
  
        "//google_apis/BUILD.gn",
 diff --git BUILD.gn BUILD.gn
-index 4a53aa115f1ee8bd4cd588bd7d226f4446fc0b0a..5515cb98fce2ac9e332e69433e1d3ef594994eda 100644
+index df09eb1d9bb07878b6f21c7b6df2f78ce25c469f..7042ace346cda14e91f7037a0f0725fa30eecd8f 100644
 --- BUILD.gn
 +++ BUILD.gn
-@@ -21,6 +21,7 @@ import("//build/config/ui.gni")
+@@ -22,6 +22,7 @@ import("//build/config/ui.gni")
  import("//build/gn_logs.gni")
  import("//build/toolchain/rbe.gni")
  import("//build/util/generate_wrapper.gni")
@@ -78,7 +78,7 @@ index bd411669389525e8f03eb329a4cf700ad89b62f3..fba7843d79796b903b592b69e2e1f2c7
  
  visual_studio_version_logs = [ "windows_sdk_version=${windows_sdk_version}" ]
 diff --git chrome/chrome_paks.gni chrome/chrome_paks.gni
-index 29239d429913aae98b2f9cc7e91dad5951833e6d..d34433e27b2cb51923f668a0abd3b3b7a9ac1d67 100644
+index a2462b2ed1fe57f1965d44de8a0f66bfa5dea7cf..c44026bfe4989722733dec5912f84aa01f0977b3 100644
 --- chrome/chrome_paks.gni
 +++ chrome/chrome_paks.gni
 @@ -5,6 +5,7 @@
@@ -89,8 +89,8 @@ index 29239d429913aae98b2f9cc7e91dad5951833e6d..d34433e27b2cb51923f668a0abd3b3b7
  import("//chrome/browser/buildflags.gni")
  import("//chrome/common/features.gni")
  import("//components/compose/features.gni")
-@@ -510,6 +511,11 @@ template("chrome_extra_paks") {
-       deps += [ "//components/headless/command_handler" ]
+@@ -520,6 +521,11 @@ template("chrome_extra_paks") {
+       ]
      }
  
 +    if (enable_cef) {
@@ -102,7 +102,7 @@ index 29239d429913aae98b2f9cc7e91dad5951833e6d..d34433e27b2cb51923f668a0abd3b3b7
        sources += [
          "$root_gen_dir/chrome/extensions_resources.pak",
 diff --git chrome/chrome_repack_locales.gni chrome/chrome_repack_locales.gni
-index 03fad836d3ee83e643dbe9cd5d0f2426aacfab97..e21ec561beddeb43bbcf93ad127fa82089836c9e 100644
+index 8c1f4056deef88b0192c4dd04fa66dbc0d8ff51f..25bd65d8757d8b5d98827aad4c03799a64402e36 100644
 --- chrome/chrome_repack_locales.gni
 +++ chrome/chrome_repack_locales.gni
 @@ -4,6 +4,7 @@
@@ -113,7 +113,7 @@ index 03fad836d3ee83e643dbe9cd5d0f2426aacfab97..e21ec561beddeb43bbcf93ad127fa820
  import("//extensions/buildflags/buildflags.gni")
  import("//tools/grit/repack.gni")
  
-@@ -105,6 +106,10 @@ template("chrome_repack_locales") {
+@@ -112,6 +113,10 @@ template("chrome_repack_locales") {
          "//third_party/search_engines_data:search_engine_descriptions_strings",
        ]
      }
@@ -125,7 +125,7 @@ index 03fad836d3ee83e643dbe9cd5d0f2426aacfab97..e21ec561beddeb43bbcf93ad127fa820
        source_patterns +=
            [ "${root_gen_dir}/extensions/strings/extensions_strings_" ]
 diff --git chrome/installer/mini_installer/BUILD.gn chrome/installer/mini_installer/BUILD.gn
-index 5f9acdb7f355036ba23859ccbe26f7d2bce3b90d..8a33b46e4f7ea54dc83b32f1ed3d3ce7649b3840 100644
+index 37a9269380b7040c5391f5509f0a2e825fe11e42..5584e0fdb1b86425a536c6a45893f47b546b86cc 100644
 --- chrome/installer/mini_installer/BUILD.gn
 +++ chrome/installer/mini_installer/BUILD.gn
 @@ -6,6 +6,7 @@ import("//build/config/compiler/compiler.gni")
@@ -152,7 +152,7 @@ index 5f9acdb7f355036ba23859ccbe26f7d2bce3b90d..8a33b46e4f7ea54dc83b32f1ed3d3ce7
    outputs = [
      "$root_out_dir/chrome.7z",
 diff --git tools/grit/grit_args.gni tools/grit/grit_args.gni
-index 06eb8869ec668deaee75f64a3914afc8da160950..21696a21c34582e194b16da473ca3ad7f6b55e0a 100644
+index cd2b6b933766377a959291da317d38508463e34e..7d1fcae8e1ac50e46f91eabab95301eaf835c43e 100644
 --- tools/grit/grit_args.gni
 +++ tools/grit/grit_args.gni
 @@ -4,7 +4,9 @@

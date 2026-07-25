@@ -1,0 +1,29 @@
+diff --git src/dawn/tests/BUILD.gn src/dawn/tests/BUILD.gn
+index a64c2a2c06208798cf3ba9516337b26ae09e3595..f9ae363aa60b9f7c98fd66ebb7015e1149dc10f9 100644
+--- src/dawn/tests/BUILD.gn
++++ src/dawn/tests/BUILD.gn
+@@ -99,8 +99,8 @@ if (!dawn_use_built_dxc && build_with_chromium && is_win) {
+   # end-to-end test in Chromium.
+   copy("copy_dxc_binary") {
+     sources = [
+-      "$windows_sdk_path/bin/$windows_sdk_version/$target_cpu/dxcompiler.dll",
+-      "$windows_sdk_path/bin/$windows_sdk_version/$target_cpu/dxil.dll",
++      "$windows_sdk_path/Redist/D3D/$target_cpu/dxcompiler.dll",
++      "$windows_sdk_path/Redist/D3D/$target_cpu/dxil.dll",
+     ]
+ 
+     outputs = [ "$root_out_dir/{{source_file_part}}" ]
+diff --git third_party/directx-shader-compiler/BUILD.gn third_party/directx-shader-compiler/BUILD.gn
+index bf261f14d1622305c26041d8beb23a5ac40e9f0e..6c8c308d467a4c478ed45504c0d815f486b95ae0 100644
+--- third_party/directx-shader-compiler/BUILD.gn
++++ third_party/directx-shader-compiler/BUILD.gn
+@@ -2423,8 +2423,7 @@ executable("dxc") {
+ if (is_win) {
+   import("//build/config/win/visual_studio_version.gni")
+   copy("copy_dxil_dll") {
+-    sources =
+-        [ "$windows_sdk_path/bin/$windows_sdk_version/$target_cpu/dxil.dll" ]
++    sources = [ "$windows_sdk_path/Redist/D3D/$target_cpu/dxil.dll" ]
+     outputs = [ "$root_out_dir/{{source_file_part}}" ]
+   }
+ }

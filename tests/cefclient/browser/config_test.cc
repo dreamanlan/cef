@@ -136,8 +136,8 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
   Handler& operator=(const Handler&) = delete;
 
   ~Handler() override {
-    for (auto& pair : subscription_state_map_) {
-      delete pair.second;
+    for (auto& [key, value] : subscription_state_map_) {
+      delete value;
     }
   }
 
@@ -276,8 +276,7 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
                           int64_t query_id,
                           CefRefPtr<Callback> callback) {
     const int browser_id = browser->GetIdentifier();
-    if (subscription_state_map_.find(browser_id) !=
-        subscription_state_map_.end()) {
+    if (subscription_state_map_.contains(browser_id)) {
       // An subscription already exists for this browser.
       return false;
     }

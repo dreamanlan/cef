@@ -11,4 +11,4 @@ USAGE
 
 Please visit the CEF Website for usage information.
 
-https://bitbucket.org/chromiumembedded/cef/wiki/SandboxSetup.md
+https://chromiumembedded.github.io/cef/sandbox_setup

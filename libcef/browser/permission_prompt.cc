@@ -10,6 +10,7 @@
 #include "cef/libcef/browser/browser_host_base.h"
 #include "chrome/browser/ui/permission_bubble/permission_prompt.h"
 #include "components/permissions/permission_request.h"
+#include "components/permissions/resolvers/permission_prompt_options.h"
 
 namespace permission_prompt {
 
@@ -142,18 +143,19 @@ class CefPermissionPrompt : public permissions::PermissionPrompt {
   // We don't expose AcceptThisTime() because it's a special case for
   // Geolocation (see DCHECK in PrefProvider::SetWebsiteSetting).
   void NotifyDelegate(cef_permission_request_result_t result) {
+    const PromptOptions prompt_options(std::monostate{});
     switch (result) {
       case CEF_PERMISSION_RESULT_ACCEPT:
-        delegate_->Accept();
+        delegate_->Accept(prompt_options);
         break;
       case CEF_PERMISSION_RESULT_DENY:
-        delegate_->Deny();
+        delegate_->Deny(prompt_options);
         break;
       case CEF_PERMISSION_RESULT_DISMISS:
-        delegate_->Dismiss();
+        delegate_->Dismiss(prompt_options);
         break;
       case CEF_PERMISSION_RESULT_IGNORE:
-        delegate_->Ignore();
+        delegate_->Ignore(prompt_options);
         break;
       case CEF_PERMISSION_RESULT_NUM_VALUES:
         DCHECK(false);
@@ -234,6 +236,8 @@ cef_permission_request_types_t GetCefRequestType(
 #endif
     case permissions::RequestType::kRegisterProtocolHandler:
       return CEF_PERMISSION_TYPE_REGISTER_PROTOCOL_HANDLER;
+    case permissions::RequestType::kSensors:
+      return CEF_PERMISSION_TYPE_SENSORS;
     case permissions::RequestType::kStorageAccess:
       return CEF_PERMISSION_TYPE_STORAGE_ACCESS;
     case permissions::RequestType::kTopLevelStorageAccess:
@@ -246,8 +250,10 @@ cef_permission_request_types_t GetCefRequestType(
       return CEF_PERMISSION_TYPE_WINDOW_MANAGEMENT;
     case permissions::RequestType::kFileSystemAccess:
       return CEF_PERMISSION_TYPE_FILE_SYSTEM_ACCESS;
-    case permissions::RequestType::kLocalNetworkAccess:
-      return CEF_PERMISSION_TYPE_LOCAL_NETWORK_ACCESS;
+    case permissions::RequestType::kLocalNetwork:
+      return CEF_PERMISSION_TYPE_LOCAL_NETWORK;
+    case permissions::RequestType::kLoopbackNetwork:
+      return CEF_PERMISSION_TYPE_LOOPBACK_NETWORK;
   }
 
   DCHECK(false);

@@ -71,7 +71,7 @@ option(USE_SANDBOX "Enable or disable use of the sandbox." ON)
 
 # Optionally configure the CEF API version by adding `-D api_version=XXXXX` to the
 # cmake command-line where XXXXX is the desired version number. For background see
-# https://bitbucket.org/chromiumembedded/cef/wiki/ApiVersioning.md
+# https://chromiumembedded.github.io/cef/api_versioning
 if(DEFINED api_version)
   string(LENGTH "${api_version}" length)
   if (NOT length EQUAL 5 OR NOT api_version MATCHES "^[0-9]+$")
@@ -115,7 +115,7 @@ if(OS_LINUX)
     -fno-rtti                       # Disable real-time type information
     -fno-threadsafe-statics         # Don't generate thread-safe statics
     -fvisibility-inlines-hidden     # Give hidden visibility to inlined class member functions
-    -std=c++17                      # Use the C++17 language standard
+    -std=c++20                      # Use the C++20 language standard
     -Wsign-compare                  # Warn about mixed signed/unsigned type comparisons
     )
   list(APPEND CEF_COMPILER_FLAGS_DEBUG
@@ -287,7 +287,7 @@ if(OS_MAC)
     -fno-threadsafe-statics         # Don't generate thread-safe statics
     -fobjc-call-cxx-cdtors          # Call the constructor/destructor of C++ instance variables in ObjC objects
     -fvisibility-inlines-hidden     # Give hidden visibility to inlined class member functions
-    -std=c++17                      # Use the C++17 language standard
+    -std=c++20                      # Use the C++20 language standard
     -Wno-narrowing                  # Don't warn about type narrowing
     -Wsign-compare                  # Warn about mixed signed/unsigned type comparisons
     )
@@ -403,7 +403,9 @@ if(OS_WINDOWS)
   list(APPEND CEF_COMPILER_FLAGS
     /MP           # Multiprocess compilation
     /Gy           # Enable function-level linking
+    /GF           # Enable string pooling
     /GR-          # Disable run-time type information
+    /utf-8        # Treat source and execution character sets as UTF-8
     /W4           # Warning level 4
     /WX           # Treat warnings as errors
     /wd4100       # Ignore "unreferenced formal parameter" warning
@@ -424,10 +426,9 @@ if(OS_WINDOWS)
   list(APPEND CEF_COMPILER_FLAGS_RELEASE
     /O2           # Optimize for maximum speed
     /Ob2          # Inline any suitable function
-    /GF           # Enable string pooling
     )
   list(APPEND CEF_CXX_COMPILER_FLAGS
-    /std:c++17    # Use the C++17 language standard
+    /std:c++20    # Use the C++20 language standard
     )
   list(APPEND CEF_LINKER_FLAGS_DEBUG
     /DEBUG        # Generate debug information

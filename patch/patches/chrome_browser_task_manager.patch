@@ -1,0 +1,16 @@
+diff --git chrome/browser/task_manager/sampling/task_manager_impl.cc chrome/browser/task_manager/sampling/task_manager_impl.cc
+index bdb0a134ea48336d2778f31d3eaaca0626e24bb2..c6023d1d32b3184c6e20054b06080e738563bf4f 100644
+--- chrome/browser/task_manager/sampling/task_manager_impl.cc
++++ chrome/browser/task_manager/sampling/task_manager_impl.cc
+@@ -683,6 +683,11 @@ void TaskManagerImpl::StopUpdating() {
+ 
+   is_running_ = false;
+ 
++  // Drop any in-flight async callbacks (e.g. memory-dump replies and GPU
++  // video-memory stats) so they don't fire into a stopped task manager.
++  weak_ptr_factory_.InvalidateWeakPtrs();
++  waiting_for_memory_dump_ = false;
++
+   content::GetNetworkService()->EnableDataUseUpdates(false);
+ 
+   for (const auto& provider : task_providers_)

@@ -36,6 +36,9 @@ class CefTimer {
  public:
   CefTimer() = default;
 
+  CefTimer(const CefTimer&) = delete;
+  CefTimer& operator=(const CefTimer&) = delete;
+
   bool IsRunning() { return running_; }
 
   void Start() {
@@ -59,8 +62,6 @@ class CefTimer {
   bool running_ = false;
   CefTime start_;
   CefTime stop_;
-
-  DISALLOW_COPY_AND_ASSIGN(CefTimer);
 };
 
 // Peform test iterations using a user-provided timing result variable.

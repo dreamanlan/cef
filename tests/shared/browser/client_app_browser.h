@@ -52,6 +52,9 @@ class ClientAppBrowser : public ClientApp, public CefBrowserProcessHandler {
 
   ClientAppBrowser();
 
+  ClientAppBrowser(const ClientAppBrowser&) = delete;
+  ClientAppBrowser& operator=(const ClientAppBrowser&) = delete;
+
   // Called to populate |settings| based on |command_line| and other global
   // state.
   static void PopulateSettings(CefRefPtr<CefCommandLine> command_line,
@@ -91,7 +94,6 @@ class ClientAppBrowser : public ClientApp, public CefBrowserProcessHandler {
   DelegateSet delegates_;
 
   IMPLEMENT_REFCOUNTING(ClientAppBrowser);
-  DISALLOW_COPY_AND_ASSIGN(ClientAppBrowser);
 };
 
 }  // namespace client

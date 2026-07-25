@@ -103,7 +103,6 @@ class TestWindowDelegate : public CefWindowDelegate {
   int browser_id_ = 0;
 
   IMPLEMENT_REFCOUNTING(TestWindowDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestWindowDelegate);
 };
 
 // Delegate implementation for the CefBrowserView.
@@ -111,6 +110,9 @@ class TestBrowserViewDelegate : public CefBrowserViewDelegate {
  public:
   TestBrowserViewDelegate(TestHandler* handler, bool is_devtools_popup)
       : handler_(handler), is_devtools_popup_(is_devtools_popup) {}
+
+  TestBrowserViewDelegate(const TestBrowserViewDelegate&) = delete;
+  TestBrowserViewDelegate& operator=(const TestBrowserViewDelegate&) = delete;
 
   // CefBrowserViewDelegate methods:
 
@@ -175,7 +177,6 @@ class TestBrowserViewDelegate : public CefBrowserViewDelegate {
   const bool is_devtools_popup_;
 
   IMPLEMENT_REFCOUNTING(TestBrowserViewDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestBrowserViewDelegate);
 };
 
 }  // namespace
@@ -219,18 +220,14 @@ void TestHandler::Collection::AddTestHandler(TestHandler* test_handler) {
 void TestHandler::Collection::ExecuteTests() {
   EXPECT_GT(handler_list_.size(), 0UL);
 
-  TestHandlerList::const_iterator it;
-
-  it = handler_list_.begin();
-  for (; it != handler_list_.end(); ++it) {
-    (*it)->SetupTest();
+  for (const auto& handler : handler_list_) {
+    handler->SetupTest();
   }
 
   completion_state_->WaitForTests();
 
-  it = handler_list_.begin();
-  for (; it != handler_list_.end(); ++it) {
-    (*it)->RunTest();
+  for (const auto& handler : handler_list_) {
+    handler->RunTest();
   }
 
   completion_state_->WaitForTests();
@@ -369,8 +366,7 @@ void TestHandler::OnCreated(int browser_id,
                             bool views_hosted) {
   CHECK(use_views_ || !views_hosted);
 
-  const bool has_value =
-      browser_status_map_.find(browser_id) != browser_status_map_.end();
+  const bool has_value = browser_status_map_.contains(browser_id);
 
   auto& browser_status = browser_status_map_[browser_id];
   if (has_value) {
@@ -453,9 +449,8 @@ namespace {
 CefResponse::HeaderMap ToCefHeaderMap(
     const ResourceContent::HeaderMap& headerMap) {
   CefResponse::HeaderMap result;
-  ResourceContent::HeaderMap::const_iterator it = headerMap.begin();
-  for (; it != headerMap.end(); ++it) {
-    result.insert(std::pair<CefString, CefString>(it->first, it->second));
+  for (const auto& [key, value] : headerMap) {
+    result.insert(std::pair<CefString, CefString>(key, value));
   }
   return result;
 }
@@ -548,9 +543,8 @@ void TestHandler::DestroyTest() {
     BrowserMap browser_map = browser_map_;
 
     // Tell all browsers to close.
-    BrowserMap::const_iterator it = browser_map.begin();
-    for (; it != browser_map.end(); ++it) {
-      CloseBrowser(it->second, false);
+    for (const auto& [id, browser] : browser_map) {
+      CloseBrowser(browser, false);
     }
   }
 }

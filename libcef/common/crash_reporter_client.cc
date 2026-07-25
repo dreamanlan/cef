@@ -260,7 +260,7 @@ std::string NormalizeCrashKey(const std::string_view& key) {
 }
 
 void ParseURL(const std::string& value, std::string* url) {
-  if (value.find("http://") == 0 || value.find("https://") == 0) {
+  if (value.starts_with("http://") || value.starts_with("https://")) {
     *url = value;
     if (url->rfind('/') <= 8) {
       // Make sure the URL includes a path component. Otherwise, crash
@@ -477,8 +477,7 @@ bool CefCrashReporterClient::ReadCrashConfigFile() {
 #endif
     } else if (current_section == kCrashKeysSection) {
       // Skip duplicate definitions.
-      if (!crash_keys_.empty() &&
-          crash_keys_.find(name_str) != crash_keys_.end()) {
+      if (!crash_keys_.empty() && crash_keys_.contains(name_str)) {
         continue;
       }
 

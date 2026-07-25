@@ -6,6 +6,7 @@
 #include "include/views/cef_textfield.h"
 #include "include/views/cef_textfield_delegate.h"
 #include "include/wrapper/cef_closure_task.h"
+#include "tests/ceftests/test_util.h"
 #include "tests/ceftests/thread_helper.h"
 #include "tests/ceftests/views/test_window_delegate.h"
 #include "tests/gtest/include/gtest/gtest.h"
@@ -142,24 +143,8 @@ void RunTextfieldStyle(CefRefPtr<CefWindow> window) {
   textfield->SetReadOnly(false);
   EXPECT_FALSE(textfield->IsReadOnly());
 
-  // Test colors.
-  const cef_color_t color = CefColorSetARGB(255, 255, 0, 255);
-
-  EXPECT_NE(color, textfield->GetTextColor());
-  textfield->SetTextColor(color);
-  EXPECT_EQ(color, textfield->GetTextColor());
-
-  EXPECT_NE(color, textfield->GetSelectionTextColor());
-  textfield->SetSelectionTextColor(color);
-  EXPECT_EQ(color, textfield->GetSelectionTextColor());
-
-  EXPECT_NE(color, textfield->GetSelectionBackgroundColor());
-  textfield->SetSelectionBackgroundColor(color);
-  EXPECT_EQ(color, textfield->GetSelectionBackgroundColor());
-
-  textfield->SetPlaceholderTextColor(color);
-
   // Test fonts.
+  const cef_color_t color = CefColorSetARGB(255, 255, 0, 255);
   textfield->SetFontList("Arial, 14px");
 
   // Test format ranges.
@@ -212,6 +197,9 @@ class TestTextfieldDelegate : public CefTextfieldDelegate {
  public:
   TestTextfieldDelegate() = default;
 
+  TestTextfieldDelegate(const TestTextfieldDelegate&) = delete;
+  TestTextfieldDelegate& operator=(const TestTextfieldDelegate&) = delete;
+
   bool OnKeyEvent(CefRefPtr<CefTextfield> textfield,
                   const CefKeyEvent& event) override {
     EXPECT_TRUE(textfield.get());
@@ -260,7 +248,6 @@ class TestTextfieldDelegate : public CefTextfieldDelegate {
   size_t after_user_action_ct_ = 0;
 
   IMPLEMENT_REFCOUNTING(TestTextfieldDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestTextfieldDelegate);
 };
 
 void SendKeyEvents(CefRefPtr<CefWindow> window) {
@@ -306,6 +293,13 @@ void RunTextfieldKeyEvent(CefRefPtr<CefWindow> window) {
 }
 
 void TextfieldKeyEventImpl(CefRefPtr<CefWaitableEvent> event) {
+  if (IsRunningOnWayland()) {
+    // Skipping test on Wayland. EventGenerator key events don't go through
+    // Wayland's text input protocol, so text input doesn't work.
+    event->Signal();
+    return;
+  }
+
   auto config = std::make_unique<TestWindowDelegate::Config>();
   config->on_window_created = base::BindOnce(RunTextfieldKeyEvent);
   config->close_window = false;

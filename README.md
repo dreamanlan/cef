@@ -2,17 +2,18 @@ The Chromium Embedded Framework (CEF) is a simple framework for embedding Chromi
 
 # Quick Links
 
-* Project Page - https://bitbucket.org/chromiumembedded/cef
-* Tutorial - https://bitbucket.org/chromiumembedded/cef/wiki/Tutorial
-* General Usage - https://bitbucket.org/chromiumembedded/cef/wiki/GeneralUsage
-* Master Build Quick-Start - https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart
-* Branches and Building - https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding
+* Project Page - https://github.com/chromiumembedded/cef
+* Documentation - https://chromiumembedded.github.io/cef/
+* Tutorial - https://chromiumembedded.github.io/cef/tutorial
+* General Usage - https://chromiumembedded.github.io/cef/general_usage
+* Master Build Quick-Start - https://chromiumembedded.github.io/cef/master_build_quick_start
+* Branches and Building - https://chromiumembedded.github.io/cef/branches_and_building
 * Announcements - https://groups.google.com/forum/#!forum/cef-announce
 * Support Forum - http://www.magpcss.org/ceforum/
 * Issue Tracker - https://github.com/chromiumembedded/cef/issues
 * C++ API Docs - [Stable release docs](https://cef-builds.spotifycdn.com/docs/stable.html) / [Beta release docs](https://cef-builds.spotifycdn.com/docs/beta.html)
 * Downloads - https://cef-builds.spotifycdn.com/index.html
-* Donations - http://www.magpcss.org/ceforum/donate.php
+* Donations - https://github.com/sponsors/magreenblatt
 
 # Introduction
 
@@ -25,11 +26,11 @@ CEF is a BSD-licensed open source project founded by Marshall Greenblatt in 2008
 
 CEF supports a wide range of programming languages and operating systems and can be easily integrated into both new and existing applications. It was designed from the ground up with both performance and ease of use in mind. The base framework includes C and C++ programming interfaces exposed via native libraries that insulate the host application from Chromium and Blink implementation details. It provides close integration between the browser and the host application including support for custom plugins, protocols, JavaScript objects and JavaScript extensions. The host application can optionally control resource loading, navigation, context menus, printing and more, while taking advantage of the same performance and HTML5 technologies available in the Google Chrome Web browser.
 
-Numerous individuals and organizations contribute time and resources to support CEF development, but more involvement from the community is always welcome. This includes support for both the core CEF project and external projects that integrate CEF with additional programming languages and frameworks (see the "External Projects" section below). If you are interested in donating time to help with CEF development please see the "Helping Out" section below. If you are interested in donating money to support general CEF development and infrastructure efforts please visit the [CEF Donations](http://www.magpcss.org/ceforum/donate.php) page.
+Numerous individuals and organizations contribute time and resources to support CEF development, but more involvement from the community is always welcome. This includes support for both the core CEF project and external projects that integrate CEF with additional programming languages and frameworks (see the "External Projects" section below). If you are interested in donating time to help with CEF development please see the "Helping Out" section below. If you are interested in donating money to support general CEF development and infrastructure efforts please visit the [CEF Sponsors](https://github.com/sponsors/magreenblatt) page.
 
 # Getting Started
 
-Users new to CEF development should start by reading the [Tutorial](https://bitbucket.org/chromiumembedded/cef/wiki/Tutorial) Wiki page for an overview of CEF usage and then proceed to the [GeneralUsage](https://bitbucket.org/chromiumembedded/cef/wiki/GeneralUsage) Wiki page for a more in-depth discussion or architectural and usage issues. Complete API documentation is available [here](https://cef-builds.spotifycdn.com/docs/stable.html). CEF support and related discussion is available on the [CEF Forum](http://www.magpcss.org/ceforum/).
+Users new to CEF development should start by reading the [Tutorial](https://chromiumembedded.github.io/cef/tutorial) for an overview of CEF usage and then proceed to the [General Usage](https://chromiumembedded.github.io/cef/general_usage) page for a more in-depth discussion of architectural and usage issues. Complete API documentation is available [here](https://cef-builds.spotifycdn.com/docs/stable.html). CEF support and related discussion is available on the [CEF Forum](http://www.magpcss.org/ceforum/).
 
 # Binary Distributions
 
@@ -37,7 +38,7 @@ Binary distributions, which include all files necessary to build a CEF-based app
 
 # Source Distributions
 
-The CEF project is an extension of the Chromium project. CEF maintains development and release branches that track Chromium branches. CEF source code can be downloaded, built and packaged manually or with automated tools. Visit the [BranchesAndBuilding](https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding) Wiki page for more information.
+The CEF project is an extension of the Chromium project. CEF maintains development and release branches that track Chromium branches. CEF source code can be downloaded, built and packaged manually or with automated tools. Visit the [Branches and Building](https://chromiumembedded.github.io/cef/branches_and_building) page for more information.
 
 # External Projects
 
@@ -50,7 +51,7 @@ The base CEF framework includes support for the C and C++ programming languages.
 * Delphi - https://github.com/salvadordf/CEF4Delphi
 * Go - https://github.com/CzarekTomczak/cef2go
 * Go - https://github.com/energye/energy
-* Java - https://bitbucket.org/chromiumembedded/java-cef
+* Java - https://github.com/chromiumembedded/java-cef
 * Python - http://code.google.com/p/cefpython/
 
 If you're the maintainer of a project not listed above and would like your project listed here please either post to the [CEF Forum](http://www.magpcss.org/ceforum/) or contact Marshall directly.
@@ -59,26 +60,12 @@ If you're the maintainer of a project not listed above and would like your proje
 
 CEF is still very much a work in progress. Some ways that you can help out:
 
-\- Vote for issues in the [CEF issue tracker](https://github.com/chromiumembedded/cef/issues) that are important to you. This helps with development prioritization.
+\- Vote for issues in the [CEF issue tracker](https://github.com/chromiumembedded/cef/issues) that are important to you.
 
-\- Report any bugs that you find or feature requests that are important to you. Make sure to first search for existing issues before creating new ones. Please use the [CEF Forum](http://magpcss.org/ceforum) and not the issue tracker for usage questions. Each CEF issue should:
-
-* Include the CEF revision or binary distribution version.
-* Include information about your OS and compiler version.
-* If the issue is a bug please provide detailed reproduction information.
-* If the issue is a feature please describe why the feature is beneficial.
+\- Report bugs or request features via the [issue tracker](https://github.com/chromiumembedded/cef/issues). Use the [CEF Forum](http://magpcss.org/ceforum) for usage questions.
 
 \- Write unit tests for new or existing functionality.
 
-\- Pull requests and patches are welcome. View open issues in the [CEF issue tracker](https://github.com/chromiumembedded/cef/issues) or search for TODO(cef) in the source code for ideas.
+\- Submit pull requests. View open issues or search for TODO(cef) in the source code for ideas.
 
-If you would like to contribute source code changes to CEF please follow the below guidelines:
-
-\- Create or find an appropriate issue for each distinct bug, feature or change. 
-
-\- Submit a [pull request](https://bitbucket.org/chromiumembedded/cef/wiki/ContributingWithGit) or create a patch with your changes and attach it to the CEF issue. Changes should:
-
-* Be submitted against the current [CEF master branch](https://bitbucket.org/chromiumembedded/cef/src/?at=master) unless explicitly fixing a bug in a CEF release branch.
-* Follow the style of existing CEF source files. In general CEF uses the [Chromium C++ style guide](https://chromium.googlesource.com/chromium/src/+/master/styleguide/c++/c++.md).
-* Include new or modified unit tests as appropriate to the functionality.
-* Not include unnecessary or unrelated changes.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines on submitting changes, code style, commit messages, and AI tool usage.

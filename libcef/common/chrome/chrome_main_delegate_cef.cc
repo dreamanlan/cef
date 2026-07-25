@@ -5,11 +5,11 @@
 
 #include "cef/libcef/common/chrome/chrome_main_delegate_cef.h"
 
+#include <algorithm>
 #include <tuple>
 
 #include "base/base_switches.h"
 #include "base/command_line.h"
-#include "base/containers/contains.h"
 #include "base/lazy_instance.h"
 #include "base/path_service.h"
 #include "base/threading/threading_features.h"
@@ -23,14 +23,15 @@
 #include "cef/libcef/renderer/chrome/chrome_content_renderer_client_cef.h"
 #include "chrome/browser/metrics/chrome_feature_list_creator.h"
 #include "chrome/browser/policy/chrome_browser_policy_connector.h"
-#include "chrome/browser/ui/ui_features.h"
 #include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/embedder_support/switches.h"
 #include "components/lens/lens_features.h"
 #include "components/variations/service/buildflags.h"
+#include "content/common/features.h"
 #include "content/public/common/content_switches.h"
 #include "net/base/features.h"
 #include "sandbox/policy/switches.h"
@@ -353,12 +354,24 @@ std::optional<int> ChromeMainDelegateCef::BasicStartupComplete() {
 #endif  // BUILDFLAG(IS_WIN)
 
     // Disable features that crash during Chrome browser initialization.
-    // -- Split Screen support. See issue #3980.
-    DisableFeatureByDefault(features::kSideBySide, disable_features);
     // -- "Gemini in Chrome" Actor UI support. See issue #3982.
     DisableFeatureByDefault(features::kGlicActorUi, disable_features);
+    // -- Autofill Actor mode requires ActorKeyedService (glic).
+    DisableFeatureByDefault(autofill::features::kAutofillActorMode,
+                            disable_features);
     // -- "Search with Google Lens" support.
     DisableFeatureByDefault(lens::features::kLensOverlay, disable_features);
+
+    // Disable features that break CEF APIs.
+    // -- KillOnInvalidNavigationHeaders kills the renderer when a navigation
+    //    request carries headers outside the browser allowlist (Origin,
+    //    Content-Type, User-Agent, Upgrade-Insecure-Requests, Sec-Purpose,
+    //    DNT). CefRequest::SetHeaderMap + CefFrame::LoadRequest legitimately
+    //    attaches arbitrary client-supplied headers, so the check kills the
+    //    renderer on any such navigation. Disabling restores prior behavior
+    //    pending a proper fix. See issue #4177.
+    DisableFeatureByDefault(features::kKillOnInvalidNavigationHeaders,
+                            disable_features);
 
     if (!disable_features.empty()) {
       DCHECK(!base::FeatureList::GetInstance());
@@ -367,7 +380,7 @@ std::optional<int> ChromeMainDelegateCef::BasicStartupComplete() {
       if (!disable_features_str.empty()) {
         for (std::string_view feature_name :
              base::FeatureList::SplitFeatureListString(disable_features_str)) {
-          if (!base::Contains(disable_features, feature_name)) {
+          if (!std::ranges::contains(disable_features, feature_name)) {
             disable_features.emplace_back(feature_name);
           }
         }

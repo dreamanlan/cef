@@ -18,7 +18,7 @@ This utility sets up Claude Code integration for CEF.
   epilog = """
 This utility sets up Claude Code integration for an existing
 CEF/Chromium development environment. See
-https://bitbucket.org/chromiumembedded/cef/wiki/MasterBuildQuickStart.md for
+https://chromiumembedded.github.io/cef/master_build_quick_start for
 prerequisite environment setup instructions.
 
 This setup copies the CLAUDE.md file from cef/tools/claude/ to the project
@@ -69,8 +69,8 @@ codebase.
 
   change_ct = 0
 
-  # Copy CLAUDE.md from cef/tools/claude/ to project root
-  claude_md_src = os.path.join(in_dir, 'CLAUDE.md')
+  # Copy CLAUDE.md.in from cef/tools/claude/ to project root as CLAUDE.md
+  claude_md_src = os.path.join(in_dir, 'CLAUDE.md.in')
   claude_md_dst = os.path.join(src_dir, 'CLAUDE.md')
 
   if not os.path.isfile(claude_md_src):

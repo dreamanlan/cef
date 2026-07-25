@@ -76,9 +76,23 @@ CefString CefDragDataImpl::GetLinkTitle() {
   return !data_.url_infos.empty() ? data_.url_infos[0].title : std::u16string();
 }
 
+// The "mime_type:file_name:url" serialized form (e.g.
+// "text/plain:test.txt:file:///test.txt") is the `ui::kMimeTypeDownloadUrl`
+// ("downloadurl") drag string format. Starting in M148, the browser parses it
+// into `content::DownloadUrlMetadata` via `ParseDownloadMetadata()` in
+// content/browser/renderer_host/data_transfer_util.cc; prior to M148,
+// `DropData::download_metadata` was a raw `std::u16string` holding the same
+// serialized form. We re-serialize here to preserve the CEF API contract.
 CefString CefDragDataImpl::GetLinkMetadata() {
   base::AutoLock lock_scope(lock_);
-  return data_.download_metadata;
+  if (!data_.download_metadata) {
+    return CefString();
+  }
+  const auto& metadata = *data_.download_metadata;
+  std::string serialized = metadata.mime_type + ":" +
+                           metadata.suggested_file_name + ":" +
+                           metadata.url.spec();
+  return serialized;
 }
 
 CefString CefDragDataImpl::GetFragmentText() {
@@ -108,7 +122,7 @@ size_t CefDragDataImpl::GetFileContents(CefRefPtr<CefStreamWriter> writer) {
     return 0;
   }
 
-  char* data = const_cast<char*>(data_.file_contents.c_str());
+  char* data = reinterpret_cast<char*>(data_.file_contents.data());
   size_t size = data_.file_contents.size();
 
   if (!writer.get()) {
@@ -124,11 +138,10 @@ bool CefDragDataImpl::GetFileNames(std::vector<CefString>& names) {
     return false;
   }
 
-  std::vector<ui::FileInfo>::const_iterator it = data_.filenames.begin();
-  for (; it != data_.filenames.end(); ++it) {
-    auto name = it->display_name.value();
+  for (const auto& file_info : data_.filenames) {
+    auto name = file_info.display_name.value();
     if (name.empty()) {
-      name = it->path.BaseName().value();
+      name = file_info.path.BaseName().value();
     }
     names.push_back(name);
   }
@@ -142,9 +155,8 @@ bool CefDragDataImpl::GetFilePaths(std::vector<CefString>& paths) {
     return false;
   }
 
-  std::vector<ui::FileInfo>::const_iterator it = data_.filenames.begin();
-  for (; it != data_.filenames.end(); ++it) {
-    auto path = it->path.value();
+  for (const auto& file_info : data_.filenames) {
+    auto path = file_info.path.value();
     paths.push_back(path);
   }
 
@@ -172,7 +184,33 @@ void CefDragDataImpl::SetLinkTitle(const CefString& title) {
 void CefDragDataImpl::SetLinkMetadata(const CefString& data) {
   base::AutoLock lock_scope(lock_);
   CHECK_READONLY_RETURN_VOID();
-  data_.download_metadata = data.ToString16();
+  const std::string& serialized = data;
+  if (serialized.empty()) {
+    data_.download_metadata = std::nullopt;
+    return;
+  }
+  const char separator = ':';
+  size_t mime_type_end_pos = serialized.find(separator);
+  if (mime_type_end_pos == std::string::npos) {
+    data_.download_metadata = std::nullopt;
+    return;
+  }
+  size_t file_name_end_pos = serialized.find(separator, mime_type_end_pos + 1);
+  if (file_name_end_pos == std::string::npos) {
+    data_.download_metadata = std::nullopt;
+    return;
+  }
+  GURL parsed_url = GURL(serialized.substr(file_name_end_pos + 1));
+  if (!parsed_url.is_valid()) {
+    data_.download_metadata = std::nullopt;
+    return;
+  }
+  content::DownloadUrlMetadata metadata;
+  metadata.mime_type = serialized.substr(0, mime_type_end_pos);
+  metadata.suggested_file_name = serialized.substr(
+      mime_type_end_pos + 1, file_name_end_pos - mime_type_end_pos - 1);
+  metadata.url = std::move(parsed_url);
+  data_.download_metadata = std::move(metadata);
 }
 
 void CefDragDataImpl::SetFragmentText(const CefString& text) {
@@ -196,7 +234,7 @@ void CefDragDataImpl::SetFragmentBaseURL(const CefString& fragment) {
 void CefDragDataImpl::ResetFileContents() {
   base::AutoLock lock_scope(lock_);
   CHECK_READONLY_RETURN_VOID();
-  data_.file_contents.erase();
+  data_.file_contents.clear();
   data_.file_contents_source_url = GURL();
   data_.file_contents_filename_extension.erase();
   data_.file_contents_content_disposition.erase();

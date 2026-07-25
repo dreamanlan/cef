@@ -31,6 +31,7 @@
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_response_headers.h"
+#include "services/network/public/cpp/originating_process_id.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "services/network/public/cpp/simple_url_loader.h"
 #include "services/network/public/cpp/simple_url_loader_stream_consumer.h"
@@ -73,7 +74,7 @@ class RequestManager {
     DCHECK_LE(request_id, kInitialRequestID);
 
     base::AutoLock lock_scope(lock_);
-    DCHECK(map_.find(request_id) == map_.end());
+    DCHECK(!map_.contains(request_id));
     map_.insert(std::make_pair(request_id, std::make_pair(request, client)));
   }
 
@@ -233,7 +234,7 @@ class CefBrowserURLRequest::Context
           static_cast<content::StoragePartitionImpl*>(
               browser_context->GetDefaultStoragePartition())
               ->CreateURLLoaderNetworkObserverForServiceOrSharedWorker(
-                  content::ChildProcessHost::kInvalidUniqueID, url::Origin());
+                  network::OriginatingProcessId::browser(), url::Origin());
     }
 
     task_runner->PostTask(

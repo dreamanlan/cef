@@ -1,18 +1,19 @@
 diff --git content/browser/child_process_security_policy_impl.cc content/browser/child_process_security_policy_impl.cc
-index c5a1a6230507531afc14181f3a717e90048890a7..3a5685b8adf4e14b306b3a73fd3688ea0a8aa724 100644
+index 6fde91c4db54dd5ffd01c141b9adcde2005b4fa4..bc1922325091c70602a6530a11e0e87e2c166147 100644
 --- content/browser/child_process_security_policy_impl.cc
 +++ content/browser/child_process_security_policy_impl.cc
-@@ -2192,6 +2192,16 @@ bool ChildProcessSecurityPolicyImpl::PerformJailAndCitadelChecks(
+@@ -2479,6 +2479,17 @@ bool ChildProcessSecurityPolicyImpl::PerformJailAndCitadelChecks(
          if (actual_process_lock.MatchesScheme(url::kDataScheme)) {
            return true;
          }
 +
 +        // Allow other schemes that are non-standard, non-local and WebSafe.
 +        if (lock_url.is_valid() && !lock_url.IsStandard() &&
-+            !base::Contains(url::GetLocalSchemes(), lock_url.scheme())) {
++            !std::ranges::contains(url::GetLocalSchemes(),
++                                   lock_url.scheme())) {
 +          base::AutoLock schemes_lock(schemes_lock_);
-+          if (base::Contains(schemes_okay_to_request_in_any_process_,
-+                             std::string(lock_url.scheme()))) {
++          if (std::ranges::contains(schemes_okay_to_request_in_any_process_,
++                                    std::string(lock_url.scheme()))) {
 +            return true;
 +          }
 +        }
@@ -20,10 +21,26 @@ index c5a1a6230507531afc14181f3a717e90048890a7..3a5685b8adf4e14b306b3a73fd3688ea
  
        // Make an exception to allow most visited tiles to commit in third-party
 diff --git content/browser/renderer_host/navigation_request.cc content/browser/renderer_host/navigation_request.cc
-index a020aa1ddc8ba7f5ecf5a376d00817f7fc61db40..d12d8b7e1d6cefc0e11e6d2c60673d33aae2c8cb 100644
+index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91dbfd9b0189 100644
 --- content/browser/renderer_host/navigation_request.cc
 +++ content/browser/renderer_host/navigation_request.cc
-@@ -8850,7 +8850,8 @@ std::optional<url::Origin> NavigationRequest::GetOriginToCommit() {
+@@ -387,8 +387,13 @@ void AddAdditionalRequestHeaders(
+     blink::mojom::Referrer* referrer,
+     FrameTreeNode* frame_tree_node,
+     bool is_browser_initiated) {
+-  if (!url.SchemeIsHTTPOrHTTPS())
+-    return;
++  // The upstream early-return for non-HTTP(S) URLs is removed so that
++  // embedder-registered custom standard schemes (CEF schemes declared as
++  // SECURE and CORS_ENABLED) get the same Origin, User-Agent and referrer
++  // treatment as HTTP(S). Prior to https://crrev.com/c/7617635 this was
++  // partly handled in Blink via SetHTTPOriginToMatchReferrerPolicyIfNeeded,
++  // removed on the premise that the browser process would add the Origin
++  // header here -- which only held true if this function actually ran.
+ 
+   bool is_reload = NavigationTypeUtils::IsReload(navigation_type);
+   bool is_history = NavigationTypeUtils::IsHistory(navigation_type);
+@@ -9464,7 +9469,8 @@ std::optional<url::Origin> NavigationRequest::GetOriginToCommit() {
  }
  
  url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
@@ -33,7 +50,7 @@ index a020aa1ddc8ba7f5ecf5a376d00817f7fc61db40..d12d8b7e1d6cefc0e11e6d2c60673d33
    // Calculate an approximation of the origin. The sandbox/csp are ignored.
    url::Origin origin = GetOriginForURLLoaderFactoryUnchecked();
  
-@@ -8867,6 +8868,17 @@ url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
+@@ -9481,6 +9487,17 @@ url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
    bool use_opaque_origin =
        (sandbox_flags & network::mojom::WebSandboxFlags::kOrigin) ==
        network::mojom::WebSandboxFlags::kOrigin;
@@ -51,7 +68,7 @@ index a020aa1ddc8ba7f5ecf5a376d00817f7fc61db40..d12d8b7e1d6cefc0e11e6d2c60673d33
    if (use_opaque_origin) {
      origin = origin.DeriveNewOpaqueOrigin();
    }
-@@ -8926,8 +8938,9 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
+@@ -9541,8 +9558,9 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
      return GetRenderFrameHost()->GetLastCommittedOrigin();
    }
  
@@ -63,7 +80,7 @@ index a020aa1ddc8ba7f5ecf5a376d00817f7fc61db40..d12d8b7e1d6cefc0e11e6d2c60673d33
  
    SCOPED_CRASH_KEY_BOOL("Bug1454273", "is_in_main_frame", IsInMainFrame());
    SCOPED_CRASH_KEY_STRING256(
-@@ -8962,10 +8975,17 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
+@@ -9577,10 +9595,17 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
        DetermineInitiatorRelationship(initiator_rfh,
                                       frame_tree_node_->current_frame_host()));
  
@@ -83,10 +100,10 @@ index a020aa1ddc8ba7f5ecf5a376d00817f7fc61db40..d12d8b7e1d6cefc0e11e6d2c60673d33
    // If the target of this navigation will be rendered in a RenderFrameHost,
    // then verify that the chosen origin is allowed to be accessed from that
 diff --git content/browser/renderer_host/navigation_request.h content/browser/renderer_host/navigation_request.h
-index ba3959a35fa4ba9b23094cd86f7adc04a738a3d1..cc9ca7914aa53091c1f6bff5f4a6b9d6360ef76c 100644
+index 230da416a73f65daa2c3f1d7b488e10bb5e43116..7864e1be81cf7cbde7b2ad03fa226d7d207e748c 100644
 --- content/browser/renderer_host/navigation_request.h
 +++ content/browser/renderer_host/navigation_request.h
-@@ -2314,7 +2314,8 @@ class CONTENT_EXPORT NavigationRequest
+@@ -2488,7 +2488,8 @@ class CONTENT_EXPORT NavigationRequest
    // situations where the final frame host hasn't been determined but the origin
    // is needed to create URLLoaderFactory.
    url::Origin GetOriginForURLLoaderFactoryBeforeResponse(

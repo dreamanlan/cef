@@ -958,7 +958,7 @@ class FrameStatusMap {
   ~FrameStatusMap() { EXPECT_TRUE(frame_map_.empty()); }
 
   bool Contains(CefRefPtr<CefFrame> frame) const {
-    return frame_map_.find(frame->GetIdentifier()) != frame_map_.end();
+    return frame_map_.contains(frame->GetIdentifier());
   }
 
   FrameStatus* CreateFrameStatus(CefRefPtr<CefFrame> frame) {
@@ -993,9 +993,8 @@ class FrameStatusMap {
   }
 
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) {
-    Map::const_iterator it = frame_map_.begin();
-    for (; it != frame_map_.end(); ++it) {
-      it->second->OnBeforeClose(browser);
+    for (const auto& [id, status] : frame_map_) {
+      status->OnBeforeClose(browser);
     }
   }
 
@@ -1012,12 +1011,11 @@ class FrameStatusMap {
       return false;
     }
 
-    Map::const_iterator it = frame_map_.begin();
-    for (; it != frame_map_.end(); ++it) {
-      if (!it->second->AllQueriesDelivered(msg)) {
+    for (const auto& [id, status] : frame_map_) {
+      if (!status->AllQueriesDelivered(msg)) {
 #if VERBOSE_DEBUGGING
         if (msg) {
-          *msg += " " + it->second->GetDebugString() + " PENDING";
+          *msg += " " + status->GetDebugString() + " PENDING";
         }
 #endif
         return false;
@@ -1040,12 +1038,11 @@ class FrameStatusMap {
       return false;
     }
 
-    Map::const_iterator it = frame_map_.begin();
-    for (; it != frame_map_.end(); ++it) {
-      if (!it->second->IsTemporary() && !it->second->IsLoaded(msg)) {
+    for (const auto& [id, status] : frame_map_) {
+      if (!status->IsTemporary() && !status->IsLoaded(msg)) {
 #if VERBOSE_DEBUGGING
         if (msg) {
-          *msg += " " + it->second->GetDebugString() + " PENDING";
+          *msg += " " + status->GetDebugString() + " PENDING";
         }
 #endif
         return false;
@@ -1060,9 +1057,8 @@ class FrameStatusMap {
       return false;
     }
 
-    Map::const_iterator it = frame_map_.begin();
-    for (; it != frame_map_.end(); ++it) {
-      if (!it->second->IsDestroyed()) {
+    for (const auto& [id, status] : frame_map_) {
+      if (!status->IsDestroyed()) {
         return false;
       }
     }
@@ -1072,10 +1068,9 @@ class FrameStatusMap {
 
   void VerifyAndClearTestResults() {
     EXPECT_EQ(expected_frame_ct_, size());
-    Map::const_iterator it = frame_map_.begin();
-    for (; it != frame_map_.end(); ++it) {
-      it->second->VerifyTestResults();
-      delete it->second;
+    for (const auto& [id, status] : frame_map_) {
+      status->VerifyTestResults();
+      delete status;
     }
     frame_map_.clear();
   }
@@ -1347,8 +1342,7 @@ class OrderSubTestHandler : public NavigateOrderMainTestHandler {
     map->VerifyAndClearTestResults();
 
     bool found = false;
-    FrameStatusMapVector::iterator it = frame_maps_.begin();
-    for (; it != frame_maps_.end(); ++it) {
+    for (auto it = frame_maps_.begin(); it != frame_maps_.end(); ++it) {
       if ((*it).get() == map) {
         frame_maps_.erase(it);
         found = true;
@@ -1458,9 +1452,8 @@ class CrossOriginOrderSubTestHandler : public OrderSubTestHandler {
                       CefRefPtr<CefFrame> frame) override {
     OrderSubTestHandler::OnFrameCreated(browser, frame);
 
-    if (!frame->IsMain() &&
-        loaded_frame_child_ids_.find(ExtractChildId(frame->GetIdentifier())) !=
-            loaded_frame_child_ids_.end()) {
+    if (!frame->IsMain() && loaded_frame_child_ids_.contains(
+                                ExtractChildId(frame->GetIdentifier()))) {
       // Mark sub-frames in the same process as a loaded frame as temporary.
       // See below comments in OnFrameDestroyed.
       auto map = GetFrameMap(frame);

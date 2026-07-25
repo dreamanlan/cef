@@ -36,6 +36,9 @@ tests/      Directory of tests that demonstrate CEF usage.
 
   ceftests  Contains unit tests that exercise the CEF APIs.
 
+  gmock     Contains the Google C++ Mocking Framework used by the ceftests
+            target.
+
   gtest     Contains the Google C++ Testing Framework used by the ceftests
             target.
 
@@ -73,4 +76,4 @@ Building using Bazel:
 
 Please visit the CEF Website for additional usage information.
 
-https://bitbucket.org/chromiumembedded/cef/
+https://github.com/chromiumembedded/cef/

@@ -278,7 +278,7 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
     // method.
     SetRootLayerSize(false /* force */);
     if (!render_widget_host_->IsHidden()) {
-      Show();
+      ShowWithVisibility(content::PageVisibilityState::kVisible);
     }
   }
 
@@ -342,7 +342,7 @@ void CefRenderWidgetHostViewOSR::InitAsChild(gfx::NativeView parent_view) {
   parent_host_view_->Hide();
 
   SetRootLayerSize(false /* force */);
-  Show();
+  ShowWithVisibility(content::PageVisibilityState::kVisible);
 }
 
 void CefRenderWidgetHostViewOSR::SetSize(const gfx::Size& size) {}
@@ -668,7 +668,7 @@ void CefRenderWidgetHostViewOSR::InitAsPopup(
   // The size doesn't change for popups so we need to force the
   // initialization.
   SetRootLayerSize(true /* force */);
-  Show();
+  ShowWithVisibility(content::PageVisibilityState::kVisible);
 }
 
 void CefRenderWidgetHostViewOSR::UpdateCursor(const ui::Cursor& cursor) {}
@@ -745,11 +745,11 @@ uint32_t CefRenderWidgetHostViewOSR::GetCaptureSequenceNumber() const {
 void CefRenderWidgetHostViewOSR::CopyFromSurface(
     const gfx::Rect& src_rect,
     const gfx::Size& output_size,
-    base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
-        callback) {
+    base::TimeDelta timeout,
+    base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback) {
   if (delegated_frame_host_) {
-    delegated_frame_host_->CopyFromCompositingSurface(src_rect, output_size,
-                                                      std::move(callback));
+    delegated_frame_host_->CopyFromCompositingSurface(
+        src_rect, output_size, timeout, std::move(callback));
   }
 }
 
@@ -823,6 +823,10 @@ CefRenderWidgetHostViewOSR::DidUpdateVisualProperties(
 viz::SurfaceId CefRenderWidgetHostViewOSR::GetCurrentSurfaceId() const {
   return delegated_frame_host_ ? delegated_frame_host_->GetCurrentSurfaceId()
                                : viz::SurfaceId();
+}
+
+bool CefRenderWidgetHostViewOSR::HasSavedCompositorFrame() const {
+  return delegated_frame_host_ && delegated_frame_host_->HasSavedFrame();
 }
 
 void CefRenderWidgetHostViewOSR::ImeSetComposition(
@@ -946,7 +950,8 @@ viz::FrameSinkId CefRenderWidgetHostViewOSR::GetRootFrameSinkId() {
 }
 
 void CefRenderWidgetHostViewOSR::NotifyHostAndDelegateOnWasShown(
-    blink::mojom::RecordContentToVisibleTimeRequestPtr visible_time_request) {
+    std::optional<blink::RecordContentToVisibleTimeRequest>
+        visible_time_request) {
   // We don't call RenderWidgetHostViewBase::OnShowWithPageVisibility, so this
   // method should not be called.
   DCHECK(false);
@@ -954,8 +959,7 @@ void CefRenderWidgetHostViewOSR::NotifyHostAndDelegateOnWasShown(
 
 void CefRenderWidgetHostViewOSR::
     RequestSuccessfulPresentationTimeFromHostOrDelegate(
-        blink::mojom::RecordContentToVisibleTimeRequestPtr
-            visible_time_request) {
+        blink::RecordContentToVisibleTimeRequest visible_time_request) {
   // We don't call RenderWidgetHostViewBase::OnShowWithPageVisibility, so this
   // method should not be called.
   DCHECK(false);
@@ -1834,7 +1838,8 @@ void CefRenderWidgetHostViewOSR::CancelWidget() {
       parent_host_view_->set_child_host_view(nullptr);
 
       // Start rendering the parent view again.
-      parent_host_view_->Show();
+      parent_host_view_->ShowWithVisibility(
+          content::PageVisibilityState::kVisible);
     } else {
       parent_host_view_->RemoveGuestHostView(this);
     }

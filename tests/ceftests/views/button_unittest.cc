@@ -11,6 +11,7 @@
 #include "include/wrapper/cef_closure_task.h"
 #include "tests/ceftests/image_util.h"
 #include "tests/ceftests/test_handler.h"
+#include "tests/ceftests/test_util.h"
 #include "tests/ceftests/thread_helper.h"
 #include "tests/ceftests/views/test_window_delegate.h"
 #include "tests/gtest/include/gtest/gtest.h"
@@ -101,6 +102,9 @@ class EmptyMenuButtonDelegate : public CefMenuButtonDelegate {
  public:
   EmptyMenuButtonDelegate() = default;
 
+  EmptyMenuButtonDelegate(const EmptyMenuButtonDelegate&) = delete;
+  EmptyMenuButtonDelegate& operator=(const EmptyMenuButtonDelegate&) = delete;
+
   void OnMenuButtonPressed(
       CefRefPtr<CefMenuButton> menu_button,
       const CefPoint& screen_point,
@@ -114,7 +118,6 @@ class EmptyMenuButtonDelegate : public CefMenuButtonDelegate {
 
  private:
   IMPLEMENT_REFCOUNTING(EmptyMenuButtonDelegate);
-  DISALLOW_COPY_AND_ASSIGN(EmptyMenuButtonDelegate);
 };
 
 void RunLabelButtonStyle(CefRefPtr<CefWindow> window) {
@@ -164,11 +167,22 @@ namespace {
 // Mouse click delay in MS.
 const int kClickDelayMS = 100;
 
+// Longer delay for popup menu clicks. On Linux/Wayland, popup windows may
+// take longer to be fully visible and ready to receive input events.
+#if defined(OS_LINUX)
+const int kPopupClickDelayMS = 300;
+#else
+const int kPopupClickDelayMS = kClickDelayMS;
+#endif
+
 const int kButtonID = 1;
 
 class TestButtonDelegate : public CefButtonDelegate {
  public:
   TestButtonDelegate() = default;
+
+  TestButtonDelegate(const TestButtonDelegate&) = delete;
+  TestButtonDelegate& operator=(const TestButtonDelegate&) = delete;
 
   void OnButtonPressed(CefRefPtr<CefButton> button) override {
     EXPECT_TRUE(button.get());
@@ -180,7 +194,6 @@ class TestButtonDelegate : public CefButtonDelegate {
 
  private:
   IMPLEMENT_REFCOUNTING(TestButtonDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestButtonDelegate);
 };
 
 void ClickButton(CefRefPtr<CefWindow> window, int button_id) {
@@ -341,6 +354,9 @@ class TestMenuButtonDelegate : public CefMenuButtonDelegate,
  public:
   TestMenuButtonDelegate() = default;
 
+  TestMenuButtonDelegate(const TestMenuButtonDelegate&) = delete;
+  TestMenuButtonDelegate& operator=(const TestMenuButtonDelegate&) = delete;
+
   void OnMenuButtonPressed(
       CefRefPtr<CefMenuButton> menu_button,
       const CefPoint& screen_point,
@@ -438,7 +454,7 @@ class TestMenuButtonDelegate : public CefMenuButtonDelegate,
 #else
     // Wait a bit before trying to click the menu item.
     CefPostDelayedTask(TID_UI, base::BindOnce(ClickMenuItem, menu_button),
-                       kClickDelayMS);
+                       kPopupClickDelayMS);
 #endif
 
     menu_button->ShowMenu(model, screen_point, CEF_MENU_ANCHOR_TOPLEFT);
@@ -465,7 +481,6 @@ class TestMenuButtonDelegate : public CefMenuButtonDelegate,
   CefRefPtr<CefWindow> window_;
 
   IMPLEMENT_REFCOUNTING(TestMenuButtonDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestMenuButtonDelegate);
 };
 
 void RunMenuButtonClick(bool with_text,
@@ -582,6 +597,11 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
   explicit TestMenuButtonCustomPopupDelegate(bool can_activate)
       : can_activate_(can_activate) {}
 
+  TestMenuButtonCustomPopupDelegate(const TestMenuButtonCustomPopupDelegate&) =
+      delete;
+  TestMenuButtonCustomPopupDelegate& operator=(
+      const TestMenuButtonCustomPopupDelegate&) = delete;
+
   void OnMenuButtonPressed(
       CefRefPtr<CefMenuButton> menu_button,
       const CefPoint& screen_point,
@@ -595,16 +615,31 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
     popup_window_ = CefWindow::CreateTopLevelWindow(this);
     popup_window_->SetBounds(CefRect(screen_point.x, screen_point.y, 100, 100));
 
-    CefRefPtr<CefLabelButton> button =
-        CefLabelButton::CreateLabelButton(this, "Button");
-    button->SetFocusable(can_activate_);
-    popup_window_->AddChildView(button);
+    popup_button_ = CefLabelButton::CreateLabelButton(this, "Button");
+    popup_button_->SetFocusable(can_activate_);
+    popup_window_->AddChildView(popup_button_);
 
     popup_window_->Show();
 
     // Wait a bit before trying to click the popup button.
-    CefPostDelayedTask(TID_UI, base::BindOnce(ClickMenuItem, menu_button),
-                       kClickDelayMS);
+    if (IsRunningOnWayland()) {
+      // On Wayland, EventGenerator doesn't work with nested run loops (popup
+      // menus), so simulate the button press directly.
+      CefPostDelayedTask(
+          TID_UI,
+          base::BindOnce(&TestMenuButtonCustomPopupDelegate::SimulatePopupClick,
+                         this),
+          kPopupClickDelayMS);
+    } else {
+      CefPostDelayedTask(TID_UI, base::BindOnce(ClickMenuItem, menu_button),
+                         kPopupClickDelayMS);
+    }
+  }
+
+  void SimulatePopupClick() {
+    if (popup_button_) {
+      OnButtonPressed(popup_button_);
+    }
   }
 
   void OnButtonPressed(CefRefPtr<CefButton> button) override {
@@ -659,7 +694,7 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
     LOG(INFO) << "OnWindowDestroyed";
 #endif
     EXPECT_TRUE(got_button_pressed_);
-    EXPECT_EQ(can_activate_, got_activation_);
+    EXPECT_EQ(ExpectActivation(), got_activation_);
     EXPECT_EQ(ExpectFocus(), got_focus_);
 
     // Complete the test by closing the parent window.
@@ -668,6 +703,17 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
   }
 
  private:
+  bool ExpectActivation() const {
+    if (!can_activate_) {
+      return false;
+    }
+    // Wayland with simulated clicks doesn't deliver activation events.
+    if (IsRunningOnWayland()) {
+      return false;
+    }
+    return true;
+  }
+
   bool ExpectFocus() const {
     if (!can_activate_) {
       return false;
@@ -676,6 +722,10 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
     // Mac does not deliver a focus event for some reason.
     return false;
 #else
+    // Wayland with simulated clicks doesn't deliver focus events.
+    if (IsRunningOnWayland()) {
+      return false;
+    }
     return true;
 #endif
   }
@@ -687,7 +737,7 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
     if (!got_button_pressed_) {
       return;
     }
-    if (can_activate_ && !got_activation_) {
+    if (ExpectActivation() && !got_activation_) {
       return;
     }
     if (ExpectFocus() && !got_focus_) {
@@ -696,6 +746,7 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
 
     popup_window_->Close();
     popup_window_ = nullptr;
+    popup_button_ = nullptr;
     button_pressed_lock_ = nullptr;
   }
 
@@ -703,6 +754,7 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
 
   CefRefPtr<CefWindow> parent_window_;
   CefRefPtr<CefWindow> popup_window_;
+  CefRefPtr<CefLabelButton> popup_button_;
   CefRefPtr<CefMenuButtonPressedLock> button_pressed_lock_;
 
   TrackCallback got_focus_;
@@ -710,7 +762,6 @@ class TestMenuButtonCustomPopupDelegate : public CefMenuButtonDelegate,
   TrackCallback got_button_pressed_;
 
   IMPLEMENT_REFCOUNTING(TestMenuButtonCustomPopupDelegate);
-  DISALLOW_COPY_AND_ASSIGN(TestMenuButtonCustomPopupDelegate);
 };
 
 void RunMenuButtonCustomPopupClick(bool can_activate,

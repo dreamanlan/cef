@@ -1,8 +1,8 @@
 diff --git chrome/browser/ui/autofill/address_bubbles_controller.cc chrome/browser/ui/autofill/address_bubbles_controller.cc
-index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1ea997caee 100644
+index 8468ac8cf0b14a01629724ce3915f3797c1c2a77..5e04b04bd9faec6d8cd997cbc45d70f36cb3b09a 100644
 --- chrome/browser/ui/autofill/address_bubbles_controller.cc
 +++ chrome/browser/ui/autofill/address_bubbles_controller.cc
-@@ -56,11 +56,15 @@ AutofillBubbleBase* ShowSaveBubble(
+@@ -55,11 +55,15 @@ AutofillBubbleBase* ShowSaveBubble(
      content::WebContents* web_contents,
      bool shown_by_user_gesture,
      base::WeakPtr<AddressBubbleControllerDelegate> delegate) {
@@ -20,7 +20,7 @@ index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1e
        ->ShowSaveAddressProfileBubble(web_contents, std::move(controller),
                                       shown_by_user_gesture);
  }
-@@ -71,10 +75,14 @@ AutofillBubbleBase* ShowUpdateBubble(
+@@ -70,10 +74,14 @@ AutofillBubbleBase* ShowUpdateBubble(
      content::WebContents* web_contents,
      bool shown_by_user_gesture,
      base::WeakPtr<AddressBubbleControllerDelegate> delegate) {
@@ -37,7 +37,7 @@ index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1e
        ->ShowUpdateAddressProfileBubble(
            web_contents, std::move(update_controller), shown_by_user_gesture);
  }
-@@ -82,11 +90,15 @@ AutofillBubbleBase* ShowUpdateBubble(
+@@ -81,11 +89,15 @@ AutofillBubbleBase* ShowUpdateBubble(
  #if BUILDFLAG(ENABLE_DICE_SUPPORT)
  AutofillBubbleBase* ShowSignInPromo(content::WebContents* web_contents,
                                      const AutofillProfile& autofill_profile) {
@@ -56,7 +56,7 @@ index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1e
  }
  #endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
  
-@@ -244,8 +256,6 @@ void AddressBubblesController::DoShowBubble() {
+@@ -243,8 +255,6 @@ void AddressBubblesController::DoShowBubble() {
  
    SetBubbleView(*show_bubble_view_callback_.Run(
        web_contents(), shown_by_user_gesture_, GetWeakPtr()));
@@ -65,7 +65,7 @@ index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1e
  }
  
  BubbleType AddressBubblesController::GetBubbleType() const {
-@@ -312,10 +322,12 @@ void AddressBubblesController::SetUpBubble(
+@@ -311,10 +321,12 @@ void AddressBubblesController::SetUpBubble(
  }
  
  void AddressBubblesController::MaybeShowIOSDektopAddressPromo() {
@@ -83,16 +83,16 @@ index cfeffcb14b60abf722edf0fdd85886d2e63d5b86..56684d6e5b6b91be4ae9eb7428503b1e
    // Verify if user is eligible for iOS promo, and attempt showing if they are.
    ios_promos_utils::VerifyIOSPromoEligibility(
 diff --git chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.cc chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.cc
-index 0bc621103a38be2a8cfc42e0ef3014f489da23b8..a2800a489a0b5d13f8fb17add66cab86bc9755eb 100644
+index c807dc00a6126a4342e82d34ae4216990773e1dd..adfbfa25835bc7dc4f4d528223a37bd77249d278 100644
 --- chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.cc
 +++ chrome/browser/ui/autofill/payments/save_card_bubble_controller_impl.cc
-@@ -804,6 +804,9 @@ void SaveCardBubbleControllerImpl::DoShowBubble() {
-   }
- 
-   Browser* browser = chrome::FindBrowserWithTab(web_contents());
+@@ -825,6 +825,9 @@ void SaveCardBubbleControllerImpl::DoShowBubble() {
+   BrowserWindowInterface* browser =
+       GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(
+           web_contents());
 +  if (!browser) {
 +    return;
 +  }
    if (current_bubble_type_ == PaymentsBubbleType::kUploadComplete) {
-     SetBubbleView(*browser->window()
-                        ->GetAutofillBubbleHandler()
+     SetBubbleView(*browser->GetBrowserForMigrationOnly()
+                        ->window()

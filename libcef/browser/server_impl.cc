@@ -74,15 +74,13 @@ CefRefPtr<CefRequest> CreateRequest(const std::string& address,
 
   CefRequest::HeaderMap header_map;
   if (!info.headers.empty()) {
-    net::HttpServerRequestInfo::HeadersMap::const_iterator it =
-        info.headers.begin();
-    for (; it != info.headers.end(); ++it) {
+    for (const auto& [header_name, header_value] : info.headers) {
       // Don't include Referer in the header map.
-      if (base::EqualsCaseInsensitiveASCII(it->first,
+      if (base::EqualsCaseInsensitiveASCII(header_name,
                                            net::HttpRequestHeaders::kReferer)) {
-        referer = it->second;
+        referer = header_value;
       } else {
-        header_map.insert(std::make_pair(it->first, it->second));
+        header_map.insert(std::make_pair(header_name, header_value));
       }
     }
   }
@@ -215,7 +213,7 @@ bool CefServerImpl::HasConnection() {
 
 bool CefServerImpl::IsValidConnection(int connection_id) {
   CEF_REQUIRE_HT_RETURN(false);
-  return connection_info_map_.find(connection_id) != connection_info_map_.end();
+  return connection_info_map_.contains(connection_id);
 }
 
 void CefServerImpl::SendHttp200Response(int connection_id,
@@ -275,7 +273,8 @@ void CefServerImpl::SendHttp500Response(int connection_id,
     return;
   }
 
-  server_->Send500(connection_id, error_message, MISSING_TRAFFIC_ANNOTATION);
+  server_->Send500(connection_id, error_message.ToString(),
+                   MISSING_TRAFFIC_ANNOTATION);
   server_->Close(connection_id);
 }
 
@@ -309,12 +308,12 @@ void CefServerImpl::SendHttpResponse(int connection_id,
   net::HttpServerResponseInfo response(
       static_cast<net::HttpStatusCode>(response_code));
 
-  HeaderMap::const_iterator it = extra_headers.begin();
-  for (; it != extra_headers.end(); ++it) {
-    response.AddHeader(it->first, it->second);
+  for (const auto& [header_name, header_value] : extra_headers) {
+    response.AddHeader(header_name.ToString(), header_value.ToString());
   }
 
-  response.AddHeader(net::HttpRequestHeaders::kContentType, content_type);
+  response.AddHeader(net::HttpRequestHeaders::kContentType,
+                     content_type.ToString());
   if (content_length >= 0) {
     response.AddHeader(
         net::HttpRequestHeaders::kContentLength,
@@ -421,7 +420,7 @@ void CefServerImpl::SendHttp200ResponseInternal(
     return;
   }
 
-  server_->Send200(connection_id, *data, content_type,
+  server_->Send200(connection_id, *data, content_type.ToString(),
                    MISSING_TRAFFIC_ANNOTATION);
   server_->Close(connection_id);
 }
@@ -605,9 +604,8 @@ void CefServerImpl::ShutdownOnHandlerThread() {
 
       // OnClose won't be called for clients that are connected when the server
       // shuts down, so send the disconnected notification here.
-      ConnectionInfoMap::const_iterator it = temp_map.begin();
-      for (; it != temp_map.end(); ++it) {
-        handler_->OnClientDisconnected(this, it->first);
+      for (const auto& [connection_id, info] : temp_map) {
+        handler_->OnClientDisconnected(this, connection_id);
       }
     }
 

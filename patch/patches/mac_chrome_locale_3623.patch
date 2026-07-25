@@ -1,5 +1,5 @@
 diff --git chrome/browser/chrome_resource_bundle_helper.cc chrome/browser/chrome_resource_bundle_helper.cc
-index a6886e3c0f3a096900f0760ed00fad1087aabb54..235035919bde235325e5729055cb29facc3e6de7 100644
+index 1b2a38a1b9877b73fc187e9baa2c22d59f1e9371..e2cf1f0a0ec76d12ee946dc47e48573640dd4098 100644
 --- chrome/browser/chrome_resource_bundle_helper.cc
 +++ chrome/browser/chrome_resource_bundle_helper.cc
 @@ -61,8 +61,10 @@ extern void InitializeLocalState(
@@ -50,8 +50,8 @@ index a6886e3c0f3a096900f0760ed00fad1087aabb54..235035919bde235325e5729055cb29fa
      bool is_running_tests) {
    base::FilePath user_data_dir;
    if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir))
-@@ -130,5 +126,6 @@ std::string LoadLocalState(
-       new ChromeCommandLinePrefStore(base::CommandLine::ForCurrentProcess()));
+@@ -131,5 +127,6 @@ std::string LoadLocalState(
+           base::CommandLine::ForCurrentProcess()));
  
    return InitResourceBundleAndDetermineLocale(
 -      chrome_feature_list_creator->local_state(), is_running_tests);
@@ -97,10 +97,10 @@ index aa43742055b04c70bcb60bd21f61897b3c6b79a6..e84f21ab963ccf6e54afcb659f5ceccd
    // it will get the locale that should be used potentially from other sources,
    // depending on the platform (e.g. the OS locale on Mac).
 diff --git ui/base/l10n/l10n_util.cc ui/base/l10n/l10n_util.cc
-index 96e225be0b291866214a68524d686141ace75457..5a8cb777690af3c37751d29ca67894e0737d0445 100644
+index 7c7450f33adbccdf75537d591ec71db2b4ceaf49..6c26d7cc77cfb8f65154593cfabd60a32dbb9b4d 100644
 --- ui/base/l10n/l10n_util.cc
 +++ ui/base/l10n/l10n_util.cc
-@@ -493,25 +493,7 @@ std::optional<std::string> CheckAndResolveLocale(std::string_view locale,
+@@ -488,25 +488,7 @@ std::optional<std::string> CheckAndResolveLocale(std::string_view locale,
    return std::nullopt;
  }
  
@@ -127,7 +127,7 @@ index 96e225be0b291866214a68524d686141ace75457..5a8cb777690af3c37751d29ca67894e0
    std::vector<std::string> candidates;
  
    // We only use --lang and the app pref on Windows.  On Linux, we only
-@@ -577,15 +559,6 @@ std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
+@@ -574,15 +556,6 @@ std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
  
    return std::string();
  }

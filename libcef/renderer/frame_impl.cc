@@ -297,7 +297,7 @@ void CefFrameImpl::SendProcessMessage(CefProcessId target_process,
     SendToBrowserFrame(
         __FUNCTION__,
         base::BindOnce(
-            [](const CefString& name, base::Value::List argument_list,
+            [](const CefString& name, base::ListValue argument_list,
                const BrowserFrameType& render_frame) {
               render_frame->SendMessage(name, std::move(argument_list));
             },
@@ -814,7 +814,7 @@ void CefFrameImpl::FrameAttachedAck(bool allow) {
 }
 
 void CefFrameImpl::SendMessage(const std::string& name,
-                               base::Value::List arguments) {
+                               base::ListValue arguments) {
   if (auto app = CefAppManager::Get()->GetApplication()) {
     if (auto handler = app->GetRenderProcessHandler()) {
       CefRefPtr<CefProcessMessageImpl> message(
@@ -843,7 +843,7 @@ void CefFrameImpl::SendCommand(const std::string& command) {
       __FUNCTION__,
       base::BindOnce(
           [](const std::string& command, blink::WebLocalFrame* frame) {
-            frame->ExecuteCommand(blink::WebString::FromUTF8(command));
+            frame->ExecuteCommand(blink::WebString::FromUtf8(command));
           },
           command));
 }
@@ -880,7 +880,7 @@ void CefFrameImpl::SendJavaScript(const std::u16string& jsCode,
           [](const std::u16string& jsCode, const std::string& scriptUrl,
              blink::WebLocalFrame* frame) {
             frame->ExecuteScript(blink::WebScriptSource(
-                blink::WebString::FromUTF16(jsCode), GURL(scriptUrl)));
+                blink::WebString::FromUtf16(jsCode), GURL(scriptUrl)));
           },
           jsCode, scriptUrl));
 }

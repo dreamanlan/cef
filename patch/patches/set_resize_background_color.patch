@@ -1,8 +1,8 @@
 diff --git ui/views/controls/webview/webview.cc ui/views/controls/webview/webview.cc
-index f91a6c41b9fe9a14a636d8fd2ed683fa2d03133a..7ccd54d07b3c14c1baacc9d2fbb26459be18bb4e 100644
+index 7f917a89cb4c9f1d83cadc69aaeb79363ccd40cc..5726a759428287fa19a0a75df6535db6fb4b94d1 100644
 --- ui/views/controls/webview/webview.cc
 +++ ui/views/controls/webview/webview.cc
-@@ -183,6 +183,10 @@ void WebView::EnableSizingFromWebContents(const gfx::Size& min_size,
+@@ -207,6 +207,10 @@ void WebView::EnableSizingFromWebContents(const gfx::Size& min_size,
    }
  }
  
@@ -10,14 +10,14 @@ index f91a6c41b9fe9a14a636d8fd2ed683fa2d03133a..7ccd54d07b3c14c1baacc9d2fbb26459
 +  holder_->SetBackgroundColorWhenClipped(resize_background_color);
 +}
 +
- void WebView::SetCrashedOverlayView(View* crashed_overlay_view) {
-   if (crashed_overlay_view_.view() == crashed_overlay_view) {
-     return;
+ void WebView::TakeCrashedOverlayViewImpl(
+     std::unique_ptr<View> crashed_overlay_view,
+     ReturnCrashOverlayToOwnerCallback return_to_owner) {
 diff --git ui/views/controls/webview/webview.h ui/views/controls/webview/webview.h
-index b83a2e2b4525a28f27b03e0039da5f4f8be1b357..34c3826ac738e3ca275896a241a646aaa74c014c 100644
+index 867f5f4cd43c47bc078d0e40d5363c84032250f2..a16a23743b6c5858fd66dbaad4973290d6d39f46 100644
 --- ui/views/controls/webview/webview.h
 +++ ui/views/controls/webview/webview.h
-@@ -120,6 +120,10 @@ class WEBVIEW_EXPORT WebView : public View,
+@@ -135,6 +135,10 @@ class WEBVIEW_EXPORT WebView : public View,
    void EnableSizingFromWebContents(const gfx::Size& min_size,
                                     const gfx::Size& max_size);
  
@@ -25,6 +25,6 @@ index b83a2e2b4525a28f27b03e0039da5f4f8be1b357..34c3826ac738e3ca275896a241a646aa
 +  // by default.
 +  void SetResizeBackgroundColor(SkColor resize_background_color);
 +
-   // If provided, this View will be shown in place of the web contents
-   // when the web contents is in a crashed state. This is cleared automatically
-   // if the web contents is changed. The passed-in overlay view must be owned by
+   // A scoped object that disconnects the webview from the accessibility tree.
+   // When destroyed, it restores the previous accessibility state.
+   class WEBVIEW_EXPORT ScopedAxDisconnectLock {

@@ -303,9 +303,15 @@ def GetRecommendedDefaultArgs():
       # https://github.com/chromiumembedded/cef/issues/3608
       'enable_downgrade_processing': False,
 
-      # Disable Gemini integration which only works in branded Google Chrome.
-      # https://github.com/chromiumembedded/cef/issues/3982
-      'enable_glic': False,
+      # Disable precompiled headers. This is currently only enabled by default
+      # for non-Official Windows builds. After https://crrev.com/d5706ff4b1f47
+      # the cxx tool in //build/toolchain/win/toolchain.gni now unconditionally
+      # passes -fmodule-name to every C++ compilation. On Windows, precompiled
+      # headers work by compiling build/precompile.cc with the /Yc flag. The
+      # combination of -fmodule-name + /Yc in C++23 mode causes LLVM 23's
+      # clang-cl to treat precompile.cc as a C++20 module interface unit, which
+      # then fails because the file has no export module declaration.
+      'enable_precompiled_headers': False,
   }
 
   if platform == 'windows' or platform == 'mac':
@@ -596,6 +602,12 @@ def GetConfigArgs(args, is_debug, cpu):
     if platform == 'mac' and is_debug:
       add_args['enable_gwp_asan_malloc'] = False
       add_args['enable_gwp_asan_partitionalloc'] = False
+
+  # Unified system modules require a sysroot path. Disable when not using
+  # a sysroot to avoid empty path errors in //build/modules/BUILD.gn.
+  # Enabled on Linux by default after https://crrev.com/1da08484a2c35
+  if platform == 'linux' and not GetArgValue(args, 'use_sysroot'):
+    add_args['use_unified_system_module'] = False
 
   result = MergeDicts(args, add_args, {
       'is_debug': is_debug,

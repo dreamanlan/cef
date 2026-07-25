@@ -4,7 +4,11 @@
 
 #include "cef/libcef/browser/views/textfield_impl.h"
 
+#include <utility>
+
 #include "cef/libcef/browser/thread_util.h"
+#include "cef/libcef/common/api_version_util.h"
+#include "ui/touch_selection/touch_editing_controller.h"
 
 namespace {
 
@@ -17,15 +21,15 @@ static int CefCommandIdToChromeId(cef_text_field_commands_t command_id) {
     case CEF_TFC_UNKNOWN:
       return 0;
     case CEF_TFC_CUT:
-      return views::Textfield::kCut;
+      return std::to_underlying(ui::TouchEditable::MenuCommands::kCut);
     case CEF_TFC_COPY:
-      return views::Textfield::kCopy;
+      return std::to_underlying(ui::TouchEditable::MenuCommands::kCopy);
     case CEF_TFC_PASTE:
-      return views::Textfield::kPaste;
+      return std::to_underlying(ui::TouchEditable::MenuCommands::kPaste);
     case CEF_TFC_SELECT_ALL:
-      return views::Textfield::kSelectAll;
+      return std::to_underlying(ui::TouchEditable::MenuCommands::kSelectAll);
     case CEF_TFC_SELECT_WORD:
-      return views::Textfield::kSelectWord;
+      return std::to_underlying(ui::TouchEditable::MenuCommands::kSelectWord);
     case CEF_TFC_UNDO:
       return views::Textfield::kUndo;
     case CEF_TFC_DELETE:
@@ -131,34 +135,31 @@ size_t CefTextfieldImpl::GetCursorPosition() {
   return root_view()->GetCursorPosition();
 }
 
-void CefTextfieldImpl::SetTextColor(cef_color_t color) {
-  CEF_REQUIRE_VALID_RETURN_VOID();
-  root_view()->SetTextColor(color);
+void CefTextfieldImpl::SetTextColor(cef_color_t /*color*/) {
+  CEF_API_REQUIRE_REMOVED(15000);
 }
 
 cef_color_t CefTextfieldImpl::GetTextColor() {
-  CEF_REQUIRE_VALID_RETURN(0U);
-  return root_view()->GetTextColor();
+  CEF_API_REQUIRE_REMOVED(15000);
+  return 0U;
 }
 
-void CefTextfieldImpl::SetSelectionTextColor(cef_color_t color) {
-  CEF_REQUIRE_VALID_RETURN_VOID();
-  root_view()->SetSelectionTextColor(color);
+void CefTextfieldImpl::SetSelectionTextColor(cef_color_t /*color*/) {
+  CEF_API_REQUIRE_REMOVED(15000);
 }
 
 cef_color_t CefTextfieldImpl::GetSelectionTextColor() {
-  CEF_REQUIRE_VALID_RETURN(0U);
-  return root_view()->GetSelectionTextColor();
+  CEF_API_REQUIRE_REMOVED(15000);
+  return 0U;
 }
 
-void CefTextfieldImpl::SetSelectionBackgroundColor(cef_color_t color) {
-  CEF_REQUIRE_VALID_RETURN_VOID();
-  root_view()->SetSelectionBackgroundColor(color);
+void CefTextfieldImpl::SetSelectionBackgroundColor(cef_color_t /*color*/) {
+  CEF_API_REQUIRE_REMOVED(15000);
 }
 
 cef_color_t CefTextfieldImpl::GetSelectionBackgroundColor() {
-  CEF_REQUIRE_VALID_RETURN(0U);
-  return root_view()->GetSelectionBackgroundColor();
+  CEF_API_REQUIRE_REMOVED(15000);
+  return 0U;
 }
 
 void CefTextfieldImpl::SetFontList(const CefString& font_list) {
@@ -216,9 +217,8 @@ CefString CefTextfieldImpl::GetPlaceholderText() {
   return std::u16string(root_view()->GetPlaceholderText());
 }
 
-void CefTextfieldImpl::SetPlaceholderTextColor(cef_color_t color) {
-  CEF_REQUIRE_VALID_RETURN_VOID();
-  root_view()->set_placeholder_text_color(color);
+void CefTextfieldImpl::SetPlaceholderTextColor(cef_color_t /*color*/) {
+  CEF_API_REQUIRE_REMOVED(15000);
 }
 
 void CefTextfieldImpl::SetBackgroundColor(cef_color_t color) {

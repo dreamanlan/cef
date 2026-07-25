@@ -1,8 +1,8 @@
 diff --git chrome/browser/ui/webui/version/version_handler.cc chrome/browser/ui/webui/version/version_handler.cc
-index e503ac10c0eaa6e528c8835a87947916f49a8a1a..dacd96a06e870aa12d5a4e4873e3f875de85ad4a 100644
+index 410556c4bdeadc18c7f057e2ed08e8daba21d2a0..68613ed1b25745e226887a1c8457777519d660b9 100644
 --- chrome/browser/ui/webui/version/version_handler.cc
 +++ chrome/browser/ui/webui/version/version_handler.cc
-@@ -29,12 +29,23 @@
+@@ -28,12 +28,23 @@
  #include "ui/base/l10n/l10n_util.h"
  #include "url/gurl.h"
  
@@ -27,7 +27,7 @@ index e503ac10c0eaa6e528c8835a87947916f49a8a1a..dacd96a06e870aa12d5a4e4873e3f875
    base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
                                                  base::BlockingType::MAY_BLOCK);
  
-@@ -52,6 +63,19 @@ void GetFilePaths(const base::FilePath& profile_path,
+@@ -51,6 +62,19 @@ void GetFilePaths(const base::FilePath& profile_path,
    } else {
      *profile_path_out = l10n_util::GetStringUTF16(IDS_VERSION_UI_PATH_NOTFOUND);
    }
@@ -47,7 +47,7 @@ index e503ac10c0eaa6e528c8835a87947916f49a8a1a..dacd96a06e870aa12d5a4e4873e3f875
  }
  
  }  // namespace
-@@ -123,23 +147,46 @@ void VersionHandler::HandleRequestPathInfo(const base::Value::List& args) {
+@@ -122,23 +146,46 @@ void VersionHandler::HandleRequestPathInfo(const base::ListValue& args) {
    // OnGotFilePaths.
    std::u16string* exec_path_buffer = new std::u16string;
    std::u16string* profile_path_buffer = new std::u16string;
@@ -88,7 +88,7 @@ index e503ac10c0eaa6e528c8835a87947916f49a8a1a..dacd96a06e870aa12d5a4e4873e3f875
 +#endif
 +                                    ) {
    DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-   base::Value::Dict response;
+   base::DictValue response;
    response.Set(version_ui::kKeyExecPath, *executable_path_data);
    response.Set(version_ui::kKeyProfilePath, *profile_path_data);
 +#if BUILDFLAG(ENABLE_CEF)
@@ -98,7 +98,7 @@ index e503ac10c0eaa6e528c8835a87947916f49a8a1a..dacd96a06e870aa12d5a4e4873e3f875
    ResolveJavascriptCallback(base::Value(callback_id), response);
  }
 diff --git chrome/browser/ui/webui/version/version_handler.h chrome/browser/ui/webui/version/version_handler.h
-index 2f8162d7491d1f78c540565333ad01589221c8e7..b00f0d5bf26aeede35a95ccbb08ad4eac99fcd4d 100644
+index 7d1beedfffbfdd34323cfb749bec83187b54778e..d4c79e26e51deb9a32fb9649a1c21a1874ea48c7 100644
 --- chrome/browser/ui/webui/version/version_handler.h
 +++ chrome/browser/ui/webui/version/version_handler.h
 @@ -9,6 +9,7 @@
@@ -124,10 +124,10 @@ index 2f8162d7491d1f78c540565333ad01589221c8e7..b00f0d5bf26aeede35a95ccbb08ad4ea
    // Factory for the creating refs in callbacks.
    base::WeakPtrFactory<VersionHandler> weak_ptr_factory_{this};
 diff --git chrome/browser/ui/webui/version/version_ui.cc chrome/browser/ui/webui/version/version_ui.cc
-index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f7955026fdd3bf4 100644
+index 8353f5d5a5734e8fc116dcc0f0221891ff3ea9ff..fcb80273186b9709e106a500e8eb5e3795f0bd8f 100644
 --- chrome/browser/ui/webui/version/version_ui.cc
 +++ chrome/browser/ui/webui/version/version_ui.cc
-@@ -17,6 +17,7 @@
+@@ -19,6 +19,7 @@
  #include "base/strings/utf_string_conversions.h"
  #include "base/time/time.h"
  #include "build/build_config.h"
@@ -135,7 +135,7 @@ index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f795502
  #include "chrome/browser/browser_process_impl.h"
  #include "chrome/browser/profiles/profile.h"
  #include "chrome/browser/ui/webui/version/version_handler.h"
-@@ -65,6 +66,10 @@
+@@ -69,6 +70,10 @@
  #include "chrome/browser/ui/webui/version/version_util_win.h"
  #endif
  
@@ -146,7 +146,7 @@ index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f795502
  using content::WebUIDataSource;
  
  namespace {
-@@ -85,6 +90,10 @@ void CreateAndAddVersionUIDataSource(Profile* profile) {
+@@ -89,6 +94,10 @@ void CreateAndAddVersionUIDataSource(Profile* profile) {
        {version_ui::kCommandLineName, IDS_VERSION_UI_COMMAND_LINE},
        {version_ui::kExecutablePathName, IDS_VERSION_UI_EXECUTABLE_PATH},
        {version_ui::kProfilePathName, IDS_VERSION_UI_PROFILE_PATH},
@@ -157,7 +157,7 @@ index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f795502
        {version_ui::kVariationsName, IDS_VERSION_UI_VARIATIONS},
        {version_ui::kVariationsCmdName, IDS_VERSION_UI_VARIATIONS_CMD},
        {version_ui::kCopyVariationsLabel, IDS_VERSION_UI_COPY_VARIATIONS_LABEL},
-@@ -116,6 +125,10 @@ void CreateAndAddVersionUIDataSource(Profile* profile) {
+@@ -122,6 +131,10 @@ void CreateAndAddVersionUIDataSource(Profile* profile) {
    html_source->AddResourcePath("images/product_logo_white.png",
                                 IDR_PRODUCT_LOGO_WHITE);
  #endif  // BUILDFLAG(IS_ANDROID)
@@ -168,7 +168,7 @@ index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f795502
  }
  
  std::string GetProductModifier() {
-@@ -244,6 +257,10 @@ void VersionUI::AddVersionDetailStrings(content::WebUIDataSource* html_source) {
+@@ -257,6 +270,10 @@ void VersionUI::AddVersionDetailStrings(content::WebUIDataSource* html_source) {
    // blank.
    html_source->AddString(version_ui::kExecutablePath, std::string_view());
    html_source->AddString(version_ui::kProfilePath, std::string_view());
@@ -180,7 +180,7 @@ index 71029054125c8db986e3ec92baa25171924d1a9e..0cafaea8961557a3610359443f795502
  #if BUILDFLAG(IS_MAC)
    html_source->AddString(version_ui::kOSType, base::mac::GetOSDisplayName());
 diff --git components/version_ui_strings.grdp components/version_ui_strings.grdp
-index 7c3d198ccdb52b57884c6d8aa2aeac0438425642..4a15d9d7f1e13bbe3fad265b60b1f85179c38cbf 100644
+index 7a47d7fc06232843a1077e4d4b11d51ad4edfb58..957ea16bd98e069d2f29611308d7fe4c1d986ee2 100644
 --- components/version_ui_strings.grdp
 +++ components/version_ui_strings.grdp
 @@ -76,6 +76,14 @@
@@ -221,10 +221,10 @@ index 2193019afd18eac09e7812737dc2de3533c2f404..42ec99b0a4673f9ba7c8bbd568a18fa8
 +  }
  }
 diff --git components/webui/version/resources/about_version.css components/webui/version/resources/about_version.css
-index bd41fd2492e79b9dad3197f91e22885f13edcfe2..04378e39332e19aaa883d04abea6292d4fa84fb7 100644
+index 474768656bdae1d5c212bfd3034c8f8bfe718983..2ca20f8cc7251ad92b1845ce4bc8a2deadbfb592 100644
 --- components/webui/version/resources/about_version.css
 +++ components/webui/version/resources/about_version.css
-@@ -135,3 +135,7 @@ body {
+@@ -134,3 +134,7 @@ body {
    position: fixed;
    width: 1px;
  }
@@ -233,7 +233,7 @@ index bd41fd2492e79b9dad3197f91e22885f13edcfe2..04378e39332e19aaa883d04abea6292d
 +  font-size: 0.8em;
 +}
 diff --git components/webui/version/resources/about_version.html components/webui/version/resources/about_version.html
-index e4ad426e42bca8340ade73291fc2e02fc3e8a576..13e754cbffbf3b86dad450f463d880d1bb474442 100644
+index 3b689206909bf911f4e1d1ed97285a38af615136..83b41ccdc28138ff6ac314ca46dfd7a250dc6453 100644
 --- components/webui/version/resources/about_version.html
 +++ components/webui/version/resources/about_version.html
 @@ -49,9 +49,21 @@ about:version template page
@@ -276,7 +276,7 @@ index e4ad426e42bca8340ade73291fc2e02fc3e8a576..13e754cbffbf3b86dad450f463d880d1
            <td class="version" id="profile_path">$i18n{profile_path}</td>
          </tr>
  </if>
-@@ -188,6 +208,17 @@ about:version template page
+@@ -192,6 +212,17 @@ about:version template page
            <td class="version" id="sanitizer">$i18n{sanitizer}</td>
          </tr>
        </table>
@@ -295,7 +295,7 @@ index e4ad426e42bca8340ade73291fc2e02fc3e8a576..13e754cbffbf3b86dad450f463d880d1
  
      <div id="messages" role="alert" aria-live="polite" aria-relevant="additions">
 diff --git components/webui/version/resources/about_version.ts components/webui/version/resources/about_version.ts
-index ea5f11471acf26622b2f286d26bf47bceb6137ac..f604065bbe8feec78b9f029ac513a1aa6203fe14 100644
+index 09359c34e23a400a49a46e101c01c88883362799..9764d938f832094d9f1e6dddb61b561dc8f8de62 100644
 --- components/webui/version/resources/about_version.ts
 +++ components/webui/version/resources/about_version.ts
 @@ -72,9 +72,21 @@ function handleVariationInfo(
@@ -321,8 +321,21 @@ index ea5f11471acf26622b2f286d26bf47bceb6137ac..f604065bbe8feec78b9f029ac513a1aa
  }
  
  // <if expr="is_win">
+@@ -184,7 +196,11 @@ function initialize() {
+   sendWithPromise<{variationsList: string[], variationsCmd: string}>(
+       'requestVariationInfo', includeVariationsCmd)
+       .then(handleVariationInfo);
+-  sendWithPromise<{execPath: string, profilePath: string}>('requestPathInfo')
++  sendWithPromise<{execPath: string, profilePath: string
++// <if expr="enable_cef">
++      , modulePath: string, userDataPath: string
++// </if>
++      }>('requestPathInfo')
+       .then(handlePathInfo);
+ 
+   if (getRequiredElement('variations-source').textContent !== '') {
 diff --git components/webui/version/version_ui_constants.cc components/webui/version/version_ui_constants.cc
-index 3828e8e25bbcdbfe232d6feacb1b72f66d8cc79e..afd115b6eb82ea7043866f7c45f15bda4c115fdb 100644
+index 7b7be3eae6656d88030eb927f522de01550f8ff6..af7a2b21a8344e2089bb68fa0f8659b8558d6adf 100644
 --- components/webui/version/version_ui_constants.cc
 +++ components/webui/version/version_ui_constants.cc
 @@ -5,6 +5,7 @@
@@ -333,7 +346,7 @@ index 3828e8e25bbcdbfe232d6feacb1b72f66d8cc79e..afd115b6eb82ea7043866f7c45f15bda
  
  namespace version_ui {
  
-@@ -90,4 +91,15 @@ const char kVersionSuffix[] = "version_suffix";
+@@ -92,4 +93,15 @@ const char kVersionSuffix[] = "version_suffix";
  const char kVersionModifier[] = "version_modifier";
  const char kVersionProcessorVariation[] = "version_processor_variation";
  
@@ -350,7 +363,7 @@ index 3828e8e25bbcdbfe232d6feacb1b72f66d8cc79e..afd115b6eb82ea7043866f7c45f15bda
 +
  }  // namespace version_ui
 diff --git components/webui/version/version_ui_constants.h components/webui/version/version_ui_constants.h
-index a3a92aa75848dd0763cb389a8029fc5e2c8647bf..4dedc4390e85c6a36857b1c33b12be776e92cb4f 100644
+index 775826ee0b02062373fb17beee17c471dfdcf19b..713173878f6486eb549dc2db44042662fc23e57f 100644
 --- components/webui/version/version_ui_constants.h
 +++ components/webui/version/version_ui_constants.h
 @@ -6,6 +6,7 @@
@@ -361,7 +374,7 @@ index a3a92aa75848dd0763cb389a8029fc5e2c8647bf..4dedc4390e85c6a36857b1c33b12be77
  
  namespace version_ui {
  
-@@ -94,6 +95,17 @@ extern const char kVersionSuffix[];
+@@ -96,6 +97,17 @@ extern const char kVersionSuffix[];
  extern const char kVersionModifier[];
  extern const char kVersionProcessorVariation[];
  

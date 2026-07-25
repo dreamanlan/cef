@@ -21,6 +21,7 @@
 #include "tests/cefclient/browser/base_client_handler.h"
 #include "tests/cefclient/browser/binary_transfer_test.h"
 #include "tests/cefclient/browser/binding_test.h"
+#include "tests/cefclient/browser/component_test.h"
 #include "tests/cefclient/browser/config_test.h"
 #include "tests/cefclient/browser/dialog_test.h"
 #include "tests/cefclient/browser/hang_test.h"
@@ -425,6 +426,10 @@ class RequestDumpResourceProvider : public CefResourceManager::Provider {
     DCHECK(!url.empty());
   }
 
+  RequestDumpResourceProvider(const RequestDumpResourceProvider&) = delete;
+  RequestDumpResourceProvider& operator=(const RequestDumpResourceProvider&) =
+      delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     CEF_REQUIRE_IO_THREAD();
 
@@ -445,8 +450,6 @@ class RequestDumpResourceProvider : public CefResourceManager::Provider {
 
  private:
   std::string url_;
-
-  DISALLOW_COPY_AND_ASSIGN(RequestDumpResourceProvider);
 };
 
 // Provider that returns string data for specific pages. Used in combination
@@ -459,6 +462,9 @@ class StringResourceProvider : public CefResourceManager::Provider {
     DCHECK(!pages.empty());
   }
 
+  StringResourceProvider(const StringResourceProvider&) = delete;
+  StringResourceProvider& operator=(const StringResourceProvider&) = delete;
+
   bool OnRequest(scoped_refptr<CefResourceManager::Request> request) override {
     CEF_REQUIRE_IO_THREAD();
 
@@ -469,7 +475,7 @@ class StringResourceProvider : public CefResourceManager::Provider {
     }
 
     const std::string& page = url.substr(strlen(kTestOrigin));
-    if (pages_.find(page) == pages_.end()) {
+    if (!pages_.contains(page)) {
       // Not handled by this provider.
       return false;
     }
@@ -495,8 +501,6 @@ class StringResourceProvider : public CefResourceManager::Provider {
 
   // Only accessed on the IO thread.
   StringResourceMap* string_resource_map_;
-
-  DISALLOW_COPY_AND_ASSIGN(StringResourceProvider);
 };
 
 // Add a file extension to |url| if none is currently specified.
@@ -616,10 +620,8 @@ std::string DumpRequestContents(CefRefPtr<CefRequest> request) {
   request->GetHeaderMap(headerMap);
   if (headerMap.size() > 0) {
     ss << "\nHeaders:";
-    CefRequest::HeaderMap::const_iterator it = headerMap.begin();
-    for (; it != headerMap.end(); ++it) {
-      ss << "\n\t" << std::string((*it).first) << ": "
-         << std::string((*it).second);
+    for (const auto& [key, value] : headerMap) {
+      ss << "\n\t" << std::string(key) << ": " << std::string(value);
     }
   }
 
@@ -629,10 +631,7 @@ std::string DumpRequestContents(CefRefPtr<CefRequest> request) {
     postData->GetElements(elements);
     if (elements.size() > 0) {
       ss << "\nPost Data:";
-      CefRefPtr<CefPostDataElement> element;
-      CefPostData::ElementVector::const_iterator it = elements.begin();
-      for (; it != elements.end(); ++it) {
-        element = (*it);
+      for (const auto& element : elements) {
         if (element->GetType() == PDE_TYPE_BYTES) {
           // the element is composed of bytes
           ss << "\n\tBytes: ";
@@ -667,11 +666,10 @@ CefRefPtr<CefStreamReader> GetDumpResponse(
     CefRequest::HeaderMap requestMap;
     request->GetHeaderMap(requestMap);
 
-    CefRequest::HeaderMap::const_iterator it = requestMap.begin();
-    for (; it != requestMap.end(); ++it) {
-      const std::string& key = AsciiStrToLower(it->first);
+    for (const auto& [header_key, header_value] : requestMap) {
+      const std::string& key = AsciiStrToLower(header_key);
       if (key == "origin") {
-        origin = it->second;
+        origin = header_value;
         break;
       }
     }
@@ -868,6 +866,9 @@ void CreateMessageHandlers(MessageHandlerSet& handlers) {
 
   // Create the binding test handlers.
   binding_test::CreateMessageHandlers(handlers);
+
+  // Create the component test handlers.
+  component_test::CreateMessageHandlers(handlers);
 
   // Create the config test handlers.
   config_test::CreateMessageHandlers(handlers);

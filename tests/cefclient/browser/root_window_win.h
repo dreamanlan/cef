@@ -28,6 +28,9 @@ class RootWindowWin : public RootWindow, public BrowserWindow::Delegate {
   explicit RootWindowWin(bool use_alloy_style);
   ~RootWindowWin() override;
 
+  RootWindowWin(const RootWindowWin&) = delete;
+  RootWindowWin& operator=(const RootWindowWin&) = delete;
+
   // RootWindow methods.
   void Init(RootWindow::Delegate* delegate,
             std::unique_ptr<RootWindowConfig> config,

@@ -35,6 +35,7 @@
 #include "ipc/constants.mojom.h"
 #include "net/base/load_flags.h"
 #include "net/http/http_status_code.h"
+#include "services/network/public/cpp/originating_process_id.h"
 #include "third_party/blink/public/mojom/loader/resource_load_info.mojom-shared.h"
 #include "ui/base/page_transition_types.h"
 #include "url/origin.h"
@@ -489,7 +490,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
             static_cast<content::StoragePartitionImpl*>(
                 browser_context->GetDefaultStoragePartition())
                 ->CreateURLLoaderNetworkObserverForServiceOrSharedWorker(
-                    content::ChildProcessHost::kInvalidUniqueID, url::Origin());
+                    network::OriginatingProcessId::browser(), url::Origin());
       }
     }
 
@@ -1110,8 +1111,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
       // is deleted, so if the request is currently pending also remove it from
       // the list.
       if (!pending_requests_.empty()) {
-        PendingRequests::iterator it = pending_requests_.begin();
-        for (; it != pending_requests_.end(); ++it) {
+        for (auto it = pending_requests_.begin(); it != pending_requests_.end();
+             ++it) {
           if ((*it)->id_ == request_id) {
             pending_requests_.erase(it);
             break;
@@ -1277,10 +1278,9 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
     request_map.swap(request_map_);
 
     // Notify handlers for in-progress requests.
-    for (const auto& pair : request_map) {
+    for (const auto& [key, value] : request_map) {
       CallHandlerOnComplete(
-          pair.second.get(),
-          network::URLLoaderCompletionStatus(net::ERR_ABORTED));
+          value.get(), network::URLLoaderCompletionStatus(net::ERR_ABORTED));
     }
 
     if (init_state_->browser_) {
@@ -1295,8 +1295,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
     // the last callback is executed it may result in |this| being deleted.
     pending_requests.clear();
 
-    for (auto& pair : request_map) {
-      auto state = std::move(pair.second);
+    for (auto& [key, value] : request_map) {
+      auto state = std::move(value);
       if (state->cancel_callback_) {
         // The cancel callback may trigger a call to OnRequestComplete followed
         // by destruction of the InterceptedRequest that owns the

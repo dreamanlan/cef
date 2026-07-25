@@ -43,16 +43,46 @@ This directory contains tools and instructions for using Claude Code to assist w
 - Working with Chrome and Alloy browser styles
 - Finding and fixing NOTIMPLEMENTED() stubs
 
+**Are you syncing CEF base headers with Chromium?**
+
+→ See [CLAUDE_BASE_SYNC_INSTRUCTIONS.md](CLAUDE_BASE_SYNC_INSTRUCTIONS.md) for synchronizing `cef/include/base/` headers:
+
+- CEF-specific modifications (namespaces, includes, platform macros)
+- Files to sync vs files to preserve
+- Handling C++23 reverts
+- Step-by-step sync process
+
+**Are you cherry-picking commits from upstream CEF?**
+
+→ See [CLAUDE_CHERRY_PICK_INSTRUCTIONS.md](CLAUDE_CHERRY_PICK_INSTRUCTIONS.md) for cherry-picking commits that include patch files:
+
+- Extracting and applying source file changes from patches
+- Resaving patches with correct index hashes
+- Handling multiple patch files per commit
+- Recovery when things go wrong
+
+**Are you applying a Chromium commit to CEF as a patch?**
+
+→ See [CLAUDE_SRC_PATCH_INSTRUCTIONS.md](CLAUDE_SRC_PATCH_INSTRUCTIONS.md) for creating or updating CEF patches from Chromium commits:
+
+- Creating new patch files and adding to patch.cfg
+- Adding changes to existing patch files
+- Handling version differences between Chromium versions
+- Verifying patches can be reverted and reapplied
+
 ## Files in This Directory
 
 ### Documentation
 
 - **[CHROMIUM_UPDATE.md](CHROMIUM_UPDATE.md)** - Complete guide for updating CEF to new Chromium versions
-- **[CLAUDE.md](CLAUDE.md)** - General Claude Code instructions for Chromium/CEF codebase
+- **[CLAUDE.md.in](CLAUDE.md.in)** - Template for root CLAUDE.md (copied by setup_claude.py)
+- **[CLAUDE_BASE_SYNC_INSTRUCTIONS.md](CLAUDE_BASE_SYNC_INSTRUCTIONS.md)** - Instructions for syncing CEF base headers with Chromium
 - **[CLAUDE_BUILD_INSTRUCTIONS.md](CLAUDE_BUILD_INSTRUCTIONS.md)** - Detailed instructions for Claude agents fixing build errors
+- **[CLAUDE_CHERRY_PICK_INSTRUCTIONS.md](CLAUDE_CHERRY_PICK_INSTRUCTIONS.md)** - Instructions for cherry-picking commits from upstream CEF that include patch files
 - **[CLAUDE_CLIENT_INSTRUCTIONS.md](CLAUDE_CLIENT_INSTRUCTIONS.md)** - Detailed instructions for Claude agents implementing features in CEF applications
 - **[CLAUDE_LIBCEF_INSTRUCTIONS.md](CLAUDE_LIBCEF_INSTRUCTIONS.md)** - Detailed instructions for Claude agents developing libcef internals (API versioning, WebContentsDelegate)
 - **[CLAUDE_PATCH_INSTRUCTIONS.md](CLAUDE_PATCH_INSTRUCTIONS.md)** - Detailed instructions for Claude agents fixing patch failures
+- **[CLAUDE_SRC_PATCH_INSTRUCTIONS.md](CLAUDE_SRC_PATCH_INSTRUCTIONS.md)** - Instructions for applying Chromium commits to CEF as new or existing patches
 - **[CLAUDE_TEST_INSTRUCTIONS.md](CLAUDE_TEST_INSTRUCTIONS.md)** - Detailed instructions for Claude agents creating and running CEF unit tests
 - **[CLAUDE_WIKI_INSTRUCTIONS.md](CLAUDE_WIKI_INSTRUCTIONS.md)** - Bitbucket wiki formatting guidelines for Claude agents
 - **[CLIENT_DEVELOPMENT.md](CLIENT_DEVELOPMENT.md)** - Complete guide for CEF client application development
@@ -83,7 +113,7 @@ cd chromium/src/cef/tools
 python3 setup_claude.py
 ```
 
-This copies `CLAUDE.md` to the project root (`chromium/src/CLAUDE.md`), enabling Claude Code to understand the Chromium/CEF codebase structure.
+This copies `CLAUDE.md.in` to the project root as `chromium/src/CLAUDE.md`, enabling Claude Code to understand the Chromium/CEF codebase structure.
 
 ## Formatting Files
 
@@ -132,7 +162,9 @@ Use `@filename` to attach files Claude should read:
 
 - `@cef/tools/claude/patch_analysis.txt` - Analyzed patch output
 - `@cef/tools/claude/build_analysis.txt` - Analyzed build output
+- `@cef/tools/claude/CLAUDE_CHERRY_PICK_INSTRUCTIONS.md` - Cherry-picking upstream commits
 - `@cef/tools/claude/CLAUDE_CLIENT_INSTRUCTIONS.md` - Client development guide
+- `@cef/tools/claude/CLAUDE_SRC_PATCH_INSTRUCTIONS.md` - Applying Chromium commits as patches
 - `@cef/tools/claude/CLAUDE_TEST_INSTRUCTIONS.md` - CEF unit testing guide
 
 **Tip:** In large directory structures like `chromium/src`, the `@` syntax can be slow. Use `//` syntax for workspace-relative paths instead (e.g., `//cef/tools/claude/patch_analysis.txt`).
@@ -210,7 +242,7 @@ Then share the analysis files with Claude.
 
 ### For Issues with CEF
 
-- CEF wiki: https://bitbucket.org/chromiumembedded/cef/wiki/Home
+- CEF wiki: https://github.com/chromiumembedded/cef/blob/master/docs/README.md
 - CEF forums: https://magpcss.org/ceforum/
 - CEF issue tracker: https://github.com/chromiumembedded/cef/issues
 

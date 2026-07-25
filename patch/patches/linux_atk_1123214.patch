@@ -12,7 +12,7 @@ index 3931a5a897c948baa2af8ce1ec6a6731b58d5a39..a05e937a9e48eed6c9d7fc62c79e5371
  if (use_atk) {
    assert(use_glib, "use_atk=true requires that use_glib=true")
 diff --git build/config/linux/atspi2/BUILD.gn build/config/linux/atspi2/BUILD.gn
-index 30bc77f9c23fbdd4cf46f3ae022266c75f0e9ddf..778d4bc35003684dc5a1da63abfa66806e3b1704 100644
+index 89a6049446ce1fe184cb981bcb8d36c6b4930c58..5d3af28e4acdfa777576a1520c44bbcb73ccf3ae 100644
 --- build/config/linux/atspi2/BUILD.gn
 +++ build/config/linux/atspi2/BUILD.gn
 @@ -6,7 +6,7 @@ import("//build/config/linux/pkg_config.gni")

@@ -17,10 +17,14 @@
 #include "cef/libcef/browser/context.h"
 #include "cef/libcef/browser/download_item_impl.h"
 #include "cef/libcef/browser/thread_util.h"
+#include "chrome/browser/profiles/profile.h"
+#include "chrome/common/pref_names.h"
+#include "components/prefs/pref_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/download_item_utils.h"
 #include "content/public/browser/web_contents.h"
 #include "net/base/filename_util.h"
+#include "net/http/http_response_headers.h"
 #include "third_party/blink/public/mojom/choosers/file_chooser.mojom.h"
 
 using content::DownloadManager;
@@ -303,9 +307,8 @@ CefDownloadManagerDelegateImpl::CefDownloadManagerDelegateImpl(
 
   DownloadManager::DownloadVector items;
   manager->GetAllDownloads(&items);
-  DownloadManager::DownloadVector::const_iterator it = items.begin();
-  for (; it != items.end(); ++it) {
-    OnDownloadCreated(manager, *it);
+  for (const auto& item : items) {
+    OnDownloadCreated(manager, item);
   }
 }
 
@@ -348,9 +351,8 @@ void CefDownloadManagerDelegateImpl::OnDownloadDestroyed(DownloadItem* item) {
     // Determine if any remaining DownloadItems are associated with the same
     // browser. If not, then unregister as an observer.
     bool has_remaining = false;
-    ItemBrowserMap::const_iterator it2 = item_browser_map_.begin();
-    for (; it2 != item_browser_map_.end(); ++it2) {
-      if (it2->second == browser) {
+    for (const auto& [other_item, other_browser] : item_browser_map_) {
+      if (other_browser == browser) {
         has_remaining = true;
         break;
       }
@@ -410,8 +412,25 @@ bool CefDownloadManagerDelegateImpl::DetermineDownloadTarget(
   bool handled = false;
   CefRefPtr<CefDownloadHandler> handler = GetDownloadHandler(browser);
   if (handler) {
+    // Determine the charset used to decode a non-ASCII filename from the
+    // Content-Disposition header when it lacks an RFC 5987 charset. Prefer the
+    // charset declared in the Content-Type response header (e.g.
+    // "...; charset=gb18030"); otherwise fall back to the configured default
+    // charset, which is what ChromeDownloadManagerDelegate passes to
+    // net::GenerateFileName.
+    std::string charset;
+    if (const auto& response_headers = item->GetResponseHeaders()) {
+      response_headers->GetCharset(&charset);
+    }
+    if (charset.empty()) {
+      if (auto* profile = Profile::FromBrowserContext(
+              content::DownloadItemUtils::GetBrowserContext(item))) {
+        charset = profile->GetPrefs()->GetString(prefs::kDefaultCharset);
+      }
+    }
+
     base::FilePath suggested_name = net::GenerateFileName(
-        item->GetURL(), item->GetContentDisposition(), std::string(),
+        item->GetURL(), item->GetContentDisposition(), charset,
         item->GetSuggestedFilename(), item->GetMimeType(), "download");
 
     CefRefPtr<CefDownloadItemImpl> download_item(new CefDownloadItemImpl(item));
@@ -441,13 +460,12 @@ bool CefDownloadManagerDelegateImpl::DetermineDownloadTarget(
 
 void CefDownloadManagerDelegateImpl::OnBrowserDestroyed(
     CefBrowserHostBase* browser) {
-  ItemBrowserMap::iterator it = item_browser_map_.begin();
-  for (; it != item_browser_map_.end(); ++it) {
-    if (it->second == browser) {
+  for (auto& [item, item_browser] : item_browser_map_) {
+    if (item_browser == browser) {
       // Don't call back into browsers that have been destroyed. We're not
       // canceling the download so it will continue silently until it completes
       // or until the associated browser context is destroyed.
-      it->second = nullptr;
+      item_browser = nullptr;
     }
   }
 }

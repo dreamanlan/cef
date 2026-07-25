@@ -1,5 +1,5 @@
 diff --git content/browser/renderer_host/render_widget_host_view_aura.cc content/browser/renderer_host/render_widget_host_view_aura.cc
-index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af62f908f4 100644
+index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc9d924975 100644
 --- content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ content/browser/renderer_host/render_widget_host_view_aura.cc
 @@ -8,6 +8,7 @@
@@ -10,7 +10,7 @@ index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af
  #include <utility>
  
  #include "base/auto_reset.h"
-@@ -53,6 +54,7 @@
+@@ -55,6 +56,7 @@
  #include "content/public/browser/content_browser_client.h"
  #include "content/public/browser/device_service.h"
  #include "content/public/browser/render_view_host.h"
@@ -18,7 +18,7 @@ index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af
  #include "content/public/common/page_visibility_state.h"
  #include "services/service_manager/public/cpp/interface_provider.h"
  #include "third_party/blink/public/common/input/web_input_event.h"
-@@ -807,6 +809,9 @@ gfx::Rect RenderWidgetHostViewAura::GetViewBounds() {
+@@ -854,6 +856,9 @@ gfx::Rect RenderWidgetHostViewAura::GetViewBounds() {
  void RenderWidgetHostViewAura::UpdateBackgroundColor() {
    CHECK(GetBackgroundColor());
  
@@ -28,7 +28,7 @@ index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af
    SkColor color = *GetBackgroundColor();
    window_->layer()->SetColor(color);
  }
-@@ -1172,6 +1177,12 @@ void RenderWidgetHostViewAura::TransformPointToRootSurface(gfx::PointF* point) {
+@@ -1241,6 +1246,12 @@ void RenderWidgetHostViewAura::TransformPointToRootSurface(gfx::PointF* point) {
  }
  
  gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
@@ -41,7 +41,7 @@ index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af
    aura::Window* top_level = window_->GetToplevelWindow();
    gfx::Rect bounds(top_level->GetBoundsInScreen());
  
-@@ -2792,6 +2803,16 @@ void RenderWidgetHostViewAura::CreateAuraWindow(aura::client::WindowType type) {
+@@ -2923,6 +2934,16 @@ void RenderWidgetHostViewAura::CreateAuraWindow(aura::client::WindowType type) {
    window_->layer()->SetColor(GetBackgroundColor() ? *GetBackgroundColor()
                                                    : SK_ColorWHITE);
    UpdateFrameSinkIdRegistration();
@@ -59,12 +59,12 @@ index 678d725a958487a1786f5ffcc3a90918d502ced0..645dd94132b54c134fac336dc11c53af
  
  void RenderWidgetHostViewAura::UpdateFrameSinkIdRegistration() {
 diff --git content/browser/renderer_host/render_widget_host_view_aura.h content/browser/renderer_host/render_widget_host_view_aura.h
-index 4a3acf119b128990f7b02fe0508467b0f67f3559..e91ea6556b42e12fc1f5d08cbfefd8557641193f 100644
+index 45a1f3e8d6d7d4c6294482d9229e1926231fc3d5..bf503c23e9d44befcd5644b68580d46ad9d77a0a 100644
 --- content/browser/renderer_host/render_widget_host_view_aura.h
 +++ content/browser/renderer_host/render_widget_host_view_aura.h
-@@ -463,6 +463,12 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
-   }
- #endif  // BUILDFLAG(IS_WIN)
+@@ -468,6 +468,12 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+ 
+   bool ShouldUseDefaultDeadlineOnResize() const;
  
 +  using RootWindowBoundsCallback =
 +      base::RepeatingCallback<std::optional<gfx::Rect>()>;
@@ -75,9 +75,9 @@ index 4a3acf119b128990f7b02fe0508467b0f67f3559..e91ea6556b42e12fc1f5d08cbfefd855
   protected:
    ~RenderWidgetHostViewAura() override;
  
-@@ -886,6 +892,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+@@ -900,6 +906,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
  
-   std::optional<display::ScopedDisplayObserver> display_observer_;
+   bool use_default_deadline_on_resize_ = false;
  
 +  RootWindowBoundsCallback root_window_bounds_callback_;
 +

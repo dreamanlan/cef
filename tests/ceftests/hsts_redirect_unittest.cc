@@ -54,6 +54,9 @@ class HSTSTestServerObserver : public test_server::ObserverHelper {
     Initialize(https_server);
   }
 
+  HSTSTestServerObserver(const HSTSTestServerObserver&) = delete;
+  HSTSTestServerObserver& operator=(const HSTSTestServerObserver&) = delete;
+
   void OnInitialized(const std::string& server_origin) override {
     EXPECT_UI_THREAD();
 
@@ -140,8 +143,6 @@ class HSTSTestServerObserver : public test_server::ObserverHelper {
 
   std::string origin_;
   std::string url_;
-
-  DISALLOW_COPY_AND_ASSIGN(HSTSTestServerObserver);
 };
 
 class HSTSRedirectTest : public TestHandler {
@@ -253,7 +254,7 @@ class HSTSRedirectTest : public TestHandler {
     EXPECT_UI_THREAD();
 
     http_url_ = url;
-    EXPECT_TRUE(http_url_.find("http://localhost:") == 0);
+    EXPECT_TRUE(http_url_.starts_with("http://localhost:"));
 
     // Start the HTTPS server. Will delete itself after the server stops.
     https_server_ = new HSTSTestServerObserver(
@@ -266,7 +267,7 @@ class HSTSRedirectTest : public TestHandler {
     EXPECT_UI_THREAD();
 
     https_url_ = url;
-    EXPECT_TRUE(https_url_.find("https://localhost:") == 0);
+    EXPECT_TRUE(https_url_.starts_with("https://localhost:"));
 
     // Create a new in-memory context so HSTS decisions aren't cached.
     CreateTestRequestContext(

@@ -174,8 +174,9 @@ class CefRenderWidgetHostViewOSR
   void CopyFromSurface(
       const gfx::Rect& src_rect,
       const gfx::Size& output_size,
-      base::OnceCallback<void(const viz::CopyOutputBitmapWithMetadata&)>
-          callback) override;
+      base::TimeDelta timeout,
+      base::OnceCallback<void(const content::CopyFromSurfaceResult&)> callback)
+      override;
   display::ScreenInfos GetNewScreenInfosForUpdate() override;
   void TransformPointToRootSurface(gfx::PointF* point) override;
   gfx::Rect GetBoundsInRootWindow() override;
@@ -186,6 +187,7 @@ class CefRenderWidgetHostViewOSR
 #endif
 
   viz::SurfaceId GetCurrentSurfaceId() const override;
+  bool HasSavedCompositorFrame() const override;
   void ImeCompositionRangeChanged(
       const gfx::Range& range,
       const std::optional<std::vector<gfx::Rect>>& character_bounds) override;
@@ -204,11 +206,10 @@ class CefRenderWidgetHostViewOSR
   const viz::FrameSinkId& GetFrameSinkId() const override;
   viz::FrameSinkId GetRootFrameSinkId() override;
   void NotifyHostAndDelegateOnWasShown(
-      blink::mojom::RecordContentToVisibleTimeRequestPtr visible_time_request)
-      override;
+      std::optional<blink::RecordContentToVisibleTimeRequest>
+          visible_time_request) override;
   void RequestSuccessfulPresentationTimeFromHostOrDelegate(
-      blink::mojom::RecordContentToVisibleTimeRequestPtr visible_time_request)
-      override;
+      blink::RecordContentToVisibleTimeRequest visible_time_request) override;
   void CancelSuccessfulPresentationTimeRequestForHostAndDelegate() override;
 
   void OnFrameComplete(const viz::BeginFrameAck& ack);

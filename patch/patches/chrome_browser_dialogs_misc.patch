@@ -1,25 +1,26 @@
 diff --git chrome/browser/ui/extensions/extension_dialog_utils_views.cc chrome/browser/ui/extensions/extension_dialog_utils_views.cc
-index b6875fb50d180291f7a2154e473563add704cb72..11a1713cd46ce2b17c0d501c90a73335134b9382 100644
+index 011fcf743fae8e210afd22f55022c54e54ef3d93..cdac0f22808ae9608784d7a56afbf38ad91a82dc 100644
 --- chrome/browser/ui/extensions/extension_dialog_utils_views.cc
 +++ chrome/browser/ui/extensions/extension_dialog_utils_views.cc
-@@ -88,10 +88,9 @@ void ShowDialog(Browser* browser,
+@@ -89,10 +89,10 @@ void ShowDialog(BrowserWindowInterface* browser,
                  std::unique_ptr<ui::DialogModel> dialog_model) {
    ToolbarButtonProvider* toolbar_button_provider =
        BrowserView::GetBrowserViewForBrowser(browser)->toolbar_button_provider();
 -  CHECK(toolbar_button_provider);
  
--  views::View* const anchor_view =
--      toolbar_button_provider->GetDefaultExtensionDialogAnchorView();
-+  views::View* const anchor_view = toolbar_button_provider ?
-+      toolbar_button_provider->GetDefaultExtensionDialogAnchorView() : nullptr;
+-  views::BubbleAnchor anchor =
+-      toolbar_button_provider->GetDefaultExtensionDialogAnchor();
++  views::BubbleAnchor anchor = toolbar_button_provider
++      ? toolbar_button_provider->GetDefaultExtensionDialogAnchor()
++      : views::BubbleAnchor();
    auto bubble = std::make_unique<views::BubbleDialogModelHost>(
-       std::move(dialog_model), std::move(anchor_view),
+       std::move(dialog_model), std::move(anchor),
        views::BubbleBorder::TOP_RIGHT);
 diff --git chrome/browser/ui/views/certificate_selector.cc chrome/browser/ui/views/certificate_selector.cc
-index d40d79b895ecc4a6eb5348240bd95901f746c9fe..81c838ffde565f76b02d69ed23609c912d80ef57 100644
+index e752e22e93dd44c3714887ae247b8b14b72ac998..b59518208116335c817697c4d6ccb47fad9fbc7a 100644
 --- chrome/browser/ui/views/certificate_selector.cc
 +++ chrome/browser/ui/views/certificate_selector.cc
-@@ -344,8 +344,13 @@ void CertificateSelector::ViewCertButtonPressed() {
+@@ -334,8 +334,13 @@ void CertificateSelector::ViewCertButtonPressed() {
    if (!cert) {
      return;
    }
