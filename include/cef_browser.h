@@ -59,9 +59,8 @@ class CefClient;
 /// may only be called on the main thread.
 ///
 /*--cef(source=library)--*/
-class CefBrowser : public virtual CefBaseRefCounted
-{
-public:
+class CefBrowser : public virtual CefBaseRefCounted {
+ public:
   ///
   /// True if this object is currently valid. This will return false after
   /// CefLifeSpanHandler::OnBeforeClose is called.
@@ -173,13 +172,13 @@ public:
   ///
   /*--cef()--*/
   virtual CefRefPtr<CefFrame> GetFrameByIdentifier(
-      const CefString &identifier) = 0;
+      const CefString& identifier) = 0;
 
   ///
   /// Returns the frame with the specified name, or NULL if not found.
   ///
   /*--cef(optional_param=name)--*/
-  virtual CefRefPtr<CefFrame> GetFrameByName(const CefString &name) = 0;
+  virtual CefRefPtr<CefFrame> GetFrameByName(const CefString& name) = 0;
 
   ///
   /// Returns the number of frames that currently exist.
@@ -191,13 +190,13 @@ public:
   /// Returns the identifiers of all existing frames.
   ///
   /*--cef(count_func=identifiers:GetFrameCount)--*/
-  virtual void GetFrameIdentifiers(std::vector<CefString> &identifiers) = 0;
+  virtual void GetFrameIdentifiers(std::vector<CefString>& identifiers) = 0;
 
   ///
   /// Returns the names of all existing frames.
   ///
   /*--cef()--*/
-  virtual void GetFrameNames(std::vector<CefString> &names) = 0;
+  virtual void GetFrameNames(std::vector<CefString>& names) = 0;
 };
 
 ///
@@ -205,9 +204,8 @@ public:
 /// class will be called on the browser process UI thread.
 ///
 /*--cef(source=client)--*/
-class CefRunFileDialogCallback : public virtual CefBaseRefCounted
-{
-public:
+class CefRunFileDialogCallback : public virtual CefBaseRefCounted {
+ public:
   ///
   /// Called asynchronously after the file dialog is dismissed.
   /// |file_paths| will be a single value or a list of values depending on the
@@ -215,7 +213,7 @@ public:
   ///
   /*--cef(optional_param=file_paths)--*/
   virtual void OnFileDialogDismissed(
-      const std::vector<CefString> &file_paths) = 0;
+      const std::vector<CefString>& file_paths) = 0;
 };
 
 ///
@@ -223,9 +221,8 @@ public:
 /// this class will be called on the browser process UI thread.
 ///
 /*--cef(source=client)--*/
-class CefNavigationEntryVisitor : public virtual CefBaseRefCounted
-{
-public:
+class CefNavigationEntryVisitor : public virtual CefBaseRefCounted {
+ public:
   ///
   /// Method that will be executed. Do not keep a reference to |entry| outside
   /// of this callback. Return true to continue visiting entries or false to
@@ -245,16 +242,15 @@ public:
 /// will be called on the browser process UI thread.
 ///
 /*--cef(source=client)--*/
-class CefPdfPrintCallback : public virtual CefBaseRefCounted
-{
-public:
+class CefPdfPrintCallback : public virtual CefBaseRefCounted {
+ public:
   ///
   /// Method that will be executed when the PDF printing has completed. |path|
   /// is the output path. |ok| will be true if the printing completed
   /// successfully or false otherwise.
   ///
   /*--cef(optional_param=path)--*/
-  virtual void OnPdfPrintFinished(const CefString &path, bool ok) = 0;
+  virtual void OnPdfPrintFinished(const CefString& path, bool ok) = 0;
 };
 
 ///
@@ -262,9 +258,8 @@ public:
 /// class will be called on the browser process UI thread.
 ///
 /*--cef(source=client)--*/
-class CefDownloadImageCallback : public virtual CefBaseRefCounted
-{
-public:
+class CefDownloadImageCallback : public virtual CefBaseRefCounted {
+ public:
   ///
   /// Method that will be executed when the image download has completed.
   /// |image_url| is the URL that was downloaded and |http_status_code| is the
@@ -272,7 +267,7 @@ public:
   /// multiple scale factors, or empty if the download failed.
   ///
   /*--cef(optional_param=image)--*/
-  virtual void OnDownloadImageFinished(const CefString &image_url,
+  virtual void OnDownloadImageFinished(const CefString& image_url,
                                        int http_status_code,
                                        CefRefPtr<CefImage> image) = 0;
 };
@@ -284,9 +279,8 @@ public:
 /// comments.
 ///
 /*--cef(source=library)--*/
-class CefBrowserHost : public virtual CefBaseRefCounted
-{
-public:
+class CefBrowserHost : public virtual CefBaseRefCounted {
+ public:
   typedef cef_drag_operations_mask_t DragOperationsMask;
   typedef cef_file_dialog_mode_t FileDialogMode;
   typedef cef_mouse_button_type_t MouseButtonType;
@@ -304,10 +298,10 @@ public:
   ///
   /*--cef(optional_param=client,optional_param=url,
           optional_param=request_context,optional_param=extra_info)--*/
-  static bool CreateBrowser(const CefWindowInfo &windowInfo,
+  static bool CreateBrowser(const CefWindowInfo& windowInfo,
                             CefRefPtr<CefClient> client,
-                            const CefString &url,
-                            const CefBrowserSettings &settings,
+                            const CefString& url,
+                            const CefBrowserSettings& settings,
                             CefRefPtr<CefDictionaryValue> extra_info,
                             CefRefPtr<CefRequestContext> request_context);
 
@@ -323,10 +317,10 @@ public:
   /*--cef(optional_param=client,optional_param=url,
           optional_param=request_context,optional_param=extra_info)--*/
   static CefRefPtr<CefBrowser> CreateBrowserSync(
-      const CefWindowInfo &windowInfo,
+      const CefWindowInfo& windowInfo,
       CefRefPtr<CefClient> client,
-      const CefString &url,
-      const CefBrowserSettings &settings,
+      const CefString& url,
+      const CefBrowserSettings& settings,
       CefRefPtr<CefDictionaryValue> extra_info,
       CefRefPtr<CefRequestContext> request_context);
 
@@ -506,16 +500,16 @@ public:
   /*--cef(optional_param=title,optional_param=default_file_path,
           optional_param=accept_filters)--*/
   virtual void RunFileDialog(FileDialogMode mode,
-                             const CefString &title,
-                             const CefString &default_file_path,
-                             const std::vector<CefString> &accept_filters,
+                             const CefString& title,
+                             const CefString& default_file_path,
+                             const std::vector<CefString>& accept_filters,
                              CefRefPtr<CefRunFileDialogCallback> callback) = 0;
 
   ///
   /// Download the file at |url| using CefDownloadHandler.
   ///
   /*--cef()--*/
-  virtual void StartDownload(const CefString &url) = 0;
+  virtual void StartDownload(const CefString& url) = 0;
 
   ///
   /// Download |image_url| and execute |callback| on completion with the images
@@ -530,7 +524,7 @@ public:
   /// from the server even if it is present in the browser cache.
   ///
   /*--cef()--*/
-  virtual void DownloadImage(const CefString &image_url,
+  virtual void DownloadImage(const CefString& image_url,
                              bool is_favicon,
                              uint32_t max_image_size,
                              bool bypass_cache,
@@ -549,8 +543,8 @@ public:
   /// CefPrintHandler::GetPdfPaperSize method.
   ///
   /*--cef(optional_param=callback)--*/
-  virtual void PrintToPDF(const CefString &path,
-                          const CefPdfPrintSettings &settings,
+  virtual void PrintToPDF(const CefString& path,
+                          const CefPdfPrintSettings& settings,
                           CefRefPtr<CefPdfPrintCallback> callback) = 0;
 
   ///
@@ -563,7 +557,7 @@ public:
   /// CefClient::GetFindHandler will be called to report find results.
   ///
   /*--cef()--*/
-  virtual void Find(const CefString &searchText,
+  virtual void Find(const CefString& searchText,
                     bool forward,
                     bool matchCase,
                     bool findNext) = 0;
@@ -585,10 +579,10 @@ public:
   ///
   /*--cef(optional_param=windowInfo,optional_param=client,
           optional_param=settings,optional_param=inspect_element_at)--*/
-  virtual void ShowDevTools(const CefWindowInfo &windowInfo,
+  virtual void ShowDevTools(const CefWindowInfo& windowInfo,
                             CefRefPtr<CefClient> client,
-                            const CefBrowserSettings &settings,
-                            const CefPoint &inspect_element_at) = 0;
+                            const CefBrowserSettings& settings,
+                            const CefPoint& inspect_element_at) = 0;
 
   ///
   /// Explicitly close the associated DevTools browser, if any.
@@ -636,7 +630,7 @@ public:
   /// `--devtools-protocol-log-file=<path>` command-line flag.
   ///
   /*--cef()--*/
-  virtual bool SendDevToolsMessage(const void *message,
+  virtual bool SendDevToolsMessage(const void* message,
                                    size_t message_size) = 0;
 
   ///
@@ -653,7 +647,7 @@ public:
   ///
   /*--cef(optional_param=params)--*/
   virtual int ExecuteDevToolsMethod(int message_id,
-                                    const CefString &method,
+                                    const CefString& method,
                                     CefRefPtr<CefDictionaryValue> params) = 0;
 
   ///
@@ -681,13 +675,13 @@ public:
   /// this method will replace it with the specified |word|.
   ///
   /*--cef()--*/
-  virtual void ReplaceMisspelling(const CefString &word) = 0;
+  virtual void ReplaceMisspelling(const CefString& word) = 0;
 
   ///
   /// Add the specified |word| to the spelling dictionary.
   ///
   /*--cef()--*/
-  virtual void AddWordToDictionary(const CefString &word) = 0;
+  virtual void AddWordToDictionary(const CefString& word) = 0;
 
   ///
   /// Returns true if window rendering is disabled.
@@ -754,14 +748,14 @@ public:
   /// Send a key event to the browser.
   ///
   /*--cef()--*/
-  virtual void SendKeyEvent(const CefKeyEvent &event) = 0;
+  virtual void SendKeyEvent(const CefKeyEvent& event) = 0;
 
   ///
   /// Send a mouse click event to the browser. The |x| and |y| coordinates are
   /// relative to the upper-left corner of the view.
   ///
   /*--cef()--*/
-  virtual void SendMouseClickEvent(const CefMouseEvent &event,
+  virtual void SendMouseClickEvent(const CefMouseEvent& event,
                                    MouseButtonType type,
                                    bool mouseUp,
                                    int clickCount) = 0;
@@ -771,7 +765,7 @@ public:
   /// relative to the upper-left corner of the view.
   ///
   /*--cef()--*/
-  virtual void SendMouseMoveEvent(const CefMouseEvent &event,
+  virtual void SendMouseMoveEvent(const CefMouseEvent& event,
                                   bool mouseLeave) = 0;
 
   ///
@@ -783,7 +777,7 @@ public:
   /// properly.
   ///
   /*--cef()--*/
-  virtual void SendMouseWheelEvent(const CefMouseEvent &event,
+  virtual void SendMouseWheelEvent(const CefMouseEvent& event,
                                    int deltaX,
                                    int deltaY) = 0;
 
@@ -791,7 +785,7 @@ public:
   /// Send a touch event to the browser for a windowless browser.
   ///
   /*--cef()--*/
-  virtual void SendTouchEvent(const CefTouchEvent &event) = 0;
+  virtual void SendTouchEvent(const CefTouchEvent& event) = 0;
 
   ///
   /// Send a capture lost event to the browser.
@@ -853,10 +847,10 @@ public:
   ///
   /*--cef(optional_param=text, optional_param=underlines)--*/
   virtual void ImeSetComposition(
-      const CefString &text,
-      const std::vector<CefCompositionUnderline> &underlines,
-      const CefRange &replacement_range,
-      const CefRange &selection_range) = 0;
+      const CefString& text,
+      const std::vector<CefCompositionUnderline>& underlines,
+      const CefRange& replacement_range,
+      const CefRange& selection_range) = 0;
 
   ///
   /// Completes the existing composition by optionally inserting the specified
@@ -868,8 +862,8 @@ public:
   /// This method is only used when window rendering is disabled.
   ///
   /*--cef(optional_param=text)--*/
-  virtual void ImeCommitText(const CefString &text,
-                             const CefRange &replacement_range,
+  virtual void ImeCommitText(const CefString& text,
+                             const CefRange& replacement_range,
                              int relative_cursor_pos) = 0;
 
   ///
@@ -901,7 +895,7 @@ public:
   ///
   /*--cef()--*/
   virtual void DragTargetDragEnter(CefRefPtr<CefDragData> drag_data,
-                                   const CefMouseEvent &event,
+                                   const CefMouseEvent& event,
                                    DragOperationsMask allowed_ops) = 0;
 
   ///
@@ -911,7 +905,7 @@ public:
   /// This method is only used when window rendering is disabled.
   ///
   /*--cef()--*/
-  virtual void DragTargetDragOver(const CefMouseEvent &event,
+  virtual void DragTargetDragOver(const CefMouseEvent& event,
                                   DragOperationsMask allowed_ops) = 0;
 
   ///
@@ -930,7 +924,7 @@ public:
   /// This method is only used when window rendering is disabled.
   ///
   /*--cef()--*/
-  virtual void DragTargetDrop(const CefMouseEvent &event) = 0;
+  virtual void DragTargetDrop(const CefMouseEvent& event) = 0;
 
   ///
   /// Call this method when the drag operation started by a
@@ -999,8 +993,8 @@ public:
   ///
   /*--cef()--*/
   virtual void SetAutoResizeEnabled(bool enabled,
-                                    const CefSize &min_size,
-                                    const CefSize &max_size) = 0;
+                                    const CefSize& min_size,
+                                    const CefSize& max_size) = 0;
 
   ///
   /// Set whether the browser's audio is muted.
@@ -1097,4 +1091,4 @@ public:
 #endif
 };
 
-#endif // CEF_INCLUDE_CEF_BROWSER_H_
+#endif  // CEF_INCLUDE_CEF_BROWSER_H_

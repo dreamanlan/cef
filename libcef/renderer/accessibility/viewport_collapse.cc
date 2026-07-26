@@ -13,59 +13,51 @@
 #include "third_party/blink/renderer/modules/accessibility/ax_object.h"
 #include "ui/accessibility/ax_role_properties.h"
 
-namespace cef
-{
+namespace cef {
 
-  bool IsViewportCollapseEnabled(blink::Document &document)
-  {
-    auto *settings = document.GetSettings();
-    return settings && settings->GetAccessibilityViewportCollapse();
+bool IsViewportCollapseEnabled(blink::Document& document) {
+  auto* settings = document.GetSettings();
+  return settings && settings->GetAccessibilityViewportCollapse();
+}
+
+blink::PhysicalRect ComputeViewportRect(blink::Document& document) {
+  blink::LocalFrameView* frame_view = document.View();
+
+  // The visual viewport's VisibleContentRect accounts for pinch-zoom scroll
+  // but not layout viewport scroll. For a normal (non-zoomed) page, the
+  // visual viewport offset is (0,0) and all scrolling is on the layout
+  // viewport. We need the full visible area in document coordinates, so
+  // combine both: start from the visual viewport rect (which has the correct
+  // size and visual viewport offset) and add the layout viewport scroll.
+  auto rect = blink::PhysicalRect(
+      frame_view->GetPage()->GetVisualViewport().VisibleContentRect(
+          blink::kExcludeScrollbars));
+  if (auto* layout_viewport = frame_view->LayoutViewport()) {
+    blink::ScrollOffset scroll = layout_viewport->GetScrollOffset();
+    rect.offset.left += blink::LayoutUnit(scroll.x());
+    rect.offset.top += blink::LayoutUnit(scroll.y());
   }
+  return rect;
+}
 
-  blink::PhysicalRect ComputeViewportRect(blink::Document &document)
-  {
-    blink::LocalFrameView *frame_view = document.View();
+bool IsNodeInViewport(const blink::AXObject& ax_object,
+                      const blink::PhysicalRect& viewport_rect) {
+  blink::PhysicalRect bounds = ax_object.GetBoundsInFrameCoordinates();
+  return bounds.Intersects(viewport_rect);
+}
 
-    // The visual viewport's VisibleContentRect accounts for pinch-zoom scroll
-    // but not layout viewport scroll. For a normal (non-zoomed) page, the
-    // visual viewport offset is (0,0) and all scrolling is on the layout
-    // viewport. We need the full visible area in document coordinates, so
-    // combine both: start from the visual viewport rect (which has the correct
-    // size and visual viewport offset) and add the layout viewport scroll.
-    auto rect = blink::PhysicalRect(
-        frame_view->GetPage()->GetVisualViewport().VisibleContentRect(
-            blink::kExcludeScrollbars));
-    if (auto *layout_viewport = frame_view->LayoutViewport())
-    {
-      blink::ScrollOffset scroll = layout_viewport->GetScrollOffset();
-      rect.offset.left += blink::LayoutUnit(scroll.x());
-      rect.offset.top += blink::LayoutUnit(scroll.y());
-    }
-    return rect;
+ViewportCollapseAction ClassifyOffScreenNode(ax::mojom::blink::Role role) {
+  ax::mojom::Role r = static_cast<ax::mojom::Role>(role);
+  if (ui::IsLandmark(r) || ui::IsHeading(r)) {
+    return ViewportCollapseAction::kSummary;
   }
-
-  bool IsNodeInViewport(const blink::AXObject &ax_object,
-                        const blink::PhysicalRect &viewport_rect)
-  {
-    blink::PhysicalRect bounds = ax_object.GetBoundsInFrameCoordinates();
-    return bounds.Intersects(viewport_rect);
+  // Chromium maps <footer> to kFooter and <header> to kHeader, which are
+  // distinct from kContentInfo/kBanner used by IsLandmark(). Treat them
+  // as landmarks for collapsing purposes.
+  if (r == ax::mojom::Role::kFooter || r == ax::mojom::Role::kHeader) {
+    return ViewportCollapseAction::kSummary;
   }
+  return ViewportCollapseAction::kPrune;
+}
 
-  ViewportCollapseAction ClassifyOffScreenNode(ax::mojom::blink::Role role)
-  {
-    ax::mojom::Role r = static_cast<ax::mojom::Role>(role);
-    if (ui::IsLandmark(r) || ui::IsHeading(r))
-    {
-      return ViewportCollapseAction::kSummary;
-    }
-    // Chromium maps <footer> to kFooter and <header> to kHeader, which are
-    // distinct from kContentInfo/kBanner used by IsLandmark(). Treat them
-    // as landmarks for collapsing purposes.
-    if (r == ax::mojom::Role::kFooter || r == ax::mojom::Role::kHeader)
-    {
-      return ViewportCollapseAction::kSummary;
-    }
-    return ViewportCollapseAction::kPrune;
-  }
-
-} // namespace cef
+}  // namespace cef

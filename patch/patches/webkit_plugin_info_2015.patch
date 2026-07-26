@@ -5,7 +5,7 @@ index bb80991d521edbb22bb08e50805dd8c131cf75a4..2164fb0049702089a5afb32118ecbc8d
 @@ -884,6 +884,11 @@ class BLINK_PLATFORM_EXPORT Platform {
    // calling an OOM.
    virtual void OnV8HeapLastResortGC() {}
-
+ 
 +  // DevTools ------------------------------------------------------------
 +
 +  virtual void DevToolsAgentAttached() {}
@@ -32,7 +32,7 @@ index ef9fd9471259a43453246112f14d7d53a8434b67..f71cc8d1174f5c07e42f123ce2a1e7d2
    }
 +  Platform::Current()->DevToolsAgentAttached();
  }
-
+ 
  DevToolsSession::~DevToolsSession() {
 @@ -248,6 +250,7 @@ void DevToolsSession::Detach() {
    v8_session_->stop();
@@ -40,5 +40,5 @@ index ef9fd9471259a43453246112f14d7d53a8434b67..f71cc8d1174f5c07e42f123ce2a1e7d2
    agent_->client_->DebuggerTaskFinished();
 +  Platform::Current()->DevToolsAgentDetached();
  }
-
+ 
  void DevToolsSession::DetachFromV8() {
