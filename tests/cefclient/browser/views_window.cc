@@ -1464,7 +1464,7 @@ void ViewsWindow::AddControls() {
 
       // Minimize button.
       CefRefPtr<CefLabelButton> btn_min =
-          CefLabelButton::CreateLabelButton(this, u8"\u2212");
+          CefLabelButton::CreateLabelButton(this, u"\u2212");
       btn_min->SetID(ID_TITLEBAR_MINIMIZE);
       btn_min->SetFocusable(false);
       btn_min->SetInkDropEnabled(true);
@@ -1473,7 +1473,7 @@ void ViewsWindow::AddControls() {
 
       // Maximize button.
       CefRefPtr<CefLabelButton> btn_max =
-          CefLabelButton::CreateLabelButton(this, u8"\u25A1");
+          CefLabelButton::CreateLabelButton(this, u"\u25A1");
       btn_max->SetID(ID_TITLEBAR_MAXIMIZE);
       btn_max->SetFocusable(false);
       btn_max->SetInkDropEnabled(true);
@@ -1482,7 +1482,7 @@ void ViewsWindow::AddControls() {
 
       // Close button.
       CefRefPtr<CefLabelButton> btn_close =
-          CefLabelButton::CreateLabelButton(this, u8"\u00D7");
+          CefLabelButton::CreateLabelButton(this, u"\u00D7");
       btn_close->SetID(ID_TITLEBAR_CLOSE);
       btn_close->SetFocusable(false);
       btn_close->SetInkDropEnabled(true);
