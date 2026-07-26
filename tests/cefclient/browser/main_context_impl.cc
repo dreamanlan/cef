@@ -199,7 +199,7 @@ void MainContextImpl::PopulateSettings(CefSettings* settings) {
   client::ClientAppBrowser::PopulateSettings(command_line_, *settings);
 
   // Use standard Chrome user-agent to avoid exposing cefclient identity.
-  CefString(&settings->user_agent_product) = "Chrome/144.0.7559.172";
+  CefString(&settings->user_agent_product) = "Chrome/150.0.7871.187";
 
   // Set application-specific cache path to avoid process singleton conflicts
 #if defined(__APPLE__)
