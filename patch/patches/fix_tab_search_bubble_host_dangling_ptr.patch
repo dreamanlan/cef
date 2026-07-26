@@ -1,8 +1,8 @@
 diff --git chrome/browser/ui/views/frame/browser_view.cc chrome/browser/ui/views/frame/browser_view.cc
-index aaaaaaa..bbbbbbb 100644
+index a025c4d6d222525b4e0eeb61e0ae632c43c55899..50b39418407aa4081f0c2c4348eed192c46a29bc 100644
 --- chrome/browser/ui/views/frame/browser_view.cc
 +++ chrome/browser/ui/views/frame/browser_view.cc
-@@ -1080,8 +1080,6 @@ BrowserView::~BrowserView() {
+@@ -1093,8 +1093,6 @@ BrowserView::~BrowserView() {
    // other cleanups that destroy views referenced in the layout manager.
    SetLayoutManager(nullptr);
  
@@ -11,7 +11,7 @@ index aaaaaaa..bbbbbbb 100644
    // Destroy the top controls slide controller first as it depends on the
    // tabstrip model and the browser frame.
    top_controls_slide_controller_.reset();
-@@ -1781,6 +1779,13 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
+@@ -1896,6 +1894,13 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
  }
  
  void BrowserView::WillDestroyToolbar() {
