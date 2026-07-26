@@ -1,0 +1,30 @@
+diff --git chrome/browser/ui/views/toolbar/toolbar_view.cc chrome/browser/ui/views/toolbar/toolbar_view.cc
+--- chrome/browser/ui/views/toolbar/toolbar_view.cc
++++ chrome/browser/ui/views/toolbar/toolbar_view.cc
+@@ -433,11 +433,24 @@ void ToolbarView::Init() {
+         base::BindRepeating(callback, browser_, IDC_FORWARD), browser_));
+   }
+ 
+-  if (base::FeatureList::IsEnabled(
++  // CEF: WebUIToolbarWebView depends on InitialWebUIManager, which is only
++  // registered on BrowserWindowFeatures for TYPE_NORMAL browsers (see
++  // browser_window_features.cc). CEF hosts using CefBrowserView force the
++  // Browser type to TYPE_POPUP (see chrome_browser_host_impl.cc), so
++  // InitialWebUIManager is never created for them and any WebUIToolbarWebView
++  // instance ends up in a partially-initialized state (crashes without a
++  // defensive null check, and even with one the toolbar fails to paint on
++  // first show). Align the creation guard here with the upstream
++  // BrowserWindowFeatures registration guard so the new WebUI toolbar is
++  // only instantiated when the surrounding infrastructure is guaranteed to
++  // exist.
++  const bool is_normal_browser = browser_->type() == Browser::TYPE_NORMAL;
++  if (is_normal_browser &&
++      base::FeatureList::IsEnabled(
+           features::kWebUIToolbarProcessOverheadExperiment)) {
+     detached_toolbar_webview_ = std::make_unique<WebUIToolbarWebView>(
+         browser_, browser_->command_controller(), /*location_bar=*/nullptr);
+-  } else if (features::IsWebUIToolbarEnabled()) {
++  } else if (is_normal_browser && features::IsWebUIToolbarEnabled()) {
+     toolbar_webview_ = AddChildView(std::make_unique<WebUIToolbarWebView>(
+         browser_, browser_->command_controller(),
+         std::move(webui_location_bar)));

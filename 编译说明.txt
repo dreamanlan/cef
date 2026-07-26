@@ -158,9 +158,19 @@ index aaaaaaa..bbbbbbb 100644
 
 >>>>>>======
 
+7871分支引入一个新问题：
+WebUIToolbarWebView的创建与初始化条件不一致导致cefclient启动时崩溃，为此修改创建时的条件判断与初始化时加判空（cefclient不使用这个工具栏，但chrome默认使用），涉及2个文件patch，其中一个是独立patch，一个是己有patch，独立patch需要修改patch.cfg加到patch列表。
+/Users/lanxiang/Documents/GitHub/cef/patch/patches/fix_webui_toolbar_only_for_normal_browser.patch
+/Users/lanxiang/Documents/GitHub/cef/patch/patches/fix_webui_toolbar_null_initial_webui_manager.patch
+
 patch更新方法：
 1、先应用 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
 2、备份patch后的chrome/browser/ui/views/frame/browser_view.cc供重新生成fix_tab_search_bubble_host_dangling_ptr.patch使用
-3、再手动合入或apply_diff D:\GitHub\cef\patch\patches\fix_tab_search_bubble_host_dangling_ptr.patch
-4、重新生成 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
-5、fix_tab_search_bubble_host_dangling_ptr.patch保持不变（如果差异不大可以，因为这个patch总是手动合入，此时步骤2忽略）或使用2中备份和最终chrome/browser/ui/views/frame/browser_view.cc diff生成新patch
+3、再手动合入或apply_diff fix_tab_search_bubble_host_dangling_ptr.patch
+4、fix_tab_search_bubble_host_dangling_ptr.patch保持不变（如果差异不大可以，因为这个patch总是手动合入，此时步骤2忽略）或使用2中备份和最终chrome/browser/ui/views/frame/browser_view.cc diff生成新patch
+5、备份patch后的chrome/browser/ui/views/toolbar/toolbar_view.cc供重新生成fix_webui_toolbar_only_for_normal_browser.patch
+6、再手动合入或apply_diff D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\fix_webui_toolbar_only_for_normal_browser.patch
+7、使用5中备份和最终chrome/browser/ui/views/toolbar/toolbar_view.cc diff生成新patch fix_webui_toolbar_only_for_normal_browser.patch
+8、重新生成 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
+9、手动合入D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\fix_webui_toolbar_null_initial_webui_manager.patch并重新生成新patch，手动合入patch.cfg(新增patch文件)
+10、重新构建

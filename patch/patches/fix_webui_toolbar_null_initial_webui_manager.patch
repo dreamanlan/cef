@@ -1,0 +1,21 @@
+diff --git chrome/browser/ui/views/toolbar/webui_toolbar_web_view.cc chrome/browser/ui/views/toolbar/webui_toolbar_web_view.cc
+index e035c00b3f2ea..28118d52fb34f 100644
+--- chrome/browser/ui/views/toolbar/webui_toolbar_web_view.cc
++++ chrome/browser/ui/views/toolbar/webui_toolbar_web_view.cc
+@@ -512,7 +512,15 @@ void WebUIToolbarWebView::OnPageInitialized() {
+     avatar_control_.Initialize();
+   }
+ 
+-  InitialWebUIManager::From(browser_)->OnWebUIToolbarLoaded();
++  // CEF: InitialWebUIManager is a BrowserWindowFeatures member that is not
++  // always registered in CEF's chrome-style hosting (e.g. Alloy-inside-Chrome
++  // configurations), so From(browser_) can return nullptr here. Match the
++  // defensive pattern already used elsewhere in this file (see the
++  // TakeToolbarContents() call site) to avoid a null-deref crash right after
++  // the WebUI toolbar page finishes initialization.
++  if (auto* manager = InitialWebUIManager::From(browser_)) {
++    manager->OnWebUIToolbarLoaded();
++  }
+ }
+ 
+ void WebUIToolbarWebView::InvokePinnedToolbarAction(
