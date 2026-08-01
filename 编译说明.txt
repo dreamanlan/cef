@@ -23,14 +23,14 @@
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --no-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --x64-build --branch=7871 --no-distrib --no-build
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、对cef源码修改后，新建chromium_git\rebuild.bat，内容如下（不更新、不删除out目录直接重新编译
   set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --no-update --force-build --x64-build --build-target="cefclient cefsimple"
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --x64-build --build-target="cefclient cefsimple"
 6、编译都需要很长时间（8小时以上）与大量磁盘空间（x64-build情形，out目录主要生成了x64的debug与release版本[目录结构是所有版本的，实际只有2个目录有生成内容]，约150GB，带git源码与编译工具整个目录220GB空间，剩余磁盘至少300GB空间可能是必要的）
 7、上面的批处理都需要在命令行chromium_git目录为当前目录时执行
 8、第2步文档里的1~5步的下载与更新depot_tools的操作可以不执行，或者更新到chromium_git/depot_tools目录，我们在编译cef时没有使用文档说的这个目录的depot_tools，也没有配置到path环境变量里，会额外再下一份到chromium_git/depot_tools
@@ -39,14 +39,15 @@
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  set GYP_MSVS_VERSION=2022
  set CEF_ARCHIVE_FORMAT=tar.bz2
- python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --no-update --force-build --no-debug-build --x64-build --build-target="cefclient cefsimple"
+ python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --no-debug-build --x64-build --build-target="cefclient cefsimple"
 也可再建一个chromium_git\rebuild_debug.bat将--no-debug-build换成--no-release-build来专门编译debug版本
  set GN_DEFINES=is_official_build=true chrome_pgo_phase=0
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  set GYP_MSVS_VERSION=2022
  set CEF_ARCHIVE_FORMAT=tar.bz2
- python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --no-update --force-build --no-release-build --x64-build --build-target="cefclient cefsimple"
-
+ python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --no-release-build --x64-build --build-target="cefclient cefsimple"
+10、如果出现siso构建报错并且是windows SDK路径出现重复反斜杠转义问题，可以改bat里的宏定义使用ninja构建：
+ set GN_DEFINES=is_official_build=true chrome_pgo_phase=0 use_siso=false
 
 ## MAC版本的构建方法与windows版本类似，也是按主干文档建立目录结构，然后按分支release版本使用automate-git.py来自动下载、更新与构建:
 [update.sh]:
@@ -54,14 +55,14 @@
 
 export PATH=/Users/lanxiang/CEF_BUILD/depot_tools:$PATH
 alias python=python3
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7559 --no-distrib --no-build
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --arm64-build --branch=7871 --no-distrib --no-build
 
 [rebuild.sh]:
 #!/bin/bash
 
 export PATH=/Users/lanxiang/CEF_BUILD/depot_tools:$PATH
 alias python=python3
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7559 --no-distrib --no-update --force-build --arm64-build --build-target="cefclient cefsimple"
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7871 --no-distrib --no-update --force-build --arm64-build --build-target="cefclient cefsimple"
 
 
 ## 实测运行时依赖的文件:
@@ -83,7 +84,7 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7559 --no-distrib --x64-build --build-target="cefclient cefsimple"
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --x64-build --build-target="cefclient cefsimple"
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、后续构建需要将depot_tools目录加到path环境变量里，之后按官方文档7~9操作即可。为避免分步操作，可写成一个批处理完成所有工作，6~8分别是不同类型构建的批处理
 6、创建批处理chromium_git\rebuild.bat，分别构建64位Debug与Release版本(注意：这里cef源码又会拷一份在chromium源码目录里面，所以我们同步cef的修改时要同步到这里才对)
