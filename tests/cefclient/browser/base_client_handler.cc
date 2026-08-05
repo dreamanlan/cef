@@ -117,6 +117,10 @@ void BaseClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   if (on_browser_init_fptr) {
     on_browser_init_fptr(browser.get());
   }
+
+  // Auto-register a DevTools message observer for this browser. The
+  // registration is released in OnBeforeClose.
+  RegisterDevToolsObserver(browser.get());
 }
 
 void BaseClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
@@ -124,6 +128,9 @@ void BaseClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 
   printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Browser %d closing",
             browser->GetIdentifier());
+
+  // Release the DevTools observer registration for this browser.
+  UnregisterDevToolsObserver(browser.get());
 
   if (on_browser_finalize_fptr) {
     printf_log(LOG_SEVERITY_INFO,

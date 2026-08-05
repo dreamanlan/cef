@@ -363,7 +363,6 @@ CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE hInstance,
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }
-  renderer_ref_clear();
   return exit_code;
 }
 
@@ -410,7 +409,6 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }
-  renderer_ref_clear();
   return exit_code;
 }
 

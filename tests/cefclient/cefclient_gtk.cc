@@ -263,7 +263,6 @@ int RunMain(int argc, char* argv[]) {
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }
-  renderer_ref_clear();
 
   return result;
 }

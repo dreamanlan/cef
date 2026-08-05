@@ -5,12 +5,15 @@
 #include "include/cef_frame.h"
 #include "include/cef_request.h"
 #include "include/cef_task.h"
+#include "include/cef_parser.h"
+#include "include/cef_devtools_message_observer.h"
 #include "JavaScriptCaller.h"
 #include "path_utils.h"
 
 #include <chrono>
 #include <iostream>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -507,12 +510,26 @@ on_heart_beat_fn on_heart_beat_fptr = nullptr;
 on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
 on_console_log_fn on_console_log_fptr = nullptr;
 
+// DevTools observer callbacks
+on_devtools_message_fn on_devtools_message_fptr = nullptr;
+on_devtools_method_result_fn on_devtools_method_result_fptr = nullptr;
+on_devtools_event_fn on_devtools_event_fptr = nullptr;
+on_devtools_agent_attached_fn on_devtools_agent_attached_fptr = nullptr;
+on_devtools_agent_detached_fn on_devtools_agent_detached_fptr = nullptr;
+
 
 
 // Renderer process: hold CefRefPtr to prevent premature release of browser/frame objects.
 // Key is browser_id, value is (browser, frame) pair.
 // Objects are added in OnContextCreated and removed in OnContextReleased.
-static std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>* g_renderer_ref_map = new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
+// Use Meyers local-static + heap allocation so the container is never destroyed
+// during static teardown (avoids releasing CefRefPtrs after CEF has shut down).
+static std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>&
+GetRendererRefMap() {
+    static auto* s_map =
+        new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
+    return *s_map;
+}
 
 // Heartbeat implementation
 static bool g_heartbeat_running = false;
@@ -625,6 +642,13 @@ typedef void (*browser_close_fn)(void* browser, int force_close);
 typedef void (*browser_set_focus_fn)(void* browser, int focus);
 typedef int (*browser_get_opener_id_fn)(void* browser);
 
+// DevTools host actions (browser process only, no-op in renderer)
+typedef int (*browser_show_devtools_fn)(void* browser, int inspect_x, int inspect_y, int has_inspect_point);
+typedef int (*browser_close_devtools_fn)(void* browser);
+typedef int (*browser_has_devtools_fn)(void* browser);
+typedef int (*browser_send_devtools_message_fn)(void* browser, const void* message, int size);
+typedef int (*browser_execute_devtools_method_fn)(void* browser, int message_id, const char* method, const char* params_json);
+
 // Frame properties
 typedef const char* (*frame_get_url_fn)(void* frame);
 typedef const char* (*frame_get_name_fn)(void* frame);
@@ -707,6 +731,12 @@ typedef struct {
     browser_close_fn BrowserClose;
     browser_set_focus_fn BrowserSetFocus;
     browser_get_opener_id_fn BrowserGetOpenerId;
+    // DevTools host actions
+    browser_show_devtools_fn BrowserShowDevTools;
+    browser_close_devtools_fn BrowserCloseDevTools;
+    browser_has_devtools_fn BrowserHasDevTools;
+    browser_send_devtools_message_fn BrowserSendDevToolsMessage;
+    browser_execute_devtools_method_fn BrowserExecuteDevToolsMethod;
     // Frame properties
     frame_get_url_fn FrameGetUrl;
     frame_get_name_fn FrameGetName;
@@ -1084,9 +1114,9 @@ bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void**
     if (!out_browser || !out_frame) return false;
     *out_browser = nullptr;
     *out_frame = nullptr;
-    if (!g_renderer_ref_map) return false;
-    auto it = g_renderer_ref_map->find(browser_id);
-    if (it == g_renderer_ref_map->end()) return false;
+    auto& m = GetRendererRefMap();
+    auto it = m.find(browser_id);
+    if (it == m.end()) return false;
     *out_browser = it->second.first.get();
     *out_frame = it->second.second.get();
     return true;
@@ -1096,28 +1126,23 @@ bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void**
 
 void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
 {
-    if (!browser || !frame || !g_renderer_ref_map) return;
+    if (!browser || !frame) return;
     int id = browser->GetIdentifier();
-    (*g_renderer_ref_map)[id] = std::make_pair(browser, frame);
+    GetRendererRefMap()[id] = std::make_pair(browser, frame);
 }
 
 void renderer_ref_remove(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
 {
-    if (!browser || !g_renderer_ref_map) return;
+    if (!browser) return;
     int id = browser->GetIdentifier();
-    auto it = g_renderer_ref_map->find(id);
-    if (it != g_renderer_ref_map->end()) {
+    auto& m = GetRendererRefMap();
+    auto it = m.find(id);
+    if (it != m.end()) {
         // Only remove if the frame pointer matches (avoid removing a newer frame)
         if (it->second.second.get() == frame.get()) {
-            g_renderer_ref_map->erase(it);
+            m.erase(it);
         }
     }
-}
-
-void renderer_ref_clear()
-{
-    delete g_renderer_ref_map;
-    g_renderer_ref_map = nullptr;
 }
 
 void* get_browser_by_id(int browser_id)
@@ -1274,6 +1299,150 @@ int browser_get_opener_id(void* browser)
         return host->GetOpenerIdentifier();
     }
     return 0;
+}
+
+// --- DevTools host actions (browser process only) ---
+
+int browser_show_devtools(void* browser, int inspect_x, int inspect_y, int has_inspect_point)
+{
+    if (!browser || !is_browser_process()) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!host) return 0;
+    CefWindowInfo window_info;
+    CefBrowserSettings settings;
+    CefPoint inspect_at = has_inspect_point ? CefPoint(inspect_x, inspect_y) : CefPoint();
+    host->ShowDevTools(window_info, nullptr, settings, inspect_at);
+    return 1;
+}
+
+int browser_close_devtools(void* browser)
+{
+    if (!browser || !is_browser_process()) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!host) return 0;
+    host->CloseDevTools();
+    return 1;
+}
+
+int browser_has_devtools(void* browser)
+{
+    if (!browser || !is_browser_process()) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!host) return 0;
+    return host->HasDevTools() ? 1 : 0;
+}
+
+int browser_send_devtools_message(void* browser, const void* message, int size)
+{
+    if (!browser || !is_browser_process() || !message || size <= 0) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!host) return 0;
+    return host->SendDevToolsMessage(message, static_cast<size_t>(size)) ? 1 : 0;
+}
+
+int browser_execute_devtools_method(void* browser, int message_id, const char* method, const char* params_json)
+{
+    if (!browser || !is_browser_process() || !method) return 0;
+    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!host) return 0;
+    CefRefPtr<CefDictionaryValue> params;
+    if (params_json && params_json[0] != '\0') {
+        CefRefPtr<CefValue> value = CefParseJSON(CefString(params_json), JSON_PARSER_ALLOW_TRAILING_COMMAS);
+        if (value && value->GetType() == VTYPE_DICTIONARY) {
+            params = value->GetDictionary();
+        }
+    }
+    return host->ExecuteDevToolsMethod(message_id, CefString(method), params);
+}
+
+// --- DevTools observer bridge ---
+
+class HostDevToolsObserver : public CefDevToolsMessageObserver {
+ public:
+  HostDevToolsObserver() = default;
+
+  bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser,
+                         const void* message,
+                         size_t message_size) override {
+    if (on_devtools_message_fptr) {
+      return on_devtools_message_fptr(browser.get(), message,
+                                      static_cast<int>(message_size)) != 0;
+    }
+    return false;
+  }
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void* result,
+                              size_t result_size) override {
+    if (on_devtools_method_result_fptr) {
+      on_devtools_method_result_fptr(browser.get(), message_id,
+                                     success ? 1 : 0, result,
+                                     static_cast<int>(result_size));
+    }
+  }
+
+  void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
+                       const CefString& method,
+                       const void* params,
+                       size_t params_size) override {
+    if (on_devtools_event_fptr) {
+      std::string method_str = method.ToString();
+      on_devtools_event_fptr(browser.get(), method_str.c_str(),
+                             params, static_cast<int>(params_size));
+    }
+  }
+
+  void OnDevToolsAgentAttached(CefRefPtr<CefBrowser> browser) override {
+    if (on_devtools_agent_attached_fptr) {
+      on_devtools_agent_attached_fptr(browser.get());
+    }
+  }
+
+  void OnDevToolsAgentDetached(CefRefPtr<CefBrowser> browser) override {
+    if (on_devtools_agent_detached_fptr) {
+      on_devtools_agent_detached_fptr(browser.get());
+    }
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(HostDevToolsObserver);
+};
+
+// Map browser_id -> registration handle. All access on UI thread; mutex is
+// defensive against unexpected callers.
+// Use Meyers local-static + heap allocation so these are never destroyed
+// during static teardown (avoids releasing CefRegistration / locking a
+// destroyed mutex after CEF has shut down).
+static std::map<int, CefRefPtr<CefRegistration>>& GetDevToolsRegistrations() {
+    static auto* s_map = new std::map<int, CefRefPtr<CefRegistration>>();
+    return *s_map;
+}
+
+static std::mutex& GetDevToolsRegMutex() {
+    static auto* s_mutex = new std::mutex();
+    return *s_mutex;
+}
+
+void RegisterDevToolsObserver(CefBrowser* browser)
+{
+    if (!browser) return;
+    auto host = browser->GetHost();
+    if (!host) return;
+    CefRefPtr<HostDevToolsObserver> observer = new HostDevToolsObserver();
+    CefRefPtr<CefRegistration> registration =
+        host->AddDevToolsMessageObserver(observer);
+    if (!registration) return;
+    std::lock_guard<std::mutex> lock(GetDevToolsRegMutex());
+    GetDevToolsRegistrations()[browser->GetIdentifier()] = registration;
+}
+
+void UnregisterDevToolsObserver(CefBrowser* browser)
+{
+    if (!browser) return;
+    std::lock_guard<std::mutex> lock(GetDevToolsRegMutex());
+    GetDevToolsRegistrations().erase(browser->GetIdentifier());
 }
 
 // --- Frame properties ---
@@ -1485,6 +1654,11 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.BrowserClose = &browser_close;
     api.BrowserSetFocus = &browser_set_focus;
     api.BrowserGetOpenerId = &browser_get_opener_id;
+    api.BrowserShowDevTools = &browser_show_devtools;
+    api.BrowserCloseDevTools = &browser_close_devtools;
+    api.BrowserHasDevTools = &browser_has_devtools;
+    api.BrowserSendDevToolsMessage = &browser_send_devtools_message;
+    api.BrowserExecuteDevToolsMethod = &browser_execute_devtools_method;
     api.FrameGetUrl = &frame_get_url;
     api.FrameGetName = &frame_get_name;
     api.FrameGetIdentifier = &frame_get_identifier;
@@ -1571,6 +1745,61 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_browser_finalize_fptr);
     if (rc || !on_browser_finalize_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_finalize");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnDevToolsMessage"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnDevToolsMessageDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_devtools_message_fptr);
+    if (rc || !on_devtools_message_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_message");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnDevToolsMethodResult"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnDevToolsMethodResultDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_devtools_method_result_fptr);
+    if (rc || !on_devtools_method_result_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_method_result");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnDevToolsEvent"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnDevToolsEventDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_devtools_event_fptr);
+    if (rc || !on_devtools_event_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_event");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnDevToolsAgentAttached"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnDevToolsAgentAttachedDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_devtools_agent_attached_fptr);
+    if (rc || !on_devtools_agent_attached_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_agent_attached");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnDevToolsAgentDetached"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnDevToolsAgentDetachedDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_devtools_agent_detached_fptr);
+    if (rc || !on_devtools_agent_detached_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_agent_detached");
     }
 
     rc = load_assembly_and_get_function_pointer(

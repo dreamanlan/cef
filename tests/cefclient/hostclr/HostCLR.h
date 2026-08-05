@@ -50,6 +50,13 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, flo
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, int level, const char* message, const char* source, int line, int& max_log_size);
 
+// DevTools observer callbacks (browser process, UI thread)
+typedef int  (CORECLR_DELEGATE_CALLTYPE* on_devtools_message_fn)(void* browser, const void* msg, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_method_result_fn)(void* browser, int message_id, int success, const void* result, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_event_fn)(void* browser, const char* method, const void* params, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_attached_fn)(void* browser);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* browser);
+
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
 extern on_browser_init_fn on_browser_init_fptr;
@@ -80,6 +87,12 @@ extern on_heart_beat_fn on_heart_beat_fptr;
 extern on_call_metadsl_fn on_call_metadsl_fptr;
 extern on_console_log_fn on_console_log_fptr;
 
+extern on_devtools_message_fn on_devtools_message_fptr;
+extern on_devtools_method_result_fn on_devtools_method_result_fptr;
+extern on_devtools_event_fn on_devtools_event_fptr;
+extern on_devtools_agent_attached_fn on_devtools_agent_attached_fptr;
+extern on_devtools_agent_detached_fn on_devtools_agent_detached_fptr;
+
 // Start/stop heartbeat timer
 extern void StartHeartbeat(int process_type);
 extern void StopHeartbeat();
@@ -88,7 +101,6 @@ extern void SetHeartbeatIntervalMs(int interval_ms);
 // Renderer ref map: hold CefRefPtr to prevent premature release of browser/frame objects
 extern void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
 extern void renderer_ref_remove(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
-extern void renderer_ref_clear();
 
 // Cross-platform function to terminate renderer processes
 // Returns the number of renderer processes terminated, or -1 on error
@@ -97,3 +109,8 @@ extern int TerminateRenderProcess();
 // Count renderer processes using platform-specific APIs
 // Returns the number of renderer processes, or -1 on error
 extern int CountRenderProcess();
+
+// DevTools observer registration (browser process, UI thread).
+// Called from BaseClientHandler::OnAfterCreated / OnBeforeClose.
+extern void RegisterDevToolsObserver(CefBrowser* browser);
+extern void UnregisterDevToolsObserver(CefBrowser* browser);
