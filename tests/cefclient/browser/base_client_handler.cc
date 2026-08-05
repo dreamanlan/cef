@@ -9,6 +9,8 @@
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "tests/cefclient/browser/main_context.h"
+#include "tests/cefclient/browser/my_resource_handler.h"
+#include "tests/cefclient/browser/my_response_filter.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
 #include "tests/shared/common/client_switches.h"
@@ -211,7 +213,7 @@ bool BaseClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   if (on_before_browse_fptr) {
     bool out_return_value = false;
     if (on_before_browse_fptr(browser.get(), frame.get(), request.get(),
-                              user_gesture, is_redirect, &out_return_value)) {
+                              user_gesture, is_redirect, out_return_value)) {
       message_router_->OnBeforeBrowse(browser, frame);
       return out_return_value;
     }
@@ -444,7 +446,14 @@ cef_return_value_t BaseClientHandler::OnBeforeResourceLoad(
   if (on_before_resource_load_fptr) {
     int out_return_value = static_cast<int>(RV_CONTINUE);
     if (on_before_resource_load_fptr(browser.get(), frame.get(), request.get(),
-                                     &out_return_value)) {
+                                     out_return_value)) {
+      // DSL has no access to the native callback, so RV_CONTINUE_ASYNC has no
+      // async semantic here and would hang the request (nobody holds the
+      // callback to Continue/Cancel it later). Coerce anything other than
+      // RV_CONTINUE to RV_CANCEL: safe-by-default, cancels instead of hangs.
+      if (out_return_value != RV_CONTINUE) {
+        out_return_value = RV_CANCEL;
+      }
       return static_cast<cef_return_value_t>(out_return_value);
     }
   }
@@ -459,6 +468,19 @@ CefRefPtr<CefResourceHandler> BaseClientHandler::GetResourceHandler(
     CefRefPtr<CefRequest> request) {
   CEF_REQUIRE_IO_THREAD();
 
+  // CSP bypass hook: ask C# if it wants to intercept this resource.
+  // Skip CefURLRequest-initiated forwards (browser is null) to avoid recursion.
+  if (on_resource_response_filter_fptr && browser) {
+    CefRefPtr<CefResponse> response_override = CefResponse::Create();
+    bool replace_content = true;  // Default: enable body filtering.
+    if (on_resource_response_filter_fptr(browser.get(), frame.get(),
+                                         request.get(),
+                                         response_override.get(),
+                                         replace_content)) {
+      return new MyResourceHandler(response_override, replace_content);
+    }
+  }
+
   return resource_manager_->GetResourceHandler(browser, frame, request);
 }
 
@@ -468,6 +490,21 @@ CefRefPtr<CefResponseFilter> BaseClientHandler::GetResourceResponseFilter(
     CefRefPtr<CefRequest> request,
     CefRefPtr<CefResponse> response) {
   CEF_REQUIRE_IO_THREAD();
+
+  // Inspection-mode hook: pass the actual (read-only) upstream response to C#
+  // for read-only inspection. If C# returns true AND wants body filtering
+  // (replace_content), register MyResponseFilter to stream the body through
+  // on_response_content_filter. If C# returns true but replace_content=false,
+  // skip body filter (C# was only interested in inspecting the response).
+  if (on_resource_response_filter_fptr && browser) {
+    bool replace_content = true;  // Default: enable body filtering.
+    if (on_resource_response_filter_fptr(browser.get(), frame.get(),
+                                         request.get(), response.get(),
+                                         replace_content) &&
+        replace_content) {
+      return new MyResponseFilter();
+    }
+  }
 
   return test_runner::GetResourceResponseFilter(browser, frame, request,
                                                 response);

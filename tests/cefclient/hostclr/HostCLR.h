@@ -44,8 +44,7 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** arg
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int* out_return_value);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool& out_return_value);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, float delta_time);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, int level, const char* message, const char* source, int line, int& max_log_size);
@@ -56,6 +55,33 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_method_result_fn)(void* bro
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_event_fn)(void* browser, const char* method, const void* params, int size);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_attached_fn)(void* browser);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* browser);
+
+// Resource interception hooks (browser process, IO thread).
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int& out_return_value);
+// on_resource_response_filter: called from BaseClientHandler::GetResourceHandler
+// (decision mode, response is an empty writable CefResponse for C# to fill
+// header overrides into) and from BaseClientHandler::GetResourceResponseFilter
+// (inspection mode, response is the actual upstream response for read-only
+// inspection).
+// Returns true to intercept the resource with MyResourceHandler (decision
+// mode) or to register MyResponseFilter for body filtering (inspection
+// mode). |response| is always writable (created by native, never read-only).
+// |out_replace_content| receives whether to enable body filtering:
+//   false = skip body filter (inspection mode: don't register MyResponseFilter;
+//           decision mode: MyResourceHandler only applies header overrides,
+//           passes body through unchanged).
+//   true  = enable body filter (default).
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_response_filter_fn)(void* browser, void* frame, void* request, void* response, bool& out_replace_content);
+// on_response_content_filter: streams body chunks through C# for transformation.
+// Returns true if DSL handled the chunk (use DSL's outputs), false to pass
+// through unchanged. out_status receives the filter status (0=DONE,
+// 1=NEED_MORE_DATA, 2=ERROR, matches cef_response_filter_status_t).
+// out_data_in_read / out_data_out_written receive consumed/written byte counts.
+// C# side uses `ref int` for the three output params (matches
+// on_before_resource_load_fn's int& out_return_value pattern).
+// No browser/frame params: CefResourceHandler::Read / CefResponseFilter::Filter
+// signatures do not carry them, and the body filter is a pure data transform.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_response_content_filter_fn)(const void* data_in, int data_in_size, void* data_out, int data_out_size, int& out_data_in_read, int& out_data_out_written, int& out_status);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -92,6 +118,9 @@ extern on_devtools_method_result_fn on_devtools_method_result_fptr;
 extern on_devtools_event_fn on_devtools_event_fptr;
 extern on_devtools_agent_attached_fn on_devtools_agent_attached_fptr;
 extern on_devtools_agent_detached_fn on_devtools_agent_detached_fptr;
+
+extern on_resource_response_filter_fn on_resource_response_filter_fptr;
+extern on_response_content_filter_fn on_response_content_filter_fptr;
 
 // Start/stop heartbeat timer
 extern void StartHeartbeat(int process_type);

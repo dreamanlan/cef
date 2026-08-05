@@ -505,7 +505,6 @@ on_before_command_line_processing_fn on_before_command_line_processing_fptr = nu
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
 on_before_browse_fn on_before_browse_fptr = nullptr;
-on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
 on_heart_beat_fn on_heart_beat_fptr = nullptr;
 on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
 on_console_log_fn on_console_log_fptr = nullptr;
@@ -516,6 +515,11 @@ on_devtools_method_result_fn on_devtools_method_result_fptr = nullptr;
 on_devtools_event_fn on_devtools_event_fptr = nullptr;
 on_devtools_agent_attached_fn on_devtools_agent_attached_fptr = nullptr;
 on_devtools_agent_detached_fn on_devtools_agent_detached_fptr = nullptr;
+
+// Resource interception callbacks
+on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
+on_resource_response_filter_fn on_resource_response_filter_fptr = nullptr;
+on_response_content_filter_fn on_response_content_filter_fptr = nullptr;
 
 
 
@@ -676,6 +680,23 @@ typedef int (*request_get_resource_type_fn)(void* request);
 typedef int (*request_get_transition_type_fn)(void* request);
 typedef uint64_t (*request_get_identifier_fn)(void* request);
 
+// CefResponse properties (writable; native-created via CefResponse::Create()).
+typedef bool (*response_is_read_only_fn)(void* response);
+typedef int (*response_get_status_fn)(void* response);
+typedef void (*response_set_status_fn)(void* response, int status);
+typedef const char* (*response_get_status_text_fn)(void* response);
+typedef void (*response_set_status_text_fn)(void* response, const char* status_text);
+typedef const char* (*response_get_mime_type_fn)(void* response);
+typedef void (*response_set_mime_type_fn)(void* response, const char* mime_type);
+typedef const char* (*response_get_charset_fn)(void* response);
+typedef void (*response_set_charset_fn)(void* response, const char* charset);
+typedef const char* (*response_get_url_fn)(void* response);
+typedef const char* (*response_get_header_map_fn)(void* response);
+typedef const char* (*response_get_header_by_name_fn)(void* response, const char* name);
+typedef void (*response_set_header_by_name_fn)(void* response, const char* name, const char* value, int overwrite);
+typedef void (*response_remove_header_by_name_fn)(void* response, const char* name);
+typedef void (*response_set_header_map_fn)(void* response, const char* header_map_str);
+
 // Heartbeat control
 typedef void (*set_heartbeat_interval_fn)(int interval_ms);
 
@@ -761,6 +782,22 @@ typedef struct {
     request_get_resource_type_fn RequestGetResourceType;
     request_get_transition_type_fn RequestGetTransitionType;
     request_get_identifier_fn RequestGetIdentifier;
+    // CefResponse properties
+    response_is_read_only_fn ResponseIsReadOnly;
+    response_get_status_fn ResponseGetStatus;
+    response_set_status_fn ResponseSetStatus;
+    response_get_status_text_fn ResponseGetStatusText;
+    response_set_status_text_fn ResponseSetStatusText;
+    response_get_mime_type_fn ResponseGetMimeType;
+    response_set_mime_type_fn ResponseSetMimeType;
+    response_get_charset_fn ResponseGetCharset;
+    response_set_charset_fn ResponseSetCharset;
+    response_get_url_fn ResponseGetUrl;
+    response_get_header_map_fn ResponseGetHeaderMap;
+    response_get_header_by_name_fn ResponseGetHeaderByName;
+    response_set_header_by_name_fn ResponseSetHeaderByName;
+    response_remove_header_by_name_fn ResponseRemoveHeaderByName;
+    response_set_header_map_fn ResponseSetHeaderMap;
     // Heartbeat control
     set_heartbeat_interval_fn SetHeartbeatInterval;
 } HostApi;
@@ -1601,6 +1638,148 @@ uint64_t request_get_identifier(void* request)
     return reinterpret_cast<CefRequest*>(request)->GetIdentifier();
 }
 
+// --- CefResponse properties ---
+
+bool response_is_read_only(void* response)
+{
+    if (!response) return true;
+    return reinterpret_cast<CefResponse*>(response)->IsReadOnly();
+}
+
+int response_get_status(void* response)
+{
+    if (!response) return 0;
+    return reinterpret_cast<CefResponse*>(response)->GetStatus();
+}
+
+void response_set_status(void* response, int status)
+{
+    if (!response) return;
+    reinterpret_cast<CefResponse*>(response)->SetStatus(status);
+}
+
+const char* response_get_status_text(void* response)
+{
+    if (!response) return nullptr;
+    std::string text = reinterpret_cast<CefResponse*>(response)->GetStatusText().ToString();
+    if (text.empty()) return nullptr;
+    return alloc_string(text);
+}
+
+void response_set_status_text(void* response, const char* status_text)
+{
+    if (!response) return;
+    reinterpret_cast<CefResponse*>(response)->SetStatusText(status_text ? CefString(status_text) : CefString());
+}
+
+const char* response_get_mime_type(void* response)
+{
+    if (!response) return nullptr;
+    std::string mime = reinterpret_cast<CefResponse*>(response)->GetMimeType().ToString();
+    if (mime.empty()) return nullptr;
+    return alloc_string(mime);
+}
+
+void response_set_mime_type(void* response, const char* mime_type)
+{
+    if (!response) return;
+    reinterpret_cast<CefResponse*>(response)->SetMimeType(mime_type ? CefString(mime_type) : CefString());
+}
+
+const char* response_get_charset(void* response)
+{
+    if (!response) return nullptr;
+    std::string charset = reinterpret_cast<CefResponse*>(response)->GetCharset().ToString();
+    if (charset.empty()) return nullptr;
+    return alloc_string(charset);
+}
+
+void response_set_charset(void* response, const char* charset)
+{
+    if (!response) return;
+    reinterpret_cast<CefResponse*>(response)->SetCharset(charset ? CefString(charset) : CefString());
+}
+
+const char* response_get_url(void* response)
+{
+    if (!response) return nullptr;
+    std::string url = reinterpret_cast<CefResponse*>(response)->GetURL().ToString();
+    if (url.empty()) return nullptr;
+    return alloc_string(url);
+}
+
+const char* response_get_header_map(void* response)
+{
+    if (!response) return nullptr;
+    CefResponse::HeaderMap headerMap;
+    reinterpret_cast<CefResponse*>(response)->GetHeaderMap(headerMap);
+    if (headerMap.empty()) return nullptr;
+    std::string result;
+    for (const auto& pair : headerMap) {
+        if (!result.empty()) result += "\n";
+        result += pair.first.ToString() + ":" + pair.second.ToString();
+    }
+    return alloc_string(result);
+}
+
+const char* response_get_header_by_name(void* response, const char* name)
+{
+    if (!response || !name) return nullptr;
+    std::string value = reinterpret_cast<CefResponse*>(response)->GetHeaderByName(name).ToString();
+    if (value.empty()) return nullptr;
+    return alloc_string(value);
+}
+
+void response_set_header_by_name(void* response, const char* name, const char* value, int overwrite)
+{
+    if (!response || !name) return;
+    reinterpret_cast<CefResponse*>(response)->SetHeaderByName(
+        name, value ? CefString(value) : CefString(), overwrite != 0);
+}
+
+void response_remove_header_by_name(void* response, const char* name)
+{
+    if (!response || !name) return;
+    // CefResponse has no RemoveHeaderByName; emulate via full-map replace.
+    CefResponse::HeaderMap headerMap;
+    auto* resp = reinterpret_cast<CefResponse*>(response);
+    resp->GetHeaderMap(headerMap);
+    std::string nameLower = name;
+    for (auto& c : nameLower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+    for (auto it = headerMap.begin(); it != headerMap.end();) {
+        std::string keyLower = it->first.ToString();
+        for (auto& c : keyLower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        if (keyLower == nameLower) {
+            it = headerMap.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    resp->SetHeaderMap(headerMap);
+}
+
+void response_set_header_map(void* response, const char* header_map_str)
+{
+    if (!response) return;
+    CefResponse::HeaderMap headerMap;
+    if (header_map_str && header_map_str[0] != '\0') {
+        // Parse "name:value\nname:value\n..." (same format as response_get_header_map).
+        std::string input = header_map_str;
+        size_t pos = 0;
+        while (pos < input.size()) {
+            size_t nl = input.find('\n', pos);
+            std::string line = (nl == std::string::npos) ? input.substr(pos) : input.substr(pos, nl - pos);
+            pos = (nl == std::string::npos) ? input.size() : nl + 1;
+            size_t colon = line.find(':');
+            if (colon == std::string::npos) continue;
+            headerMap.insert(std::make_pair(
+                CefString(line.substr(0, colon)),
+                CefString(line.substr(colon + 1))));
+        }
+    }
+    reinterpret_cast<CefResponse*>(response)->SetHeaderMap(headerMap);
+}
+
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
@@ -1680,6 +1859,22 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.RequestGetResourceType = &request_get_resource_type;
     api.RequestGetTransitionType = &request_get_transition_type;
     api.RequestGetIdentifier = &request_get_identifier;
+    // CefResponse properties
+    api.ResponseIsReadOnly = &response_is_read_only;
+    api.ResponseGetStatus = &response_get_status;
+    api.ResponseSetStatus = &response_set_status;
+    api.ResponseGetStatusText = &response_get_status_text;
+    api.ResponseSetStatusText = &response_set_status_text;
+    api.ResponseGetMimeType = &response_get_mime_type;
+    api.ResponseSetMimeType = &response_set_mime_type;
+    api.ResponseGetCharset = &response_get_charset;
+    api.ResponseSetCharset = &response_set_charset;
+    api.ResponseGetUrl = &response_get_url;
+    api.ResponseGetHeaderMap = &response_get_header_map;
+    api.ResponseGetHeaderByName = &response_get_header_by_name;
+    api.ResponseSetHeaderByName = &response_set_header_by_name;
+    api.ResponseRemoveHeaderByName = &response_remove_header_by_name;
+    api.ResponseSetHeaderMap = &response_set_header_map;
     // Heartbeat control
     api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
 
@@ -1800,6 +1995,28 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_devtools_agent_detached_fptr);
     if (rc || !on_devtools_agent_detached_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_devtools_agent_detached");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnResourceResponseFilter"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnResourceResponseFilterDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_resource_response_filter_fptr);
+    if (rc || !on_resource_response_filter_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_resource_response_filter");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnResponseContentFilter"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnResponseContentFilterDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_response_content_filter_fptr);
+    if (rc || !on_response_content_filter_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_response_content_filter");
     }
 
     rc = load_assembly_and_get_function_pointer(
