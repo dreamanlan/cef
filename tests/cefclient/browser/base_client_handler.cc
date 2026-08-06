@@ -87,8 +87,26 @@ bool BaseClientHandler::OnSetFocus(CefRefPtr<CefBrowser> browser,
   return !ShouldRequestFocus();
 }
 
+void BaseClientHandler::OnMainFrameChanged(CefRefPtr<CefBrowser> browser,
+                                           CefRefPtr<CefFrame> /*old_frame*/,
+                                           CefRefPtr<CefFrame> new_frame) {
+  CEF_REQUIRE_UI_THREAD();
+  // Keep the browser-process ref map's stored main frame in sync with
+  // cross-origin navigations and renderer crash recovery. If this fires before
+  // OnAfterCreated (allowed on initial creation), browser_ref_update_frame
+  // finds no entry and no-ops; browser_ref_add will then capture the current
+  // main frame when the entry is created. |new_frame| may be null during final
+  // destruction -- that's tolerated (entry gets erased by browser_ref_remove).
+  browser_ref_update_frame(browser, new_frame);
+}
+
 void BaseClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
+
+  // Register the browser in the browser-process ref map BEFORE any C#
+  // callback fires, so C# can immediately call browser_is_valid / touch the
+  // browser raw pointer without hitting a stale reference.
+  browser_ref_add(browser);
 
   browser_count_++;
 
@@ -154,6 +172,11 @@ void BaseClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
     MainContext::Get()->GetRootWindowManager()->OtherBrowserClosed(
         browser->GetIdentifier(), browser->GetHost()->GetOpenerIdentifier());
   }
+
+  // Unregister from the browser-process ref map AFTER all C# callbacks have
+  // fired. From this point on browser_is_valid returns false for this pointer
+  // and the CefRefPtr in the map is dropped.
+  browser_ref_remove(browser);
 }
 
 void BaseClientHandler::OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
@@ -213,7 +236,7 @@ bool BaseClientHandler::OnBeforeBrowse(CefRefPtr<CefBrowser> browser,
   if (on_before_browse_fptr) {
     bool out_return_value = false;
     if (on_before_browse_fptr(browser.get(), frame.get(), request.get(),
-                              user_gesture, is_redirect, out_return_value)) {
+                              user_gesture, is_redirect, &out_return_value)) {
       message_router_->OnBeforeBrowse(browser, frame);
       return out_return_value;
     }
@@ -469,15 +492,33 @@ CefRefPtr<CefResourceHandler> BaseClientHandler::GetResourceHandler(
   CEF_REQUIRE_IO_THREAD();
 
   // CSP bypass hook: ask C# if it wants to intercept this resource.
-  // Skip CefURLRequest-initiated forwards (browser is null) to avoid recursion.
-  if (on_resource_response_filter_fptr && browser) {
+  // Skip CefURLRequest-initiated forwards (browser is null) to avoid
+  // recursion. Also skip requests we cannot forward (hard native
+  // limitations, enforced here instead of left to the DSL):
+  // - Non-http(s) schemes: CefURLRequest/SimpleURLLoader cannot load them
+  //   (chrome-devtools://, chrome://, data:, file:, ...). Intercepting
+  //   breaks e.g. the DevTools page.
+  // - Multi-element post bodies: CefURLRequest supports only a single
+  //   post-data element (e.g. multipart form uploads would be dropped).
+  std::string url = request->GetURL().ToString();
+  const bool canForwardScheme =
+      url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0;
+  CefRefPtr<CefPostData> postData = request->GetPostData();
+  const bool canForwardBody = !postData || postData->GetElementCount() <= 1;
+  if (on_resource_response_filter_fptr && browser && canForwardScheme &&
+      canForwardBody) {
     CefRefPtr<CefResponse> response_override = CefResponse::Create();
     bool replace_content = true;  // Default: enable body filtering.
     if (on_resource_response_filter_fptr(browser.get(), frame.get(),
                                          request.get(),
                                          response_override.get(),
-                                         replace_content)) {
-      return new MyResourceHandler(response_override, replace_content);
+                                         &replace_content)) {
+      // Forward with the browser's request context so the upstream
+      // CefURLRequest shares the browser's cookie store (SSO flows
+      // converge upstream instead of looping in the browser).
+      return new MyResourceHandler(response_override,
+                                   browser->GetHost()->GetRequestContext(),
+                                   replace_content);
     }
   }
 
@@ -500,9 +541,13 @@ CefRefPtr<CefResponseFilter> BaseClientHandler::GetResourceResponseFilter(
     bool replace_content = true;  // Default: enable body filtering.
     if (on_resource_response_filter_fptr(browser.get(), frame.get(),
                                          request.get(), response.get(),
-                                         replace_content) &&
-        replace_content) {
-      return new MyResponseFilter();
+                                         &replace_content)) {
+      if (replace_content) {
+        return new MyResponseFilter();
+      }
+      else {
+        return nullptr;
+      }
     }
   }
 

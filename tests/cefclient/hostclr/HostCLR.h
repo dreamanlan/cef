@@ -44,7 +44,7 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** arg
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool& out_return_value);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, float delta_time);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, int level, const char* message, const char* source, int line, int& max_log_size);
@@ -71,7 +71,7 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* brows
 //           decision mode: MyResourceHandler only applies header overrides,
 //           passes body through unchanged).
 //   true  = enable body filter (default).
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_response_filter_fn)(void* browser, void* frame, void* request, void* response, bool& out_replace_content);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_response_filter_fn)(void* browser, void* frame, void* request, void* response, bool* out_replace_content);
 // on_response_content_filter: streams body chunks through C# for transformation.
 // Returns true if DSL handled the chunk (use DSL's outputs), false to pass
 // through unchanged. out_status receives the filter status (0=DONE,
@@ -127,9 +127,19 @@ extern void StartHeartbeat(int process_type);
 extern void StopHeartbeat();
 extern void SetHeartbeatIntervalMs(int interval_ms);
 
-// Renderer ref map: hold CefRefPtr to prevent premature release of browser/frame objects
+// Renderer ref map: hold CefRefPtr on both browser and its main frame to
+// prevent premature release while C# may still hold raw pointers. Refs are
+// captured at main-frame OnContextCreated and released at OnContextReleased.
 extern void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
-extern void renderer_ref_remove(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
+extern void renderer_ref_remove(CefRefPtr<CefBrowser> browser);
+
+// Browser ref map (browser process): hold CefRefPtr to keep browser alive
+// between OnAfterCreated and OnBeforeClose so C# raw pointers stay valid.
+extern void browser_ref_add(CefRefPtr<CefBrowser> browser);
+extern void browser_ref_remove(CefRefPtr<CefBrowser> browser);
+// Called from CefFrameHandler::OnMainFrameChanged to keep the stored main
+// frame ref in sync with cross-origin navigations and renderer crash recovery.
+extern void browser_ref_update_frame(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
 
 // Cross-platform function to terminate renderer processes
 // Returns the number of renderer processes terminated, or -1 on error

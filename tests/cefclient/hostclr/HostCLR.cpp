@@ -15,6 +15,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 // Cross-platform string literal macro for char_t
@@ -523,16 +524,47 @@ on_response_content_filter_fn on_response_content_filter_fptr = nullptr;
 
 
 
-// Renderer process: hold CefRefPtr to prevent premature release of browser/frame objects.
-// Key is browser_id, value is (browser, frame) pair.
-// Objects are added in OnContextCreated and removed in OnContextReleased.
-// Use Meyers local-static + heap allocation so the container is never destroyed
+// Ref containers (browser+renderer) are protected by a single mutex.
+// Use Meyers local-static + heap allocation so containers are never destroyed
 // during static teardown (avoids releasing CefRefPtrs after CEF has shut down).
+static std::mutex& GetRefContainersMutex() {
+    static auto* s_m = new std::mutex();
+    return *s_m;
+}
+
+// Renderer process: hold CefRefPtr to keep both the browser AND its main frame
+// alive while C# may still touch either. Both refs are captured from the main
+// frame's OnContextCreated (which provides a live CefFrame param) and released
+// on OnContextReleased. Storing the frame ref prevents use-after-free when
+// C# reads a raw frame pointer whose lifetime is otherwise not guaranteed.
 static std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>&
 GetRendererRefMap() {
-    static auto* s_map =
-        new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
+    static auto* s_map = new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
     return *s_map;
+}
+// Valid-set of raw browser pointers currently registered in renderer process.
+// Used by browser_is_valid without dereferencing the input pointer.
+static std::unordered_set<CefBrowser*>&
+GetRendererValidSet() {
+    static auto* s_set = new std::unordered_set<CefBrowser*>();
+    return *s_set;
+}
+
+// Browser process: hold CefRefPtr for both the browser AND its main frame
+// between OnAfterCreated and OnBeforeClose. The main frame is grabbed once at
+// OnAfterCreated via browser->GetMainFrame(); if it later swaps (cross-site
+// navigation), our stored ref may go stale, but the CToCpp wrapper stays alive
+// and safe to inspect (methods degrade gracefully instead of UAF). Holding it
+// gives future accessors a stable raw pointer without requiring extra hooks.
+static std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>&
+GetBrowserRefMap() {
+    static auto* s_map = new std::map<int, std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>>>();
+    return *s_map;
+}
+static std::unordered_set<CefBrowser*>&
+GetBrowserValidSet() {
+    static auto* s_set = new std::unordered_set<CefBrowser*>();
+    return *s_set;
 }
 
 // Heartbeat implementation
@@ -1140,10 +1172,19 @@ static char* alloc_string(const std::string& s)
 
 // --- Browser traversal ---
 
+// Check whether a browser raw pointer is currently registered as alive in
+// the current process's valid-set. Never dereferences the pointer, so it is
+// safe to call with a possibly-stale pointer from C#.
 bool browser_is_valid(void* browser)
 {
     if (!browser) return false;
-    return reinterpret_cast<CefBrowser*>(browser)->IsValid();
+    auto* raw = reinterpret_cast<CefBrowser*>(browser);
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    if (is_browser_process()) {
+        return GetBrowserValidSet().count(raw) > 0;
+    } else {
+        return GetRendererValidSet().count(raw) > 0;
+    }
 }
 
 bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void** out_frame)
@@ -1151,55 +1192,142 @@ bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void**
     if (!out_browser || !out_frame) return false;
     *out_browser = nullptr;
     *out_frame = nullptr;
-    auto& m = GetRendererRefMap();
-    auto it = m.find(browser_id);
-    if (it == m.end()) return false;
-    *out_browser = it->second.first.get();
-    *out_frame = it->second.second.get();
+    CefRefPtr<CefBrowser> b;
+    CefRefPtr<CefFrame> f;
+    {
+        std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+        auto& m = GetRendererRefMap();
+        auto it = m.find(browser_id);
+        if (it == m.end()) return false;
+        b = it->second.first;
+        f = it->second.second;
+    }
+    if (!b) return false;
+    *out_browser = b.get();
+    *out_frame = f ? f.get() : nullptr;
     return true;
 }
 
 // --- Renderer ref map: hold CefRefPtr to prevent premature release ---
+// Called from renderer process only, driven by main-frame OnContextCreated/
+// OnContextReleased in client_renderer.cc.
 
 void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
 {
-    if (!browser || !frame) return;
+    if (!browser) return;
     int id = browser->GetIdentifier();
+    CefBrowser* raw = browser.get();
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
     GetRendererRefMap()[id] = std::make_pair(browser, frame);
+    GetRendererValidSet().insert(raw);
 }
 
-void renderer_ref_remove(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
+void renderer_ref_remove(CefRefPtr<CefBrowser> browser)
 {
     if (!browser) return;
     int id = browser->GetIdentifier();
-    auto& m = GetRendererRefMap();
-    auto it = m.find(id);
-    if (it != m.end()) {
-        // Only remove if the frame pointer matches (avoid removing a newer frame)
-        if (it->second.second.get() == frame.get()) {
+    CefBrowser* raw = browser.get();
+    // Release outside the lock: destroying CefRefPtr may trigger CEF internals
+    // that could otherwise deadlock while we hold the map mutex.
+    std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>> to_release;
+    {
+        std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+        GetRendererValidSet().erase(raw);
+        auto& m = GetRendererRefMap();
+        auto it = m.find(id);
+        if (it != m.end()) {
+            to_release = std::move(it->second);
             m.erase(it);
         }
     }
+    // to_release destructor runs here, outside the lock (browser + frame refs)
+    (void)to_release;
+}
+
+// --- Browser ref map (browser process): hold CefRefPtr for the browser's ---
+// entire lifetime so C# raw pointers remain valid between OnAfterCreated and
+// OnBeforeClose.
+
+void browser_ref_add(CefRefPtr<CefBrowser> browser)
+{
+    if (!browser) return;
+    int id = browser->GetIdentifier();
+    CefBrowser* raw = browser.get();
+    // Grab main frame once at OnAfterCreated. May be null in edge cases; that
+    // is tolerated (only browser ref is required for correctness, frame ref is
+    // a safety net for future accessors).
+    CefRefPtr<CefFrame> mf = browser->GetMainFrame();
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    GetBrowserRefMap()[id] = std::make_pair(browser, mf);
+    GetBrowserValidSet().insert(raw);
+}
+
+void browser_ref_remove(CefRefPtr<CefBrowser> browser)
+{
+    if (!browser) return;
+    int id = browser->GetIdentifier();
+    CefBrowser* raw = browser.get();
+    // Release outside the lock (browser + frame refs together).
+    std::pair<CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>> to_release;
+    {
+        std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+        GetBrowserValidSet().erase(raw);
+        auto& m = GetBrowserRefMap();
+        auto it = m.find(id);
+        if (it != m.end()) {
+            to_release = std::move(it->second);
+            m.erase(it);
+        }
+    }
+    (void)to_release;
+}
+
+// Called from CefFrameHandler::OnMainFrameChanged on the UI thread to keep the
+// stored main-frame ref in sync with cross-origin navigations, renderer crash
+// recovery, and initial/final main-frame lifecycle events. If the map entry
+// does not exist yet (OnMainFrameChanged can fire before OnAfterCreated on
+// initial creation), we silently skip; browser_ref_add will capture the
+// current main frame when the entry is created. |frame| may be null (final
+// main-frame destruction just before OnBeforeClose) -- that's fine, the entry
+// will be erased shortly by browser_ref_remove.
+void browser_ref_update_frame(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
+{
+    if (!browser) return;
+    int id = browser->GetIdentifier();
+    // Release the previous frame ref outside the lock.
+    CefRefPtr<CefFrame> to_release;
+    {
+        std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+        auto& m = GetBrowserRefMap();
+        auto it = m.find(id);
+        if (it == m.end()) return;
+        to_release = std::move(it->second.second);
+        it->second.second = frame;
+    }
+    (void)to_release;
 }
 
 void* get_browser_by_id(int browser_id)
 {
-if (!is_browser_process()) return nullptr;
-    auto browser = CefBrowserHost::GetBrowserByIdentifier(browser_id);
-    return browser.get();
+    if (!is_browser_process()) return nullptr;
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    auto& m = GetBrowserRefMap();
+    auto it = m.find(browser_id);
+    if (it == m.end()) return nullptr;
+    return it->second.first.get();
 }
 
 // --- Browser properties ---
 
 int browser_get_id(void* browser)
 {
-    if (!browser) return 0;
+    if (!browser_is_valid(browser)) return 0;
     return reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
 }
 
 const char* browser_get_url(void* browser)
 {
-    if (!browser) return nullptr;
+    if (!browser_is_valid(browser)) return nullptr;
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
     auto frame = pBrowser->GetMainFrame();
     if (!frame) return nullptr;
@@ -1210,19 +1338,19 @@ const char* browser_get_url(void* browser)
 
 bool browser_is_loading(void* browser)
 {
-    if (!browser) return false;
+    if (!browser_is_valid(browser)) return false;
     return reinterpret_cast<CefBrowser*>(browser)->IsLoading();
 }
 
 bool browser_is_popup(void* browser)
 {
-    if (!browser) return false;
+    if (!browser_is_valid(browser)) return false;
     return reinterpret_cast<CefBrowser*>(browser)->IsPopup();
 }
 
 bool browser_has_document(void* browser)
 {
-    if (!browser) return false;
+    if (!browser_is_valid(browser)) return false;
     return reinterpret_cast<CefBrowser*>(browser)->HasDocument();
 }
 
@@ -1230,13 +1358,13 @@ bool browser_has_document(void* browser)
 
 int browser_get_frame_count(void* browser)
 {
-    if (!browser) return 0;
+    if (!browser_is_valid(browser)) return 0;
     return static_cast<int>(reinterpret_cast<CefBrowser*>(browser)->GetFrameCount());
 }
 
 const char* browser_get_frame_identifiers(void* browser)
 {
-    if (!browser) return nullptr;
+    if (!browser_is_valid(browser)) return nullptr;
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
     std::vector<CefString> identifiers;
     pBrowser->GetFrameIdentifiers(identifiers);
@@ -1251,7 +1379,7 @@ const char* browser_get_frame_identifiers(void* browser)
 
 const char* browser_get_frame_names(void* browser)
 {
-    if (!browser) return nullptr;
+    if (!browser_is_valid(browser)) return nullptr;
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
     std::vector<CefString> names;
     pBrowser->GetFrameNames(names);
@@ -1266,25 +1394,25 @@ const char* browser_get_frame_names(void* browser)
 
 void* browser_get_main_frame(void* browser)
 {
-    if (!browser) return nullptr;
+    if (!browser_is_valid(browser)) return nullptr;
     return reinterpret_cast<CefBrowser*>(browser)->GetMainFrame().get();
 }
 
 void* browser_get_focused_frame(void* browser)
 {
-    if (!browser) return nullptr;
+    if (!browser_is_valid(browser)) return nullptr;
     return reinterpret_cast<CefBrowser*>(browser)->GetFocusedFrame().get();
 }
 
 void* browser_get_frame_by_identifier(void* browser, const char* identifier)
 {
-    if (!browser || !identifier) return nullptr;
+    if (!browser_is_valid(browser) || !identifier) return nullptr;
     return reinterpret_cast<CefBrowser*>(browser)->GetFrameByIdentifier(identifier).get();
 }
 
 void* browser_get_frame_by_name(void* browser, const char* name)
 {
-    if (!browser || !name) return nullptr;
+    if (!browser_is_valid(browser) || !name) return nullptr;
     return reinterpret_cast<CefBrowser*>(browser)->GetFrameByName(name).get();
 }
 
@@ -1292,19 +1420,19 @@ void* browser_get_frame_by_name(void* browser, const char* name)
 
 void browser_reload(void* browser)
 {
-    if (!browser) return;
+    if (!browser_is_valid(browser)) return;
     reinterpret_cast<CefBrowser*>(browser)->Reload();
 }
 
 void browser_reload_ignore_cache(void* browser)
 {
-    if (!browser) return;
+    if (!browser_is_valid(browser)) return;
     reinterpret_cast<CefBrowser*>(browser)->ReloadIgnoreCache();
 }
 
 void browser_stop_load(void* browser)
 {
-    if (!browser) return;
+    if (!browser_is_valid(browser)) return;
     reinterpret_cast<CefBrowser*>(browser)->StopLoad();
 }
 
@@ -1312,7 +1440,7 @@ void browser_stop_load(void* browser)
 
 void browser_close(void* browser, int force_close)
 {
-    if (!browser || !is_browser_process()) return;
+    if (!browser_is_valid(browser) || !is_browser_process()) return;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (host) {
         host->CloseBrowser(force_close != 0);
@@ -1321,7 +1449,7 @@ void browser_close(void* browser, int force_close)
 
 void browser_set_focus(void* browser, int focus)
 {
-    if (!browser || !is_browser_process()) return;
+    if (!browser_is_valid(browser) || !is_browser_process()) return;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (host) {
         host->SetFocus(focus != 0);
@@ -1330,7 +1458,7 @@ void browser_set_focus(void* browser, int focus)
 
 int browser_get_opener_id(void* browser)
 {
-    if (!browser || !is_browser_process()) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (host) {
         return host->GetOpenerIdentifier();
@@ -1342,7 +1470,7 @@ int browser_get_opener_id(void* browser)
 
 int browser_show_devtools(void* browser, int inspect_x, int inspect_y, int has_inspect_point)
 {
-    if (!browser || !is_browser_process()) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (!host) return 0;
     CefWindowInfo window_info;
@@ -1354,7 +1482,7 @@ int browser_show_devtools(void* browser, int inspect_x, int inspect_y, int has_i
 
 int browser_close_devtools(void* browser)
 {
-    if (!browser || !is_browser_process()) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (!host) return 0;
     host->CloseDevTools();
@@ -1363,7 +1491,7 @@ int browser_close_devtools(void* browser)
 
 int browser_has_devtools(void* browser)
 {
-    if (!browser || !is_browser_process()) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (!host) return 0;
     return host->HasDevTools() ? 1 : 0;
@@ -1371,7 +1499,7 @@ int browser_has_devtools(void* browser)
 
 int browser_send_devtools_message(void* browser, const void* message, int size)
 {
-    if (!browser || !is_browser_process() || !message || size <= 0) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process() || !message || size <= 0) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (!host) return 0;
     return host->SendDevToolsMessage(message, static_cast<size_t>(size)) ? 1 : 0;
@@ -1379,7 +1507,7 @@ int browser_send_devtools_message(void* browser, const void* message, int size)
 
 int browser_execute_devtools_method(void* browser, int message_id, const char* method, const char* params_json)
 {
-    if (!browser || !is_browser_process() || !method) return 0;
+    if (!browser_is_valid(browser) || !is_browser_process() || !method) return 0;
     auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
     if (!host) return 0;
     CefRefPtr<CefDictionaryValue> params;

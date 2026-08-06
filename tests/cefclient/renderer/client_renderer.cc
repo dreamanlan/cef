@@ -234,13 +234,18 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
     CefRefPtr<CefV8Value> callFunc = CefV8Value::CreateFunction("callMetaDSL", handler);
     global->SetValue("callMetaDSL", callFunc, V8_PROPERTY_ATTRIBUTE_NONE);
 
+    // Register the browser in the renderer-process ref map BEFORE firing any
+    // C# callback, and only on the main frame (main frame lifetime == browser
+    // lifetime). Sub-frame contexts are tracked implicitly via the main
+    // frame's registration.
+    if (frame->IsMain()) {
+      renderer_ref_add(browser, frame);
+    }
+
     if (on_renderer_init_fptr) {
       std::string url = frame->GetURL();
       on_renderer_init_fptr(browser.get(), frame.get(), url.c_str());
     }
-
-    // Hold CefRefPtr to prevent premature release of browser/frame objects
-    renderer_ref_add(browser, frame);
 
     // Start heartbeat timer for renderer process (process_type=1), only once
     if (!heartbeat_started_) {
@@ -253,12 +258,18 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
                          CefRefPtr<CefBrowser> browser,
                          CefRefPtr<CefFrame> frame,
                          CefRefPtr<CefV8Context> context) override {
-    // Release CefRefPtr for this browser/frame pair
-    renderer_ref_remove(browser, frame);
-
+    // Fire C# callback FIRST while the browser is still marked valid.
     if (on_renderer_finalize_fptr) {
       on_renderer_finalize_fptr(browser.get(), frame.get());
     }
+
+    // Unregister the browser AFTER all C# callbacks have fired. Only on the
+    // main frame so sub-frame teardown does not prematurely invalidate the
+    // browser pointer.
+    if (frame->IsMain()) {
+      renderer_ref_remove(browser);
+    }
+
     message_router_->OnContextReleased(browser, frame, context);
   }
 

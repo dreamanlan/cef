@@ -17,6 +17,7 @@ namespace client {
 // Abstract base class for client handlers.
 class BaseClientHandler : public CefClient,
                           public CefFocusHandler,
+                          public CefFrameHandler,
                           public CefLifeSpanHandler,
                           public CefLoadHandler,
                           public CefRequestHandler,
@@ -36,6 +37,7 @@ class BaseClientHandler : public CefClient,
 
   // CefClient methods
   CefRefPtr<CefFocusHandler> GetFocusHandler() override { return this; }
+  CefRefPtr<CefFrameHandler> GetFrameHandler() override { return this; }
   CefRefPtr<CefLifeSpanHandler> GetLifeSpanHandler() override { return this; }
   CefRefPtr<CefLoadHandler> GetLoadHandler() override { return this; }
   CefRefPtr<CefRequestHandler> GetRequestHandler() override { return this; }
@@ -46,6 +48,11 @@ class BaseClientHandler : public CefClient,
 
   // CefFocusHandler methods
   bool OnSetFocus(CefRefPtr<CefBrowser> browser, FocusSource source) override;
+
+  // CefFrameHandler methods
+  void OnMainFrameChanged(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefFrame> old_frame,
+                          CefRefPtr<CefFrame> new_frame) override;
 
   // CefLifeSpanHandler methods
   void OnAfterCreated(CefRefPtr<CefBrowser> browser) override;
