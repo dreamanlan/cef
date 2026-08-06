@@ -61,12 +61,12 @@ void MyResourceHandler::CreateRequestOnIOThread(
     return;
   }
 
-  // CefURLRequest delivers the body exactly as received (no transparent
-  // decompression), while chromium treats our synthesized response as
-  // already-decoded. Forwarding the browser's Accept-Encoding would let the
-  // upstream send gzip/br bytes that reach the renderer undecoded (garbled
-  // page). The incoming request is read-only, so build a copy that asks for
-  // identity encoding instead.
+  // Build a mutable copy of the incoming request. The upstream body delivered
+  // via CefURLRequest is already content-decoded by the network service (see
+  // the matching Content-Encoding strip in GetResponseHeaders), so we forward
+  // the browser's original Accept-Encoding untouched: overriding it to
+  // "identity" is a strong bot fingerprint that anti-abuse services
+  // (accounts.google.com etc.) flag as automation.
   CefRefPtr<CefRequest> newRequest = CefRequest::Create();
   newRequest->SetURL(request->GetURL());
   newRequest->SetMethod(request->GetMethod());
@@ -85,16 +85,6 @@ void MyResourceHandler::CreateRequestOnIOThread(
 
   CefRequest::HeaderMap headerMap;
   request->GetHeaderMap(headerMap);
-  for (auto it = headerMap.begin(); it != headerMap.end();) {
-    std::string nameLower = it->first.ToString();
-    for (auto& c : nameLower) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
-    if (nameLower == "accept-encoding") {
-      it = headerMap.erase(it);
-    } else {
-      ++it;
-    }
-  }
-  headerMap.insert(std::make_pair("Accept-Encoding", "identity"));
   newRequest->SetHeaderMap(headerMap);
 
   // Post data (single element, guaranteed by the GetResourceHandler
