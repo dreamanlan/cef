@@ -9,7 +9,6 @@
 #include "include/cef_command_line.h"
 #include "include/cef_parser.h"
 #include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/my_resource_handler.h"
 #include "tests/cefclient/browser/my_response_filter.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
@@ -491,95 +490,6 @@ CefRefPtr<CefResourceHandler> BaseClientHandler::GetResourceHandler(
     CefRefPtr<CefRequest> request) {
   CEF_REQUIRE_IO_THREAD();
 
-  // CSP bypass hook: ask C# if it wants to intercept this resource.
-  // Skip CefURLRequest-initiated forwards (browser is null) to avoid
-  // recursion. Also skip requests we cannot forward (hard native
-  // limitations, enforced here instead of left to the DSL):
-  // - Non-http(s) schemes: CefURLRequest/SimpleURLLoader cannot load them
-  //   (chrome-devtools://, chrome://, data:, file:, ...). Intercepting
-  //   breaks e.g. the DevTools page.
-  // - Multi-element or excluded post bodies: CefURLRequest supports only a
-  //   single fully-represented post-data element; forwarding multipart/file
-  //   uploads would otherwise silently drop bytes.
-  std::string url = request->GetURL().ToString();
-  const bool canForwardScheme =
-      url.compare(0, 7, "http://") == 0 || url.compare(0, 8, "https://") == 0;
-  CefRefPtr<CefPostData> postData = request->GetPostData();
-  const bool canForwardBody =
-      !postData || (!postData->HasExcludedElements() &&
-                    postData->GetElementCount() <= 1);
-  if (on_get_resource_handler_filter_fptr && browser && canForwardScheme &&
-      canForwardBody) {
-    // Build a mutable upstream request copy: DSL may edit its headers /
-    // referrer via CefRequest setters, and MyResourceHandler reuses the same
-    // copy when creating the forwarded CefURLRequest (no second copy).
-    // UR_FLAG_ALLOW_STORED_CREDENTIALS is required for cookies to be sent AND
-    // for upstream Set-Cookie headers to be ingested into the shared cookie
-    // jar (see libcef/common/request_impl.cc: without this flag,
-    // credentials_mode is forced to kOmit). CefRequestImpl::Set(ResourceRequest)
-    // never copies flags from the incoming ResourceRequest, so the flags read
-    // here are always UR_FLAG_NONE; without this OR the forwarding path
-    // silently drops all session cookies, breaking SSO redirect chains
-    // (evaluation.woa.com main-doc, gemini.google.com ERR_TOO_MANY_REDIRECTS).
-    // UR_FLAG_NO_RETRY_ON_5XX is required for fidelity with the native path:
-    // without it libcef applies SetRetryOptions(2, RETRY_ON_5XX |
-    // RETRY_ON_NETWORK_CHANGE) to the forwarded request, so an intercepted
-    // POST can be silently replayed up to twice (duplicate side effects on
-    // non-idempotent endpoints). Chromium's own resource loads never retry
-    // 5xx, so forwarding must not either.
-    // UR_FLAG_STOP_ON_REDIRECT stops the forward at the first 3xx.
-    // MyResourceHandler then returns the ORIGINAL status and Location header
-    // to Chromium (without GetResponseHeaders' redirectUrl, which CEF turns
-    // into a synthetic 307). Chromium therefore re-issues each hop with its
-    // native 301/302/303/307/308 semantics, history and OnResourceRedirect
-    // notifications. Set-Cookie is ingested into the shared jar on header
-    // receipt before CefURLRequest reports its expected ERR_ABORTED.
-    CefRefPtr<CefRequest> upstream = CefRequest::Create();
-    upstream->SetURL(request->GetURL());
-    upstream->SetMethod(request->GetMethod());
-    upstream->SetReferrer(request->GetReferrerURL(),
-                          request->GetReferrerPolicy());
-    upstream->SetFlags(request->GetFlags() | UR_FLAG_ALLOW_STORED_CREDENTIALS |
-                       UR_FLAG_NO_RETRY_ON_5XX | UR_FLAG_STOP_ON_REDIRECT);
-    upstream->SetFirstPartyForCookies(request->GetFirstPartyForCookies());
-    CefRequest::HeaderMap headerMap;
-    request->GetHeaderMap(headerMap);
-    upstream->SetHeaderMap(headerMap);
-    if (postData) {
-      upstream->SetPostData(postData);
-    }
-
-    CefRefPtr<CefResponse> response_override = CefResponse::Create();
-    bool replace_content = true;  // Default: enable body filtering.
-    // In: cookie queries issued so far (DSL knows whether its cap is
-    // reached). Out: n > (entry value) requests a cookie-jar snapshot for
-    // this request; n <= 0 declines and resets the issued count. Preserve n
-    // as the handler's cap and check it again at actual query issue: multiple
-    // requests can be waiting for upstream headers concurrently.
-    const int issued_at_decision = g_cookie_query_issued;
-    int want_cookies = issued_at_decision;
-    const bool intercept = on_get_resource_handler_filter_fptr(
-        browser.get(), frame.get(), request.get(), upstream.get(),
-        response_override.get(), &replace_content, want_cookies);
-    if (want_cookies <= 0) {
-      g_cookie_query_issued = 0;
-      ++g_cookie_query_generation;
-    }
-    const int cookie_snapshot_limit =
-        intercept && want_cookies > issued_at_decision ? want_cookies : 0;
-    const int cookie_snapshot_generation = g_cookie_query_generation;
-    if (intercept) {
-      // Forward with the browser's request context so the upstream
-      // CefURLRequest shares the browser's cookie store (SSO flows
-      // converge upstream instead of looping in the browser).
-      return new MyResourceHandler(upstream, response_override,
-                                   browser->GetHost()->GetRequestContext(),
-                                   frame, replace_content,
-                                   cookie_snapshot_limit,
-                                   cookie_snapshot_generation, browser);
-    }
-  }
-
   return resource_manager_->GetResourceHandler(browser, frame, request);
 }
 
@@ -622,19 +532,63 @@ void BaseClientHandler::OnResourceRedirect(
   CEF_REQUIRE_IO_THREAD();
 
   if (on_resource_redirect_fptr) {
-    const int kMaxUrlSize = 4* 1024;
+    const int kMaxUrlSize = 4 * 1024;
     char buf[kMaxUrlSize + 1];
     memset(buf, 0, sizeof(buf));
     int out_url_size = kMaxUrlSize;
 
     std::string current_url = new_url.ToString();
     if (on_resource_redirect_fptr(browser.get(), frame.get(), request.get(),
-                                  response.get(), current_url.c_str(),
-                                  buf, out_url_size)) {
+                                  response.get(), current_url.c_str(), buf,
+                                  out_url_size)) {
       if (out_url_size > 0 && out_url_size <= kMaxUrlSize) {
         buf[out_url_size] = '\0';
         new_url = std::string(buf, out_url_size);
       }
+    }
+  }
+}
+
+void BaseClientHandler::OnBeforeResourceResponse(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    CefRefPtr<CefResponse> response) {
+  CEF_REQUIRE_IO_THREAD();
+
+  if (on_before_resource_response_fptr) {
+    on_before_resource_response_fptr(browser.get(), frame.get(), request.get(),
+                                     response.get());
+  }
+}
+
+void BaseClientHandler::OnResourceLoadComplete(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    CefRefPtr<CefRequest> request,
+    CefRefPtr<CefResponse> response,
+    URLRequestStatus status,
+    int64_t received_content_length) {
+  CEF_REQUIRE_IO_THREAD();
+
+  if (on_resource_load_complete_fptr) {
+    on_resource_load_complete_fptr(
+        browser.get(), frame.get(), request.get(), response.get(),
+        static_cast<int>(status), received_content_length);
+  }
+}
+
+void BaseClientHandler::OnProtocolExecution(CefRefPtr<CefBrowser> browser,
+                                            CefRefPtr<CefFrame> frame,
+                                            CefRefPtr<CefRequest> request,
+                                            bool& allow_os_execution) {
+  CEF_REQUIRE_IO_THREAD();
+
+  if (on_protocol_execution_fptr) {
+    bool dsl_allow_os_execution = allow_os_execution;
+    if (on_protocol_execution_fptr(browser.get(), frame.get(), request.get(),
+                                   &dsl_allow_os_execution)) {
+      allow_os_execution = dsl_allow_os_execution;
     }
   }
 }

@@ -1,6 +1,4 @@
 #include "HostCLR.h"
-#include "tests/cefclient/browser/cookie_list_bridge.h"
-#include "tests/cefclient/browser/my_resource_handler.h"
 #include "include/base/cef_logging.h"
 #include "include/cef_command_line.h"
 #include "include/cef_browser.h"
@@ -521,12 +519,12 @@ on_devtools_agent_detached_fn on_devtools_agent_detached_fptr = nullptr;
 
 // Resource interception callbacks
 on_before_resource_load_fn on_before_resource_load_fptr = nullptr;
-on_get_resource_handler_filter_fn on_get_resource_handler_filter_fptr = nullptr;
 on_resource_response_filter_fn on_resource_response_filter_fptr = nullptr;
-on_resource_cookie_list_fn on_resource_cookie_list_fptr = nullptr;
-on_resource_auth_challenge_fn on_resource_auth_challenge_fptr = nullptr;
 on_response_content_filter_fn on_response_content_filter_fptr = nullptr;
 on_resource_redirect_fn on_resource_redirect_fptr = nullptr;
+on_before_resource_response_fn on_before_resource_response_fptr = nullptr;
+on_resource_load_complete_fn on_resource_load_complete_fptr = nullptr;
+on_protocol_execution_fn on_protocol_execution_fptr = nullptr;
 
 
 
@@ -746,29 +744,6 @@ typedef int (*response_get_error_fn)(void* response);
 typedef void (*response_set_error_fn)(void* response, int error);
 typedef void (*response_set_url_fn)(void* response, const char* url);
 
-// CookieListBridge snapshot accessors. The pointer is valid only during the
-// on_resource_cookie_list callback.
-typedef int (*cookie_list_get_count_fn)(void* cookie_list);
-typedef const char* (*cookie_list_get_url_fn)(void* cookie_list);
-typedef int (*cookie_list_get_status_fn)(void* cookie_list);
-typedef const char* (*cookie_list_entry_get_name_fn)(void* cookie_list, int index);
-typedef const char* (*cookie_list_entry_get_value_fn)(void* cookie_list, int index);
-typedef const char* (*cookie_list_entry_get_domain_fn)(void* cookie_list, int index);
-typedef const char* (*cookie_list_entry_get_path_fn)(void* cookie_list, int index);
-typedef int (*cookie_list_entry_get_secure_fn)(void* cookie_list, int index);
-typedef int (*cookie_list_entry_get_httponly_fn)(void* cookie_list, int index);
-typedef int (*cookie_list_entry_get_same_site_fn)(void* cookie_list, int index);
-typedef int64_t (*cookie_list_entry_get_creation_fn)(void* cookie_list, int index);
-typedef int64_t (*cookie_list_entry_get_last_access_fn)(void* cookie_list, int index);
-
-// Resolve a pending forwarded-request HTTP authentication challenge. This API
-// is intentionally one-shot and secret-safe: native copies credentials before
-// posting to IO and never logs the password.
-typedef void (*reply_resource_auth_credentials_fn)(uint64_t challenge_id,
-                                                    int accepted,
-                                                    const char* username,
-                                                    const char* password);
-
 // Heartbeat control
 typedef void (*set_heartbeat_interval_fn)(int interval_ms);
 
@@ -882,21 +857,6 @@ typedef struct {
     response_set_url_fn ResponseSetUrl;
     // Heartbeat control
     set_heartbeat_interval_fn SetHeartbeatInterval;
-    // CookieListBridge snapshot accessors
-    cookie_list_get_count_fn CookieListGetCount;
-    cookie_list_get_url_fn CookieListGetUrl;
-    cookie_list_get_status_fn CookieListGetStatus;
-    cookie_list_entry_get_name_fn CookieListEntryGetName;
-    cookie_list_entry_get_value_fn CookieListEntryGetValue;
-    cookie_list_entry_get_domain_fn CookieListEntryGetDomain;
-    cookie_list_entry_get_path_fn CookieListEntryGetPath;
-    cookie_list_entry_get_secure_fn CookieListEntryGetSecure;
-    cookie_list_entry_get_httponly_fn CookieListEntryGetHttponly;
-    cookie_list_entry_get_same_site_fn CookieListEntryGetSameSite;
-    cookie_list_entry_get_creation_fn CookieListEntryGetCreation;
-    cookie_list_entry_get_last_access_fn CookieListEntryGetLastAccess;
-    // Pending forwarded-request HTTP auth reply
-    reply_resource_auth_credentials_fn ReplyResourceAuthCredentials;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -2073,115 +2033,6 @@ void response_set_url(void* response, const char* url)
         url ? CefString(url) : CefString());
 }
 
-// --- CookieListBridge snapshot accessors ---
-
-namespace {
-
-const CookieListBridge::Entry* cookie_list_entry(void* cookie_list, int index)
-{
-    if (!cookie_list) return nullptr;
-    const auto* list = reinterpret_cast<const CookieListBridge*>(cookie_list);
-    if (index < 0 || static_cast<size_t>(index) >= list->entries.size()) {
-        return nullptr;
-    }
-    return &list->entries[static_cast<size_t>(index)];
-}
-
-const char* cookie_list_string_or_null(const std::string& s)
-{
-    if (s.empty()) return nullptr;
-    return alloc_string(s);
-}
-
-}  // namespace
-
-int cookie_list_get_count(void* cookie_list)
-{
-    if (!cookie_list) return 0;
-    return static_cast<int>(
-        reinterpret_cast<const CookieListBridge*>(cookie_list)->entries.size());
-}
-
-const char* cookie_list_get_url(void* cookie_list)
-{
-    if (!cookie_list) return nullptr;
-    return cookie_list_string_or_null(
-        reinterpret_cast<const CookieListBridge*>(cookie_list)->url);
-}
-
-int cookie_list_get_status(void* cookie_list)
-{
-    if (!cookie_list) return 0;
-    return reinterpret_cast<const CookieListBridge*>(cookie_list)->status;
-}
-
-const char* cookie_list_entry_get_name(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? cookie_list_string_or_null(e->name) : nullptr;
-}
-
-const char* cookie_list_entry_get_value(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? cookie_list_string_or_null(e->value) : nullptr;
-}
-
-const char* cookie_list_entry_get_domain(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? cookie_list_string_or_null(e->domain) : nullptr;
-}
-
-const char* cookie_list_entry_get_path(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? cookie_list_string_or_null(e->path) : nullptr;
-}
-
-int cookie_list_entry_get_secure(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return (e && e->secure) ? 1 : 0;
-}
-
-int cookie_list_entry_get_httponly(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return (e && e->httponly) ? 1 : 0;
-}
-
-int cookie_list_entry_get_same_site(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? e->same_site : 0;
-}
-
-int64_t cookie_list_entry_get_creation(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? e->creation : 0;
-}
-
-int64_t cookie_list_entry_get_last_access(void* cookie_list, int index)
-{
-    const auto* e = cookie_list_entry(cookie_list, index);
-    return e ? e->last_access : 0;
-}
-
-void reply_resource_auth_credentials(uint64_t challenge_id,
-                                     int accepted,
-                                     const char* username,
-                                     const char* password)
-{
-    // ReplyResourceAuthCredentials may be called by managed UI/application
-    // code on any thread. Copy both strings before handing them to the
-    // IO-owned auth registry; never log either credential field.
-    ReplyResourceAuthCredentials(challenge_id, accepted != 0,
-                                 username ? username : "",
-                                 password ? password : "");
-}
-
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
@@ -2289,21 +2140,6 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.ResponseSetUrl = &response_set_url;
     // Heartbeat control
     api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
-    // CookieListBridge snapshot accessors
-    api.CookieListGetCount = &cookie_list_get_count;
-    api.CookieListGetUrl = &cookie_list_get_url;
-    api.CookieListGetStatus = &cookie_list_get_status;
-    api.CookieListEntryGetName = &cookie_list_entry_get_name;
-    api.CookieListEntryGetValue = &cookie_list_entry_get_value;
-    api.CookieListEntryGetDomain = &cookie_list_entry_get_domain;
-    api.CookieListEntryGetPath = &cookie_list_entry_get_path;
-    api.CookieListEntryGetSecure = &cookie_list_entry_get_secure;
-    api.CookieListEntryGetHttponly = &cookie_list_entry_get_httponly;
-    api.CookieListEntryGetSameSite = &cookie_list_entry_get_same_site;
-    api.CookieListEntryGetCreation = &cookie_list_entry_get_creation;
-    api.CookieListEntryGetLastAccess = &cookie_list_entry_get_last_access;
-    // Pending forwarded-request HTTP auth reply
-    api.ReplyResourceAuthCredentials = &reply_resource_auth_credentials;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -2438,39 +2274,6 @@ int load_dotnet_method(bool is_debug, int& rc)
     rc = load_assembly_and_get_function_pointer(
     dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    CHAR_T_LITERAL("OnGetResourceHandlerFilter"),
-    CHAR_T_LITERAL("DotNetLib.Lib+OnGetResourceHandlerFilterDelegation, CefDotnetApp"),
-    nullptr,
-    (void**)&on_get_resource_handler_filter_fptr);
-    if (rc || !on_get_resource_handler_filter_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_get_resource_handler_filter");
-    }
-
-    rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path.c_str(),
-    dotnet_class_name,
-    CHAR_T_LITERAL("OnResourceCookieList"),
-    CHAR_T_LITERAL("DotNetLib.Lib+OnResourceCookieListDelegation, CefDotnetApp"),
-    nullptr,
-    (void**)&on_resource_cookie_list_fptr);
-    if (rc || !on_resource_cookie_list_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_resource_cookie_list");
-    }
-
-    rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path.c_str(),
-    dotnet_class_name,
-    CHAR_T_LITERAL("OnResourceAuthChallenge"),
-    CHAR_T_LITERAL("DotNetLib.Lib+OnResourceAuthChallengeDelegation, CefDotnetApp"),
-    nullptr,
-    (void**)&on_resource_auth_challenge_fptr);
-    if (rc || !on_resource_auth_challenge_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_resource_auth_challenge");
-    }
-
-    rc = load_assembly_and_get_function_pointer(
-    dotnet_assembly_path.c_str(),
-    dotnet_class_name,
     CHAR_T_LITERAL("OnResponseContentFilter"),
     CHAR_T_LITERAL("DotNetLib.Lib+OnResponseContentFilterDelegation, CefDotnetApp"),
     nullptr,
@@ -2488,6 +2291,39 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_resource_redirect_fptr);
     if (rc || !on_resource_redirect_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_resource_redirect");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnBeforeResourceResponse"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBeforeResourceResponseDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_before_resource_response_fptr);
+    if (rc || !on_before_resource_response_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_resource_response");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnResourceLoadComplete"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnResourceLoadCompleteDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_resource_load_complete_fptr);
+    if (rc || !on_resource_load_complete_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_resource_load_complete");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnProtocolExecution"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnProtocolExecutionDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_protocol_execution_fptr);
+    if (rc || !on_protocol_execution_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_protocol_execution");
     }
 
     rc = load_assembly_and_get_function_pointer(

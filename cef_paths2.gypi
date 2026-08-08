@@ -277,8 +277,6 @@
       'tests/cefclient/browser/main_context_impl.h',
       'tests/cefclient/browser/media_router_test.cc',
       'tests/cefclient/browser/media_router_test.h',
-      'tests/cefclient/browser/my_resource_handler.cc',
-      'tests/cefclient/browser/my_resource_handler.h',
       'tests/cefclient/browser/my_response_filter.cc',
       'tests/cefclient/browser/my_response_filter.h',
       'tests/cefclient/browser/osr_dragdrop_events.h',
