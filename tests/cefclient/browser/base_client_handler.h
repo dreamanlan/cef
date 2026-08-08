@@ -114,6 +114,11 @@ class BaseClientHandler : public CefClient,
       CefRefPtr<CefFrame> frame,
       CefRefPtr<CefRequest> request,
       CefRefPtr<CefResponse> response) override;
+  void OnResourceRedirect(CefRefPtr<CefBrowser> browser,
+                          CefRefPtr<CefFrame> frame,
+                          CefRefPtr<CefRequest> request,
+                          CefRefPtr<CefResponse> response,
+                          CefString& new_url) override;
 
   // Returns the number of browsers currently using this handler. Can only be
   // called on the CEF UI thread.

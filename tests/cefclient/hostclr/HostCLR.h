@@ -3,6 +3,7 @@
 #include "path_utils.h"
 #include "include/cef_browser.h"
 #include "include/cef_frame.h"
+#include <cstdint>
 #include <string>
 
 // Cross-platform character set conversion functions
@@ -58,20 +59,55 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* br
 
 // Resource interception hooks (browser process, IO thread).
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int& out_return_value);
-// on_resource_response_filter: called from BaseClientHandler::GetResourceHandler
-// (decision mode, response is an empty writable CefResponse for C# to fill
-// header overrides into) and from BaseClientHandler::GetResourceResponseFilter
-// (inspection mode, response is the actual upstream response for read-only
-// inspection).
-// Returns true to intercept the resource with MyResourceHandler (decision
-// mode) or to register MyResponseFilter for body filtering (inspection
-// mode). |response| is always writable (created by native, never read-only).
+// on_get_resource_handler_filter: called from
+// BaseClientHandler::GetResourceHandler (decision mode). Returns true to
+// intercept the resource with MyResourceHandler.
+// |request| is the original CEF request (read-only here). Its ResourceType /
+// TransitionType / Identifier are always authoritative.
+// |request_override| is a mutable copy of the upstream request: DSL may edit
+// its URL / headers / referrer / flags via CefRequest setters, and the same
+// object is reused by MyResourceHandler when creating the forwarded
+// CefURLRequest (no second copy). Note: ResourceType / TransitionType /
+// Identifier are NOT copied (CEF has no public setters); read them from
+// |request| if needed.
+// |response_override| is an empty writable CefResponse for C# to fill header
+// overrides into.
 // |out_replace_content| receives whether to enable body filtering:
-//   false = skip body filter (inspection mode: don't register MyResponseFilter;
-//           decision mode: MyResourceHandler only applies header overrides,
-//           passes body through unchanged).
+//   false = MyResourceHandler only applies header overrides, passes the body
+//           through unchanged.
 //   true  = enable body filter (default).
+// |io_want_cookies| carries the cookie-snapshot budget. On entry it holds
+// the number of cookie queries issued so far (so DSL knows whether its cap
+// is reached). On return:
+//   n > (entry value) = request a cookie-jar snapshot for this request,
+//     delivered via on_resource_cookie_list once the upstream response
+//     headers arrive (jar has ingested the response's Set-Cookie by then).
+//     The returned n acts as the DSL-specified global cap.
+//   n <= 0 = decline and reset the issued count to 0. Pending snapshots
+//     armed before the reset are invalidated.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_get_resource_handler_filter_fn)(void* browser, void* frame, void* request, void* request_override, void* response_override, bool* out_replace_content, int& io_want_cookies);
+// on_resource_response_filter: called from
+// BaseClientHandler::GetResourceResponseFilter (inspection mode) with the
+// actual upstream response for read-only inspection. |request| is the
+// actual CEF request. Returns true to register MyResponseFilter for body
+// filtering; |out_replace_content| false skips the body filter (C# only
+// inspected the response).
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_response_filter_fn)(void* browser, void* frame, void* request, void* response, bool* out_replace_content);
+// on_resource_cookie_list: delivers a completed cookie-jar snapshot
+// (CookieListBridge, see browser/cookie_list_bridge.h) requested via
+// io_want_cookies. |cookie_list| is valid only for the duration of this
+// call. Field accessors are the cookie_list_* host APIs.
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_resource_cookie_list_fn)(void* cookie_list);
+// on_resource_auth_challenge: called on the CEF IO thread when a forwarded
+// CefURLRequest receives a real HTTP/proxy authentication challenge. Returns
+// true only when C# accepted ownership of the challenge and will resolve it
+// through HostApi::ReplyResourceAuthCredentials; false cancels it immediately.
+// |browser| is the originating CefBrowser and is valid only for this callback
+// (as with other IO-thread callbacks). C# clears its temporary native context
+// before returning; pending challenge state retains no raw browser pointer.
+// No password is passed in this direction. |challenge_id| is one-shot and
+// expires after the native timeout.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_auth_challenge_fn)(void* browser, uint64_t challenge_id, const char* url, int is_proxy, const char* host, int port, const char* realm, const char* scheme);
 // on_response_content_filter: streams body chunks through C# for transformation.
 // Returns true if DSL handled the chunk (use DSL's outputs), false to pass
 // through unchanged. out_status receives the filter status (0=DONE,
@@ -82,6 +118,10 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_response_filter_fn)(void* b
 // No browser/frame params: CefResourceHandler::Read / CefResponseFilter::Filter
 // signatures do not carry them, and the body filter is a pure data transform.
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_response_content_filter_fn)(const void* data_in, int data_in_size, void* data_out, int data_out_size, int& out_data_in_read, int& out_data_out_written, int& out_status);
+// on_resource_redirect: called from BaseClientHandler::OnResourceRedirect.
+// Returns true if DSL provides a replacement URL. The new URL is written to
+// out_url (UTF-8) and out_url_size is set to the number of bytes written.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_resource_redirect_fn)(void* browser, void* frame, void* request, void* response, const char* new_url, char* out_url, int& out_url_size);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -119,8 +159,12 @@ extern on_devtools_event_fn on_devtools_event_fptr;
 extern on_devtools_agent_attached_fn on_devtools_agent_attached_fptr;
 extern on_devtools_agent_detached_fn on_devtools_agent_detached_fptr;
 
+extern on_get_resource_handler_filter_fn on_get_resource_handler_filter_fptr;
 extern on_resource_response_filter_fn on_resource_response_filter_fptr;
+extern on_resource_cookie_list_fn on_resource_cookie_list_fptr;
+extern on_resource_auth_challenge_fn on_resource_auth_challenge_fptr;
 extern on_response_content_filter_fn on_response_content_filter_fptr;
+extern on_resource_redirect_fn on_resource_redirect_fptr;
 
 // Start/stop heartbeat timer
 extern void StartHeartbeat(int process_type);
