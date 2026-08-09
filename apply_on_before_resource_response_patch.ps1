@@ -63,6 +63,8 @@ function Replace-Exact {
         [string]$Description
     )
 
+    $OldText = $OldText.Replace("`r`n", "`n").Replace("`r", "`n")
+    $NewText = $NewText.Replace("`r`n", "`n").Replace("`r", "`n")
     $text = Get-NormalizedText $Path
     if ($text.Contains($NewText)) {
         Write-Host "Already applied: $Description"
