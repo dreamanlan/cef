@@ -14,7 +14,8 @@ def read_normalized(path):
 
 
 def write_normalized(path, text):
-    path.write_text(text, encoding="utf-8", newline="\n")
+    with path.open("w", encoding="utf-8", newline="\n") as file:
+        file.write(text)
 
 
 def replace_exact(path, old_text, new_text, description):
@@ -322,7 +323,10 @@ def main():
 
     proxy_old = """\
   override_headers_ = override_headers;
-  if (override_headers_ && current_response_) {
+  if (override_headers_) {
+    // Make sure to update current_response_, since when OnReceiveResponse
+    // is called we will not use its headers as it might be missing the
+    // Set-Cookie line (which gets stripped by the IPC layer).
     current_response_->headers = override_headers_;
   }
   redirect_url_ = redirect_url;

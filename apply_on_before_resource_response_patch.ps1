@@ -335,7 +335,10 @@ if (Replace-Exact `
 
 $proxyOld = @'
   override_headers_ = override_headers;
-  if (override_headers_ && current_response_) {
+  if (override_headers_) {
+    // Make sure to update current_response_, since when OnReceiveResponse
+    // is called we will not use its headers as it might be missing the
+    // Set-Cookie line (which gets stripped by the IPC layer).
     current_response_->headers = override_headers_;
   }
   redirect_url_ = redirect_url;
