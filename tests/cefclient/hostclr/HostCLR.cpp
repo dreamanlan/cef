@@ -902,7 +902,7 @@ void send_cef_message(const char* msg_str, const char** args, int argCount, void
 }
 void send_javascript_code(const char* code, void* browser, void* frame)
 {
-    if (!code) {
+    if (!code || code[0] == '\0') {
         return;
     }
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
@@ -979,7 +979,7 @@ const char* call_javascript_func_in_renderer(const char* func, const char** args
 
 const char* execute_javascript_in_renderer(const char* code, void* browser, void* frame)
 {
-    if (!code) {
+    if (!code || code[0] == '\0') {
         return nullptr;
     }
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
@@ -1008,7 +1008,7 @@ void free_native_string(const char* str)
 
 bool command_line_has_switch(void* command_line, const char* name)
 {
-    if (!command_line || !name) {
+    if (!command_line || !name || name[0] == '\0') {
         return false;
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
@@ -1017,7 +1017,7 @@ bool command_line_has_switch(void* command_line, const char* name)
 
 const char* command_line_get_switch_value(void* command_line, const char* name)
 {
-    if (!command_line || !name) {
+    if (!command_line || !name || name[0] == '\0') {
         return nullptr;
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
@@ -1034,7 +1034,7 @@ const char* command_line_get_switch_value(void* command_line, const char* name)
 
 void command_line_append_switch(void* command_line, const char* name)
 {
-    if (!command_line || !name) {
+    if (!command_line || !name || name[0] == '\0') {
         return;
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
@@ -1043,16 +1043,22 @@ void command_line_append_switch(void* command_line, const char* name)
 
 void command_line_append_switch_with_value(void* command_line, const char* name, const char* value)
 {
-    if (!command_line || !name) {
+    if (!command_line || !name || name[0] == '\0') {
         return;
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
-    pCommandLine->AppendSwitchWithValue(name, value ? value : "");
+    // AppendSwitchWithValue rejects empty value with a DCHECK in debug builds;
+    // fall back to a plain switch when no value is provided.
+    if (!value || value[0] == '\0') {
+        pCommandLine->AppendSwitch(name);
+        return;
+    }
+    pCommandLine->AppendSwitchWithValue(name, value);
 }
 
 void command_line_remove_switch(void* command_line, const char* name)
 {
-    if (!command_line || !name) {
+    if (!command_line || !name || name[0] == '\0') {
         return;
     }
     auto* pCommandLine = reinterpret_cast<CefCommandLine*>(command_line);
@@ -1097,7 +1103,7 @@ const char* command_line_get_program(void* command_line)
 
 void command_line_set_program(void* command_line, const char* program)
 {
-    if (!command_line || !program) return;
+    if (!command_line || !program || program[0] == '\0') return;
     reinterpret_cast<CefCommandLine*>(command_line)->SetProgram(program);
 }
 
@@ -1157,13 +1163,13 @@ const char* command_line_get_arguments(void* command_line)
 
 void command_line_append_argument(void* command_line, const char* argument)
 {
-    if (!command_line || !argument) return;
+    if (!command_line || !argument || argument[0] == '\0') return;
     reinterpret_cast<CefCommandLine*>(command_line)->AppendArgument(argument);
 }
 
 void command_line_prepend_wrapper(void* command_line, const char* wrapper)
 {
-    if (!command_line || !wrapper) return;
+    if (!command_line || !wrapper || wrapper[0] == '\0') return;
     reinterpret_cast<CefCommandLine*>(command_line)->PrependWrapper(wrapper);
 }
 
@@ -1795,9 +1801,9 @@ uint64_t request_get_identifier(void* request)
 
 void request_set_url(void* request, const char* url)
 {
-    if (!request) return;
-    reinterpret_cast<CefRequest*>(request)->SetURL(
-        url ? CefString(url) : CefString());
+    // CefRequest::SetURL rejects empty url with a DCHECK in debug builds.
+    if (!request || !url || url[0] == '\0') return;
+    reinterpret_cast<CefRequest*>(request)->SetURL(url);
 }
 
 void request_set_flags(void* request, int flags)
@@ -1815,7 +1821,8 @@ void request_set_first_party_for_cookies(void* request, const char* url)
 
 void request_set_header_by_name(void* request, const char* name, const char* value, int overwrite)
 {
-    if (!request || !name) return;
+    // SetHeaderByName rejects an empty name with a DCHECK in debug builds.
+    if (!request || !name || name[0] == '\0') return;
     reinterpret_cast<CefRequest*>(request)->SetHeaderByName(
         name, value ? CefString(value) : CefString(), overwrite != 0);
 }
@@ -1965,7 +1972,8 @@ const char* response_get_header_by_name(void* response, const char* name)
 
 void response_set_header_by_name(void* response, const char* name, const char* value, int overwrite)
 {
-    if (!response || !name) return;
+    // SetHeaderByName rejects an empty name with a DCHECK in debug builds.
+    if (!response || !name || name[0] == '\0') return;
     reinterpret_cast<CefResponse*>(response)->SetHeaderByName(
         name, value ? CefString(value) : CefString(), overwrite != 0);
 }

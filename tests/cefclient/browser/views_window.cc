@@ -284,7 +284,8 @@ void ViewsWindow::SetAddress(const std::string& url) {
   }
 
   // |location_bar_| may instead be a Chrome toolbar.
-  if (location_bar_ && location_bar_->AsTextfield()) {
+  // CefTextfield::SetText rejects empty text with a DCHECK in debug builds.
+  if (location_bar_ && location_bar_->AsTextfield() && !url.empty()) {
     location_bar_->AsTextfield()->SetText(url);
   }
 }
@@ -295,7 +296,8 @@ void ViewsWindow::SetTitle(const std::string& title) {
     window_->SetTitle(title);
   }
 #if defined(OS_WIN)
-  if (title_label_) {
+  // CefLabelButton::SetText rejects empty text with a DCHECK in debug builds.
+  if (title_label_ && !title.empty()) {
     title_label_->SetText(title);
   }
 #endif
