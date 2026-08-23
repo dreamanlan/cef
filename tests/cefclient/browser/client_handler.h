@@ -18,6 +18,8 @@
 #if defined(OS_LINUX)
 #include "tests/cefclient/browser/dialog_handler_gtk.h"
 #include "tests/cefclient/browser/print_handler_gtk.h"
+#else
+#include "tests/cefclient/hostclr/js_dialog_handler.h"
 #endif
 
 namespace client {
@@ -140,6 +142,13 @@ class ClientHandler : public BaseClientHandler,
   }
   CefRefPtr<CefPrintHandler> GetPrintHandler() override {
     return print_handler_;
+  }
+#else
+  // Route JS dialogs (alert/confirm/prompt/beforeunload) to managed code. When
+  // managed code declines, the handler returns false and CEF falls back to its
+  // own dialog implementation - identical to registering no handler at all.
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override {
+    return managed_js_dialog_handler_;
   }
 #endif
 
@@ -407,6 +416,9 @@ class ClientHandler : public BaseClientHandler,
   CefRefPtr<ClientDialogHandlerGtk> file_dialog_handler_;
   CefRefPtr<ClientDialogHandlerGtk> js_dialog_handler_;
   CefRefPtr<ClientPrintHandlerGtk> print_handler_;
+#else
+  // JS dialog handler that forwards to managed code.
+  CefRefPtr<ClientJSDialogHandler> managed_js_dialog_handler_;
 #endif
 
   // Safe to access from any thread during browser lifetime.

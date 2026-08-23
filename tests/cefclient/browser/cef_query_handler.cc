@@ -9,6 +9,8 @@
 #include <filesystem>
 #include <thread>
 #include <chrono>
+#include <map>
+#include <mutex>
 
 #include "include/base/cef_callback.h"
 #include "include/base/cef_logging.h"
@@ -19,6 +21,7 @@
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/browser/test_runner.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
+#include "tests/cefclient/hostclr/native_callbacks.h"
 
 namespace client::cef_query_handler {
 
@@ -163,6 +166,40 @@ bool CopyFile(const std::string& source, const std::string& dest) {
   return false;
 }
 
+// Maps a pending query to the native callback handle parked for it. Needed by
+// OnQueryCanceled: once CEF cancels a query the Callback object must be dropped
+// without executing any of its methods, so the entry has to be discarded
+// instead of completed. Static (not a Handler member) so lookups stay valid
+// regardless of Handler lifetime; guarded because completion may run on any
+// browser process thread.
+std::mutex& GetPendingQueryMutex() {
+  static auto* s_m = new std::mutex();
+  return *s_m;
+}
+
+std::map<int64_t, int64_t>& GetPendingQueryMap() {
+  static auto* s_map = new std::map<int64_t, int64_t>();
+  return *s_map;
+}
+
+void TrackPendingQuery(int64_t query_id, int64_t handle) {
+  std::lock_guard<std::mutex> lock(GetPendingQueryMutex());
+  GetPendingQueryMap()[query_id] = handle;
+}
+
+// Returns the handle and forgets the query, or 0 when it is already gone.
+int64_t UntrackPendingQuery(int64_t query_id) {
+  std::lock_guard<std::mutex> lock(GetPendingQueryMutex());
+  auto& m = GetPendingQueryMap();
+  auto it = m.find(query_id);
+  if (it == m.end()) {
+    return 0;
+  }
+  const int64_t handle = it->second;
+  m.erase(it);
+  return handle;
+}
+
 // Handle messages in the browser process for hot reload
 class Handler : public CefMessageRouterBrowserSide::Handler {
  public:
@@ -178,6 +215,21 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     printf_log(LOG_SEVERITY_INFO, "[CefQueryHandler] calling RunOnMainThread with request: %lld(%s) persistent:%d", query_id, request.ToString().c_str(), persistent);
     RunOnMainThread(browser, frame, query_id, request.ToString(), persistent, callback);
     return true;
+  }
+
+  void OnQueryCanceled(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       int64_t query_id) override {
+    // The Callback object must not be used any more, so drop the parked entry
+    // without running it. Discard is idempotent, so an already completed query
+    // is harmless here.
+    const int64_t handle = UntrackPendingQuery(query_id);
+    if (handle != 0) {
+      printf_log(LOG_SEVERITY_INFO,
+                "[CefQueryHandler] query %lld canceled, discarding handle %lld",
+                query_id, handle);
+      DiscardNativeCallback(handle);
+    }
   }
 
   private:
@@ -244,14 +296,65 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     // try to call C# handler
     if (on_browser_cef_query_fptr) {
       printf_log(LOG_SEVERITY_INFO, "[CefQueryHandler] try to call C# handler: %lld", query_id);
-      int result = on_browser_cef_query_fptr(browser.get(), frame.get(), query_id, request.ToString().c_str(), persistent);
-      if (result == 0) {
+
+      // Park the callback before calling managed code so the query can be
+      // answered asynchronously. Callback methods may be invoked on any browser
+      // process thread, but the handler itself runs on the main thread, so keep
+      // the completion there for consistency.
+      const int browser_id = browser.get() ? browser->GetIdentifier() : 0;
+      const int64_t handle = RegisterNativeCallback(
+          browser_id, TID_UI,
+          [callback, query_id](bool ok, const std::string& response,
+                               int error_code) {
+            // Forget the query first: after Success/Failure the Callback is
+            // spent and OnQueryCanceled will not arrive for it.
+            UntrackPendingQuery(query_id);
+            if (!callback) {
+              return;
+            }
+            if (ok) {
+              callback->Success(CefString(response));
+            } else {
+              // A registry timeout or a browser-close cancel arrives with an
+              // empty payload; give the page something diagnosable.
+              callback->Failure(error_code,
+                                response.empty()
+                                    ? CefString("ERROR: query canceled or timed out")
+                                    : CefString(response));
+            }
+          },
+          kCefQueryTimeoutMs);
+      TrackPendingQuery(query_id, handle);
+
+      int out_result = 0;
+      if (on_browser_cef_query_fptr(browser.get(), frame.get(), query_id,
+                                    request.ToString().c_str(), persistent,
+                                    handle, out_result)) {
+        // Taken over: managed code owns the query and must complete |handle|.
+        // Safety nets when it never does: OnQueryCanceled discards the entry on
+        // navigation / renderer termination / window.cefQueryCancel, the
+        // registry expires it after kCefQueryTimeoutMs, and
+        // BaseClientHandler::OnBeforeClose cancels everything the browser owns.
+        return;
+      }
+      // Handled synchronously (also the degraded path when managed code fails,
+      // since false is the default return value): answer right away.
+      UntrackPendingQuery(query_id);
+      DiscardNativeCallback(handle);
+      if (out_result == 0) {
         callback->Success("OK");
       }
       else {
-        callback->Failure(result, "ERROR: C# handler failed");
+        callback->Failure(out_result, "ERROR: C# handler failed");
       }
+      return;
     }
+
+    // No managed handler at all: answer so the page's onFailure runs instead of
+    // the query hanging forever.
+    printf_log(LOG_SEVERITY_WARNING,
+              "[CefQueryHandler] no managed handler for query %lld", query_id);
+    callback->Failure(-1, "ERROR: no handler");
   }
 
   static void CopyFiles(const HotReloadRequest& reload_request) {

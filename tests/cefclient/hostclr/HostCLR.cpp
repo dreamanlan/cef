@@ -1,4 +1,5 @@
 #include "HostCLR.h"
+#include "native_callbacks.h"
 #include "include/base/cef_logging.h"
 #include "include/cef_command_line.h"
 #include "include/cef_browser.h"
@@ -526,6 +527,9 @@ on_before_resource_response_fn on_before_resource_response_fptr = nullptr;
 on_resource_load_complete_fn on_resource_load_complete_fptr = nullptr;
 on_protocol_execution_fn on_protocol_execution_fptr = nullptr;
 
+// JS dialog callback (browser process, UI thread)
+on_js_dialog_fn on_js_dialog_fptr = nullptr;
+
 
 
 // Ref containers (browser+renderer) are protected by a single mutex.
@@ -580,13 +584,22 @@ class HeartbeatTask : public CefTask {
  public:
   HeartbeatTask() = default;
   void Execute() override {
-    if (!g_heartbeat_running || !on_heart_beat_fptr) {
+    if (!g_heartbeat_running) {
       return;
+    }
+    // Expire native callbacks that managed code took over and never completed.
+    // Done here rather than inside the managed hook so it keeps working even
+    // when no managed heartbeat handler is loaded. Browser process only: the
+    // registry entries of the renderer process (if any) would use TID_RENDERER.
+    if (g_heartbeat_process_type == 0) {
+      SweepExpiredNativeCallbacks();
     }
     auto now = std::chrono::steady_clock::now();
     float delta_ms = std::chrono::duration<float, std::milli>(now - g_heartbeat_last_time).count();
     g_heartbeat_last_time = now;
-    on_heart_beat_fptr(g_heartbeat_process_type, delta_ms);
+    if (on_heart_beat_fptr) {
+      on_heart_beat_fptr(g_heartbeat_process_type, delta_ms);
+    }
     // Schedule next heartbeat
     if (g_heartbeat_running) {
       cef_thread_id_t tid = (g_heartbeat_process_type == 0) ? TID_UI : TID_RENDERER;
@@ -747,6 +760,10 @@ typedef void (*response_set_url_fn)(void* response, const char* url);
 // Heartbeat control
 typedef void (*set_heartbeat_interval_fn)(int interval_ms);
 
+// Generic async callback completion (see native_callbacks.h). Callable from any
+// thread; the pending CEF callback is resumed on the thread it belongs to.
+typedef int (*native_callback_complete_fn)(int64_t handle, int ok, const char* data, int code);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -857,6 +874,8 @@ typedef struct {
     response_set_url_fn ResponseSetUrl;
     // Heartbeat control
     set_heartbeat_interval_fn SetHeartbeatInterval;
+    // Generic async callback completion
+    native_callback_complete_fn NativeCallbackComplete;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -2148,6 +2167,8 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.ResponseSetUrl = &response_set_url;
     // Heartbeat control
     api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
+    // Generic async callback completion
+    api.NativeCallbackComplete = &native_callback_complete;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -2563,6 +2584,17 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_before_resource_load_fptr);
     if (rc || !on_before_resource_load_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_before_resource_load");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnJsDialog"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnJsDialogDelegation, CefDotnetApp"),
+    nullptr,
+    (void**)&on_js_dialog_fptr);
+    if (rc || !on_js_dialog_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_js_dialog");
     }
 
     rc = load_assembly_and_get_function_pointer(

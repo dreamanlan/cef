@@ -12,6 +12,7 @@
 #include "tests/cefclient/browser/my_response_filter.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
+#include "tests/cefclient/hostclr/native_callbacks.h"
 #include "tests/shared/common/client_switches.h"
 #include "tests/shared/common/string_util.h"
 
@@ -147,6 +148,10 @@ void BaseClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
 
   printf_log(LOG_SEVERITY_INFO, "OnBeforeClose: Browser %d closing",
             browser->GetIdentifier());
+
+  // Cancel any async callback this browser still owns (JS dialogs, deferred
+  // resource loads). Pending operations must never outlive their browser.
+  CancelBrowserCallbacks(browser->GetIdentifier());
 
   // Release the DevTools observer registration for this browser.
   UnregisterDevToolsObserver(browser.get());
@@ -467,17 +472,41 @@ cef_return_value_t BaseClientHandler::OnBeforeResourceLoad(
 
   if (on_before_resource_load_fptr) {
     int out_return_value = static_cast<int>(RV_CONTINUE);
+    // Park the callback before calling managed code so RV_CONTINUE_ASYNC can be
+    // honored: the handle is passed in as an input argument and managed code
+    // resumes the request later through complete_native_callback. CefCallback
+    // must be resumed on the IO thread, hence TID_IO.
+    const int browser_id = browser ? browser->GetIdentifier() : 0;
+    const int64_t handle = RegisterNativeCallback(
+        browser_id, TID_IO,
+        [callback](bool ok, const std::string& /*data*/, int /*code*/) {
+          if (!callback) {
+            return;
+          }
+          if (ok) {
+            callback->Continue();
+          } else {
+            callback->Cancel();
+          }
+        },
+        kResourceLoadTimeoutMs);
+
     if (on_before_resource_load_fptr(browser.get(), frame.get(), request.get(),
-                                     out_return_value)) {
-      // DSL has no access to the native callback, so RV_CONTINUE_ASYNC has no
-      // async semantic here and would hang the request (nobody holds the
-      // callback to Continue/Cancel it later). Coerce anything other than
-      // RV_CONTINUE to RV_CANCEL: safe-by-default, cancels instead of hangs.
+                                     handle, out_return_value)) {
+      if (out_return_value == RV_CONTINUE_ASYNC) {
+        // Managed code owns the request now and must complete |handle|,
+        // otherwise the request stays pending until the browser closes.
+        return RV_CONTINUE_ASYNC;
+      }
+      DiscardNativeCallback(handle);
+      // Any other unexpected value is coerced to RV_CANCEL: safe-by-default,
+      // cancels instead of hanging.
       if (out_return_value != RV_CONTINUE) {
         out_return_value = RV_CANCEL;
       }
       return static_cast<cef_return_value_t>(out_return_value);
     }
+    DiscardNativeCallback(handle);
   }
 
   return resource_manager_->OnBeforeResourceLoad(browser, frame, request,

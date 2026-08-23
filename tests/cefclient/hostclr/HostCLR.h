@@ -28,7 +28,17 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_init_fn)(void* browser);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_finalize_fn)(void* browser);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_copyfiles_fn)(const char* url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_completed_fn)(void* browser, void* frame, const char* url);
-typedef int (CORECLR_DELEGATE_CALLTYPE* on_browser_cef_query_fn)(void* browser, void* frame, int64_t query_id, const char* request, bool persistent);
+// on_browser_cef_query: called when the page calls window.cefQuery
+// (browser process, UI thread). |handle| identifies the parked
+// CefMessageRouterBrowserSide::Callback in the generic native callback registry.
+// Returns false (the default/failure value, so a managed error degrades safely)
+// when the query was handled synchronously: |out_result| then holds the result
+// code (0 = Success, non-zero = Failure with that code) and the handle is
+// discarded by the caller.
+// Returns true to take the query over asynchronously: the managed side must
+// later call complete_native_callback(handle, ok, response, error_code), where
+// ok=true sends Success(response) and ok=false sends Failure(error_code, response).
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_cef_query_fn)(void* browser, void* frame, int64_t query_id, const char* request, bool persistent, int64_t handle, int& out_result);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_init_fn)(void* browser, void* frame, const char* url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_finalize_fn)(void* browser, void* frame);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_loading_state_change_fn)(void* browser, void* frame, const char* url, bool is_loading, bool can_go_back, bool can_go_forward);
@@ -58,7 +68,12 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_attached_fn)(void* br
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* browser);
 
 // Resource interception hooks (browser process, IO thread).
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int& out_return_value);
+// |handle| identifies the parked CefCallback in the generic native callback
+// registry (see native_callbacks.h). It is only meaningful when C# sets
+// out_return_value to RV_CONTINUE_ASYNC(2): the managed side must then call
+// complete_native_callback(handle, ok) later or the request stays pending.
+// For RV_CONTINUE / RV_CANCEL the handle is discarded by the caller.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_resource_load_fn)(void* browser, void* frame, void* request, int64_t handle, int& out_return_value);
 // on_resource_response_filter: called from
 // BaseClientHandler::GetResourceResponseFilter (inspection mode) with the
 // actual upstream response for read-only inspection. |request| is the
@@ -90,6 +105,21 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_resource_load_complete_fn)(void* bro
 // on_protocol_execution: called for an unknown URL scheme. Return true only
 // when C# supplies |out_allow_os_execution|; false preserves CEF's default.
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_protocol_execution_fn)(void* browser, void* frame, void* request, bool* out_allow_os_execution);
+
+// on_js_dialog: called for alert / confirm / prompt / beforeunload dialogs
+// (browser process, UI thread). |dialog_type| is 0=alert, 1=confirm, 2=prompt,
+// 3=beforeunload. |handle| identifies the parked CefJSDialogCallback in the
+// generic native callback registry.
+// Return value (see client::JsDialogDecision):
+//   0 = not taken over, use the CEF default dialog
+//   1 = taken over, managed side shows a custom dialog
+//   2 = suppress the message (ignored for beforeunload)
+//   3 = taken over, the script handles display and completion itself
+// When taking over (1 or 3) the managed side must eventually call
+// complete_native_callback(handle, ok, data) or the page hangs.
+// No frame parameter: CEF does not provide one for JS dialogs; executing
+// JavaScript falls back to the browser's main frame.
+typedef int (CORECLR_DELEGATE_CALLTYPE* on_js_dialog_fn)(void* browser, int dialog_type, const char* origin_url, const char* message_text, const char* default_prompt_text, int64_t handle);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -133,6 +163,8 @@ extern on_resource_redirect_fn on_resource_redirect_fptr;
 extern on_before_resource_response_fn on_before_resource_response_fptr;
 extern on_resource_load_complete_fn on_resource_load_complete_fptr;
 extern on_protocol_execution_fn on_protocol_execution_fptr;
+
+extern on_js_dialog_fn on_js_dialog_fptr;
 
 // Start/stop heartbeat timer
 extern void StartHeartbeat(int process_type);

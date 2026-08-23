@@ -569,6 +569,10 @@ ClientHandler::ClientHandler(Delegate* delegate,
       print_handler_ = new ClientPrintHandlerGtk();
     }
   }
+#else
+  // Managed JS dialog bridge. Harmless when no managed hook is registered:
+  // the handler returns false and CEF uses its default dialog implementation.
+  managed_js_dialog_handler_ = new ClientJSDialogHandler();
 #endif  // defined(OS_LINUX)
 }
 
