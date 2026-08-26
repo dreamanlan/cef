@@ -302,7 +302,12 @@ void BaseClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
             httpStatusCode, inject_all_frame_, frame->IsMain());
 
   const int max_size = 4 * 1024 * 1024;
-  if (inject_all_frame_ || frame->IsMain()) {
+  if (!on_load_end_fptr && !inject_all_frame_ && !frame->IsMain()) {
+    // No custom handler and sub-frame injection is disabled; nothing to do.
+    return;
+  }
+
+  {
     char* buf = new char[max_size + 1];
     memset(buf, 0, max_size + 1);
 
@@ -318,7 +323,9 @@ void BaseClientHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
       }
     }
 
-    if (!use_custom_code) {
+    // The default inject.js path is gated by inject_all_frame_/main frame;
+    // the custom callback above decides on its own for every frame.
+    if (!use_custom_code && (inject_all_frame_ || frame->IsMain())) {
 #if defined(__APPLE__)
       std::string baseDir = GetMacMainAppDirPath();
       std::string lastDirName = GetMacMainAppDirName();
