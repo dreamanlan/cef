@@ -2177,6 +2177,7 @@ if (is_mac) {
       "AppKit.framework",
       "IOSurface.framework",
       "OpenGL.framework",
+      "Security.framework",
     ]
     libs = [
       "//cef/tests/cefclient/hostclr/coreclr/libnethost.a",

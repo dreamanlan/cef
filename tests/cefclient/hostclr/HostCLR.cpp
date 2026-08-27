@@ -504,6 +504,9 @@ on_renderer_load_error_fn on_renderer_load_error_fptr = nullptr;
 on_receive_cef_message_fn on_receive_cef_message_fptr = nullptr;
 on_execute_metadsl_fn on_execute_metadsl_fptr = nullptr;
 on_before_command_line_processing_fn on_before_command_line_processing_fptr = nullptr;
+on_get_auth_credentials_fn on_get_auth_credentials_fptr = nullptr;
+on_request_media_access_permission_fn on_request_media_access_permission_fptr = nullptr;
+on_certificate_error_fn on_certificate_error_fptr = nullptr;
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
 on_before_browse_fn on_before_browse_fptr = nullptr;
@@ -2463,6 +2466,39 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_load_end_fptr);
     if (rc || !on_load_end_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_load_end");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnGetAuthCredentials"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnGetAuthCredentialsDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_get_auth_credentials_fptr);
+    if (rc || !on_get_auth_credentials_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load get_auth_credentials");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnRequestMediaAccessPermission"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnRequestMediaAccessPermissionDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_request_media_access_permission_fptr);
+    if (rc || !on_request_media_access_permission_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_request_media_access_permission");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnCertificateError"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnCertificateErrorDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_certificate_error_fptr);
+    if (rc || !on_certificate_error_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_certificate_error");
     }
 
     rc = load_assembly_and_get_function_pointer(

@@ -329,6 +329,8 @@
       'tests/cefclient/common/scheme_test_common.h',
       'tests/cefclient/hostclr/HostCLR.cpp',
       'tests/cefclient/hostclr/HostCLR.h',
+      'tests/cefclient/hostclr/credui_prompt.cc',
+      'tests/cefclient/hostclr/credui_prompt.h',
       'tests/cefclient/hostclr/js_dialog_handler.cc',
       'tests/cefclient/hostclr/js_dialog_handler.h',
       'tests/cefclient/hostclr/native_callbacks.cc',
@@ -442,6 +444,7 @@
       'tests/cefclient/browser/window_test_runner_mac.h',
       'tests/cefclient/browser/window_test_runner_mac.mm',
       'tests/cefclient/cefclient_mac.mm',
+      'tests/cefclient/hostclr/credui_prompt_mac.mm',
     ],
     'cefclient_bundle_resources_mac': [
       'tests/cefclient/mac/cefclient.icns',

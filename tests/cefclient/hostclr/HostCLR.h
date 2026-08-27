@@ -53,6 +53,44 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_error_fn)(void* browse
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_cef_message_fn)(const char* message, const char** args, int arg_count, void* browser, void* frame, int source_process_id);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
+// Called on the CEF IO thread from GetAuthCredentials.
+// username_size/password_size carry buffer capacity in and byte length out.
+// |handle| identifies the parked CefAuthCallback in the generic native
+// callback registry (see native_callbacks.h). |attempt| is 0 for the first
+// call on a given target within the current process, 1 for a retry after a
+// previously supplied credential failed (used to skip stale saved
+// credentials).
+// Return value semantics (three-state):
+//   return false                        -> DSL declined; C++ runs the native
+//                                          credui fallback (Credential Manager
+//                                          + Windows CredUI prompt).
+//   return true,  username_size > 0     -> DSL supplied credentials
+//                                          synchronously; C++ discards |handle|
+//                                          and calls CefAuthCallback::Continue
+//                                          with the buffers.
+//   return true,  username_size == 0    -> DSL took ownership; C++ leaves
+//                                          |handle| in the registry and the
+//                                          managed side must eventually call
+//                                          native_callback_complete(handle,
+//                                          ok, "user\npass", 0). ok=false
+//                                          triggers CefAuthCallback::Cancel.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_get_auth_credentials_fn)(bool is_proxy, const char* host, int port, const char* realm, const char* scheme, const char* origin_url, char* username, int& username_size, char* password, int& password_size, int64_t handle, int attempt);
+// Synchronous: called on the CEF UI thread from OnRequestMediaAccessPermission.
+// requested_permissions is a bitmask of CEF_MEDIA_PERMISSION_* values.
+// menu_disabled reflects the current "media handling disabled" menu switch.
+// On return, *allowed_permissions is a subset of requested_permissions to grant.
+// Return: true = DSL handled (use *allowed_permissions); false = C++ falls back
+// to the default logic (menu kill-switch, then native permission prompt).
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_request_media_access_permission_fn)(const char* requesting_origin, uint32_t requested_permissions, bool menu_disabled, uint32_t* allowed_permissions);
+// Synchronous: called on the CEF UI thread from OnCertificateError.
+// cert_error is a Chromium net error code (e.g. -200 = ERR_CERT_COMMON_NAME_INVALID).
+// *out_action selects the outcome:
+//   0 = default (fall back to Chromium interstitial),
+//   1 = Continue (silently proceed despite the error),
+//   2 = Cancel   (silently cancel the request without an interstitial).
+// Return: true = DSL handled (use *out_action); false = C++ falls back to the
+// default certificate-error interstitial.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_certificate_error_fn)(int cert_error, const char* request_url, int* out_action);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
@@ -143,6 +181,9 @@ extern on_renderer_load_error_fn on_renderer_load_error_fptr;
 extern on_receive_cef_message_fn on_receive_cef_message_fptr;
 extern on_execute_metadsl_fn on_execute_metadsl_fptr;
 extern on_before_command_line_processing_fn on_before_command_line_processing_fptr;
+extern on_get_auth_credentials_fn on_get_auth_credentials_fptr;
+extern on_request_media_access_permission_fn on_request_media_access_permission_fptr;
+extern on_certificate_error_fn on_certificate_error_fptr;
 extern on_before_child_process_launch_fn on_before_child_process_launch_fptr;
 extern on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr;
 extern on_before_browse_fn on_before_browse_fptr;
