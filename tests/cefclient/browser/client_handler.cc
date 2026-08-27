@@ -1238,6 +1238,8 @@ bool ClientHandler::OnRequestMediaAccessPermission(
     const CefString& requesting_origin,
     uint32_t requested_permissions,
     CefRefPtr<CefMediaAccessCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+
   // Highest priority: DSL / C# override. Handler decides freely; menu state is
   // passed through as an input so DSL can honor or ignore it.
   if (on_request_media_access_permission_fptr) {
