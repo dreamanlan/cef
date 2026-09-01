@@ -104,7 +104,7 @@ public:
             CefRefPtr<CefV8Value> result = func->ExecuteFunction(global, v8_args);
 
             if (result) {
-                result_str = V8ValueToString(result);
+                result_str = V8ValueToString(context, result);
                 printf_log(LOG_SEVERITY_INFO, "CallInRenderer succeeded: %s, result: %s",
                           function_name.c_str(), result_str.c_str());
             } else {
@@ -175,7 +175,7 @@ public:
 
         if (context->Eval(code, frame->GetURL(), 0, retval, exception)) {
             if (retval) {
-                result_str = V8ValueToString(retval);
+                result_str = V8ValueToString(context, retval);
                 printf_log(LOG_SEVERITY_INFO, "ExecuteInRenderer succeeded, result: %s",
                           result_str.c_str());
             } else {
@@ -194,13 +194,38 @@ public:
         return result_str;
     }
 
-private:
-    // Convert V8 value to string
-    static std::string V8ValueToString(CefRefPtr<CefV8Value> value) {
+    // Convert a V8 value to string using JS semantics (same as the page's String(x)):
+    // 5 -> "5", 5.5 -> "5.5", [1,2,3] -> "1,2,3", {} -> "[object Object]",
+    // null -> "null", undefined -> "undefined". Falls back to a manual conversion
+    // when String() is unavailable (no context, or String has been overridden).
+    static std::string V8ValueToString(CefRefPtr<CefV8Context> context,
+                                       CefRefPtr<CefV8Value> value) {
         if (!value) {
             return "null";
         }
 
+        // Fast common path: already a string.
+        if (value->IsString()) {
+            return value->GetStringValue().ToString();
+        }
+
+        // Preferred path: let the page's String() do the conversion so the
+        // result matches JavaScript exactly (number formatting, arrays,
+        // dates, custom toString, etc.).
+        if (context) {
+            CefRefPtr<CefV8Value> global = context->GetGlobal();
+            CefRefPtr<CefV8Value> fn = global ? global->GetValue("String") : nullptr;
+            if (fn && fn->IsFunction()) {
+                CefV8ValueList call_args;
+                call_args.push_back(value);
+                CefRefPtr<CefV8Value> r = fn->ExecuteFunction(nullptr, call_args);
+                if (r && r->IsString()) {
+                    return r->GetStringValue().ToString();
+                }
+            }
+        }
+
+        // Fallback: String() unavailable, keep JS-like semantics as best we can.
         if (value->IsUndefined()) {
             return "undefined";
         }
@@ -225,10 +250,6 @@ private:
             return std::to_string(value->GetDoubleValue());
         }
 
-        if (value->IsString()) {
-            return value->GetStringValue().ToString();
-        }
-
         if (value->IsArray()) {
             return "[Array]";
         }
@@ -244,6 +265,7 @@ private:
         return "[Unknown]";
     }
 
+private:
     // Call using V8 API (in renderer process)
     static bool CallWithV8(CefRefPtr<CefFrame> frame,
                           const std::string& function_name,

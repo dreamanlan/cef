@@ -12,6 +12,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_message_router.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
+#include "tests/cefclient/hostclr/JavaScriptCaller.h"
 #include "tests/shared/common/client_app.h"
 
 namespace client::renderer {
@@ -43,11 +44,8 @@ public:
         std::vector<const char*> args_ptrs;
 
         for (size_t i = 0; i < size; i++) {
-          if (arguments[i]->IsString()) {
-            args_vec.push_back(arguments[i]->GetStringValue());
-          } else {
-            args_vec.push_back("");
-          }
+          // Non-string args are converted to string via JS String() semantics.
+          args_vec.push_back(JavaScriptCaller::V8ValueToString(context, arguments[i]));
         }
 
         for (const auto& arg : args_vec) {
@@ -84,11 +82,8 @@ public:
           std::vector<const char*> args_ptrs;
 
           for (size_t i = 1; i < size; i++) {
-            if (arguments[i]->IsString()) {
-              args_vec.push_back(arguments[i]->GetStringValue());
-            } else {
-              args_vec.push_back("");
-            }
+            // Non-string args are converted to string via JS String() semantics.
+            args_vec.push_back(JavaScriptCaller::V8ValueToString(context, arguments[i]));
           }
 
           for (const auto& arg : args_vec) {
