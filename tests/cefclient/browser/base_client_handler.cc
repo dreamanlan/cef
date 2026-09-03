@@ -670,4 +670,55 @@ bool BaseClientHandler::ShouldRequestFocus() {
   return true;
 }
 
+// static
+bool BaseClientHandler::MaybeHandlePermissionPromptViaDSL(
+    CefRefPtr<CefBrowser> browser,
+    uint64_t prompt_id,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  // No DSL wired -> fall through to CEF default handling
+  // (chrome-style: native bubble; alloy-style: IGNORE, Promise never resolves).
+  if (!on_show_permission_prompt_fptr) {
+    return false;
+  }
+
+  std::string originStr = requesting_origin.ToString();
+  int action = 0;
+  // CEF does not provide a frame here; pass browser->GetMainFrame() so C#
+  // can set NativeApi context with the same (browser, frame) convention.
+  CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
+  const bool handled = on_show_permission_prompt_fptr(
+      browser.get(), main_frame.get(), prompt_id, originStr.c_str(),
+      requested_permissions, action);
+  if (!handled) {
+    return false;
+  }
+
+  switch (action) {
+    case 1:
+      printf_log(LOG_SEVERITY_INFO,
+                 "OnShowPermissionPrompt: DSL accept prompt_id=%llu origin=%s "
+                 "perms=0x%x",
+                 static_cast<unsigned long long>(prompt_id),
+                 originStr.c_str(), requested_permissions);
+      callback->Continue(CEF_PERMISSION_RESULT_ACCEPT);
+      return true;
+    case 2:
+      printf_log(LOG_SEVERITY_INFO,
+                 "OnShowPermissionPrompt: DSL deny prompt_id=%llu origin=%s "
+                 "perms=0x%x",
+                 static_cast<unsigned long long>(prompt_id),
+                 originStr.c_str(), requested_permissions);
+      callback->Continue(CEF_PERMISSION_RESULT_DENY);
+      return true;
+    case 0:
+    default:
+      // DSL declined to decide -> fall through to CEF default handling.
+      return false;
+  }
+}
+
 }  // namespace client

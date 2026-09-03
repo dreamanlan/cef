@@ -506,6 +506,7 @@ on_execute_metadsl_fn on_execute_metadsl_fptr = nullptr;
 on_before_command_line_processing_fn on_before_command_line_processing_fptr = nullptr;
 on_get_auth_credentials_fn on_get_auth_credentials_fptr = nullptr;
 on_request_media_access_permission_fn on_request_media_access_permission_fptr = nullptr;
+on_show_permission_prompt_fn on_show_permission_prompt_fptr = nullptr;
 on_certificate_error_fn on_certificate_error_fptr = nullptr;
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
@@ -1579,11 +1580,25 @@ class HostDevToolsObserver : public CefDevToolsMessageObserver {
  public:
   HostDevToolsObserver() = default;
 
+  // CEF does not provide a frame on DevTools observer callbacks; the observer
+  // is registered per-browser (see RegisterDevToolsObserver in OnAfterCreated
+  // and UnregisterDevToolsObserver in OnBeforeClose), so |browser| is always
+  // the owning browser and browser->GetMainFrame() is safe to call for the
+  // duration of every event. Passing it as |frame| lets the managed side use
+  // the same NativeApi.SetContext(browser, frame) convention as every other
+  // UI-thread callback.
+  static CefFrame* GetMainFrameRaw(const CefRefPtr<CefBrowser>& browser) {
+    if (!browser) return nullptr;
+    CefRefPtr<CefFrame> f = browser->GetMainFrame();
+    return f.get();
+  }
+
   bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser,
                          const void* message,
                          size_t message_size) override {
     if (on_devtools_message_fptr) {
-      return on_devtools_message_fptr(browser.get(), message,
+      return on_devtools_message_fptr(browser.get(), GetMainFrameRaw(browser),
+                                      message,
                                       static_cast<int>(message_size)) != 0;
     }
     return false;
@@ -1595,8 +1610,8 @@ class HostDevToolsObserver : public CefDevToolsMessageObserver {
                               const void* result,
                               size_t result_size) override {
     if (on_devtools_method_result_fptr) {
-      on_devtools_method_result_fptr(browser.get(), message_id,
-                                     success ? 1 : 0, result,
+      on_devtools_method_result_fptr(browser.get(), GetMainFrameRaw(browser),
+                                     message_id, success ? 1 : 0, result,
                                      static_cast<int>(result_size));
     }
   }
@@ -1607,20 +1622,23 @@ class HostDevToolsObserver : public CefDevToolsMessageObserver {
                        size_t params_size) override {
     if (on_devtools_event_fptr) {
       std::string method_str = method.ToString();
-      on_devtools_event_fptr(browser.get(), method_str.c_str(),
-                             params, static_cast<int>(params_size));
+      on_devtools_event_fptr(browser.get(), GetMainFrameRaw(browser),
+                             method_str.c_str(), params,
+                             static_cast<int>(params_size));
     }
   }
 
   void OnDevToolsAgentAttached(CefRefPtr<CefBrowser> browser) override {
     if (on_devtools_agent_attached_fptr) {
-      on_devtools_agent_attached_fptr(browser.get());
+      on_devtools_agent_attached_fptr(browser.get(),
+                                      GetMainFrameRaw(browser));
     }
   }
 
   void OnDevToolsAgentDetached(CefRefPtr<CefBrowser> browser) override {
     if (on_devtools_agent_detached_fptr) {
-      on_devtools_agent_detached_fptr(browser.get());
+      on_devtools_agent_detached_fptr(browser.get(),
+                                      GetMainFrameRaw(browser));
     }
   }
 
@@ -2488,6 +2506,17 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_request_media_access_permission_fptr);
     if (rc || !on_request_media_access_permission_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_request_media_access_permission");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnShowPermissionPrompt"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnShowPermissionPromptDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_show_permission_prompt_fptr);
+    if (rc || !on_show_permission_prompt_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_show_permission_prompt");
     }
 
     rc = load_assembly_and_get_function_pointer(

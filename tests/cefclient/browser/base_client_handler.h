@@ -9,6 +9,7 @@
 #include <string>
 
 #include "include/cef_client.h"
+#include "include/cef_permission_handler.h"
 #include "include/wrapper/cef_message_router.h"
 #include "tests/cefclient/browser/test_runner.h"
 
@@ -154,6 +155,23 @@ class BaseClientHandler : public CefClient,
 
   // Used to determine the object type for each concrete implementation.
   virtual const void* GetTypeKey() const = 0;
+
+  // Shared permission-prompt entry used by every concrete subclass'
+  // OnShowPermissionPrompt so both alloy-style managed windows
+  // (ClientHandler) and chrome-style / overlay / default-popup windows
+  // (DefaultClientHandler) share ONE policy source: the DSL / C# callback
+  // |on_show_permission_prompt_fptr|.
+  //
+  // Returns true when the DSL took the decision (caller must return true
+  // unchanged). Returns false to fall through to CEF default handling
+  // (chrome-style shows the native bubble; alloy-style IGNOREs -- the JS
+  // Promise will not resolve unless the DSL wires notifications explicitly).
+  static bool MaybeHandlePermissionPromptViaDSL(
+      CefRefPtr<CefBrowser> browser,
+      uint64_t prompt_id,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback);
 
  protected:
   CefRefPtr<CefResourceManager> GetResourceManager() const {

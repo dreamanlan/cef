@@ -14,7 +14,8 @@ namespace client {
 
 // Default client handler for unmanaged browser windows. Used with Chrome
 // style only.
-class DefaultClientHandler : public BaseClientHandler {
+class DefaultClientHandler : public BaseClientHandler,
+                             public CefPermissionHandler {
  public:
   // If |use_alloy_style| is nullopt the global default will be used.
   explicit DefaultClientHandler(
@@ -28,6 +29,13 @@ class DefaultClientHandler : public BaseClientHandler {
   // not a DefaultClientHandler.
   static CefRefPtr<DefaultClientHandler> GetForClient(
       CefRefPtr<CefClient> client);
+
+  // CefClient methods (route CefPermissionHandler back to us so unmanaged
+  // windows share the same auto-accept policy as ClientHandler; see
+  // BaseClientHandler::MaybeAutoAcceptPermissionPrompt).
+  CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
+    return this;
+  }
 
  protected:
   bool OnBeforePopup(
@@ -47,6 +55,14 @@ class DefaultClientHandler : public BaseClientHandler {
   void OnBeforePopupAborted(CefRefPtr<CefBrowser> browser,
                             int popup_id) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
+
+  // CefPermissionHandler methods
+  bool OnShowPermissionPrompt(
+      CefRefPtr<CefBrowser> browser,
+      uint64_t prompt_id,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback) override;
 
  private:
   // Used to determine the object type.

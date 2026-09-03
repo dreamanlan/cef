@@ -250,6 +250,27 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     }
     // Parse request as JSON
     CefRefPtr<CefDictionaryValue> request_dict = ParseJSON(request);
+
+    // Native file dialog actions handled entirely in C++ (no DSL/C# hop).
+    // Payload:
+    //   { "action": "show_file_dialog",
+    //     "mode":   "open" | "open_multiple" | "open_folder" | "save",
+    //     "title":         "..."      (optional)
+    //     "default_path":  "..."      (optional)
+    //     "accept_filters": ["*.txt", ".png", "image/*"]  (optional; ignored
+    //                                                     for open_folder)
+    //   }
+    // Response: JSON string
+    //   { "canceled": true }  or
+    //   { "canceled": false, "paths": ["..."] }
+    if (request_dict &&
+        request_dict->HasKey("action") &&
+        request_dict->GetType("action") == VTYPE_STRING &&
+        request_dict->GetString("action") == "show_file_dialog") {
+      HandleShowFileDialog(browser, request_dict, callback);
+      return;
+    }
+
     if (request_dict &&
         request_dict->HasKey("action") &&
         request_dict->GetType("action") == VTYPE_STRING &&
@@ -355,6 +376,105 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     printf_log(LOG_SEVERITY_WARNING,
               "[CefQueryHandler] no managed handler for query %lld", query_id);
     callback->Failure(-1, "ERROR: no handler");
+  }
+
+  // CEF callback that packages RunFileDialog's result into a JSON response and
+  // resolves the pending window.cefQuery promise on the JS side. Stored as a
+  // CefRefPtr so RunFileDialog can own it until the dialog is dismissed.
+  class FileDialogCb : public CefRunFileDialogCallback {
+   public:
+    explicit FileDialogCb(CefRefPtr<Callback> callback)
+        : callback_(callback) {}
+
+    void OnFileDialogDismissed(
+        const std::vector<CefString>& file_paths) override {
+      CefRefPtr<CefDictionaryValue> resp = CefDictionaryValue::Create();
+      if (file_paths.empty()) {
+        resp->SetBool("canceled", true);
+      } else {
+        resp->SetBool("canceled", false);
+        CefRefPtr<CefListValue> paths = CefListValue::Create();
+        paths->SetSize(file_paths.size());
+        for (size_t i = 0; i < file_paths.size(); ++i) {
+          paths->SetString(i, file_paths[i]);
+        }
+        resp->SetList("paths", paths);
+      }
+      CefRefPtr<CefValue> v = CefValue::Create();
+      v->SetDictionary(resp);
+      callback_->Success(CefWriteJSON(v, JSON_WRITER_DEFAULT));
+    }
+
+   private:
+    CefRefPtr<Callback> callback_;
+    IMPLEMENT_REFCOUNTING(FileDialogCb);
+    DISALLOW_COPY_AND_ASSIGN(FileDialogCb);
+  };
+
+  static void HandleShowFileDialog(CefRefPtr<CefBrowser> browser,
+                                    CefRefPtr<CefDictionaryValue> request_dict,
+                                    CefRefPtr<Callback> callback) {
+    if (!browser.get() || !browser->GetHost()) {
+      callback->Failure(-1, "ERROR: no browser host");
+      return;
+    }
+
+    // mode -> cef_file_dialog_mode_t
+    cef_file_dialog_mode_t mode = FILE_DIALOG_OPEN;
+    if (request_dict->HasKey("mode") &&
+        request_dict->GetType("mode") == VTYPE_STRING) {
+      const std::string mode_str = request_dict->GetString("mode").ToString();
+      if (mode_str == "open") {
+        mode = FILE_DIALOG_OPEN;
+      } else if (mode_str == "open_multiple") {
+        mode = FILE_DIALOG_OPEN_MULTIPLE;
+      } else if (mode_str == "open_folder") {
+        mode = FILE_DIALOG_OPEN_FOLDER;
+      } else if (mode_str == "save") {
+        mode = FILE_DIALOG_SAVE;
+      } else {
+        callback->Failure(-1,
+                          "ERROR: unknown mode (want open|open_multiple|"
+                          "open_folder|save)");
+        return;
+      }
+    }
+
+    CefString title;
+    if (request_dict->HasKey("title") &&
+        request_dict->GetType("title") == VTYPE_STRING) {
+      title = request_dict->GetString("title");
+    }
+
+    CefString default_file_path;
+    if (request_dict->HasKey("default_path") &&
+        request_dict->GetType("default_path") == VTYPE_STRING) {
+      default_file_path = request_dict->GetString("default_path");
+    }
+
+    std::vector<CefString> accept_filters;
+    if (mode != FILE_DIALOG_OPEN_FOLDER &&
+        request_dict->HasKey("accept_filters") &&
+        request_dict->GetType("accept_filters") == VTYPE_LIST) {
+      CefRefPtr<CefListValue> list = request_dict->GetList("accept_filters");
+      if (list.get()) {
+        const size_t n = list->GetSize();
+        for (size_t i = 0; i < n; ++i) {
+          if (list->GetType(i) == VTYPE_STRING) {
+            accept_filters.push_back(list->GetString(i));
+          }
+        }
+      }
+    }
+
+    printf_log(LOG_SEVERITY_INFO,
+              "[FileDialog] mode=%d title=%s default=%s filters=%zu",
+              static_cast<int>(mode), title.ToString().c_str(),
+              default_file_path.ToString().c_str(), accept_filters.size());
+
+    browser->GetHost()->RunFileDialog(mode, title, default_file_path,
+                                      accept_filters,
+                                      new FileDialogCb(callback));
   }
 
   static void CopyFiles(const HotReloadRequest& reload_request) {

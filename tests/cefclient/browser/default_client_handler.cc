@@ -78,4 +78,17 @@ void DefaultClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   BaseClientHandler::OnBeforeClose(browser);
 }
 
+bool DefaultClientHandler::OnShowPermissionPrompt(
+    CefRefPtr<CefBrowser> browser,
+    uint64_t prompt_id,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  // Delegate to the shared DSL bridge (same as ClientHandler) so unmanaged /
+  // chrome-style popup / overlay windows share the same policy source.
+  return BaseClientHandler::MaybeHandlePermissionPromptViaDSL(
+      browser, prompt_id, requesting_origin, requested_permissions, callback);
+}
+
 }  // namespace client

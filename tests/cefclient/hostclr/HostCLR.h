@@ -54,6 +54,12 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_cef_message_fn)(const char* 
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
 // Called on the CEF IO thread from GetAuthCredentials.
+// |browser| is a raw CefBrowser* from the handler argument (valid for the
+// synchronous duration of this call; do not retain past return). |frame| is
+// ALWAYS nullptr here: CEF does not provide a frame on GetAuthCredentials,
+// and the call runs on the IO thread where there is no meaningful page-frame
+// context to fabricate. Managed code should tolerate frame==IntPtr.Zero and
+// still set NativeApi context using |browser| alone.
 // username_size/password_size carry buffer capacity in and byte length out.
 // |handle| identifies the parked CefAuthCallback in the generic native
 // callback registry (see native_callbacks.h). |attempt| is 0 for the first
@@ -74,15 +80,40 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(i
 //                                          native_callback_complete(handle,
 //                                          ok, "user\npass", 0). ok=false
 //                                          triggers CefAuthCallback::Cancel.
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_get_auth_credentials_fn)(bool is_proxy, const char* host, int port, const char* realm, const char* scheme, const char* origin_url, char* username, int& username_size, char* password, int& password_size, int64_t handle, int attempt);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_get_auth_credentials_fn)(void* browser, void* frame, bool is_proxy, const char* host, int port, const char* realm, const char* scheme, const char* origin_url, char* username, int& username_size, char* password, int& password_size, int64_t handle, int attempt);
 // Synchronous: called on the CEF UI thread from OnRequestMediaAccessPermission.
+// |browser| is a raw CefBrowser* and |frame| is the requesting CefFrame* as
+// provided by CEF (both valid for the synchronous duration of this call on
+// the CEF UI thread; do not retain past return).
 // requested_permissions is a bitmask of CEF_MEDIA_PERMISSION_* values.
 // menu_disabled reflects the current "media handling disabled" menu switch.
 // On return, *allowed_permissions is a subset of requested_permissions to grant.
 // Return: true = DSL handled (use *allowed_permissions); false = C++ falls back
 // to the default logic (menu kill-switch, then native permission prompt).
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_request_media_access_permission_fn)(const char* requesting_origin, uint32_t requested_permissions, bool menu_disabled, uint32_t* allowed_permissions);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_request_media_access_permission_fn)(void* browser, void* frame, const char* requesting_origin, uint32_t requested_permissions, bool menu_disabled, uint32_t* allowed_permissions);
+// Synchronous: called on the CEF UI thread from OnShowPermissionPrompt for
+// permission requests that surface as a Chromium permission bubble
+// (notifications, geolocation, clipboard, storage-access, ...). See
+// cef_types.h CEF_PERMISSION_TYPE_* for the bitmask meaning.
+// |browser| is a raw CefBrowser* (valid for the synchronous duration of this
+// call on the CEF UI thread; do not retain past return). CEF does not provide
+// a frame here; C++ passes browser->GetMainFrame().get() as |frame| so the
+// managed side can set NativeApi context uniformly.
+// |prompt_id| is the unique id assigned by CEF for this prompt (matches the
+// value passed to OnDismissPermissionPrompt when the prompt is dismissed).
+// On return, |action| selects the behavior when the return value is true:
+//   0 = default (fall through to CEF default handling; equivalent to false)
+//   1 = accept  (CefPermissionPromptCallback::Continue(ACCEPT))
+//   2 = deny    (CefPermissionPromptCallback::Continue(DENY))
+// Return: true = DSL decided (use |action|); false = C++ default fallback
+// (chrome-style shows the native bubble; alloy-style IGNOREs -- the JS
+// Promise from Notification.requestPermission()/etc. will not resolve).
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_show_permission_prompt_fn)(void* browser, void* frame, uint64_t prompt_id, const char* requesting_origin, uint32_t requested_permissions, int& action);
 // Synchronous: called on the CEF UI thread from OnCertificateError.
+// |browser| is a raw CefBrowser* (valid for the synchronous duration of this
+// call on the CEF UI thread; do not retain past return). CEF does not provide
+// a frame here; C++ passes browser->GetMainFrame().get() as |frame| so the
+// managed side can set NativeApi context uniformly.
 // cert_error is a Chromium net error code (e.g. -200 = ERR_CERT_COMMON_NAME_INVALID).
 // *out_action selects the outcome:
 //   0 = default (fall back to Chromium interstitial),
@@ -90,20 +121,26 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_request_media_access_permission_fn)(
 //   2 = Cancel   (silently cancel the request without an interstitial).
 // Return: true = DSL handled (use *out_action); false = C++ falls back to the
 // default certificate-error interstitial.
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_certificate_error_fn)(int cert_error, const char* request_url, int* out_action);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_certificate_error_fn)(void* browser, void* frame, int cert_error, const char* request_url, int* out_action);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, float delta_time);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, int level, const char* message, const char* source, int line, int& max_log_size);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, void* frame, int level, const char* message, const char* source, int line, int& max_log_size);
 
-// DevTools observer callbacks (browser process, UI thread)
-typedef int  (CORECLR_DELEGATE_CALLTYPE* on_devtools_message_fn)(void* browser, const void* msg, int size);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_method_result_fn)(void* browser, int message_id, int success, const void* result, int size);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_event_fn)(void* browser, const char* method, const void* params, int size);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_attached_fn)(void* browser);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* browser);
+// DevTools observer callbacks (browser process, UI thread).
+// The observer is registered per-browser in OnAfterCreated and released in
+// OnBeforeClose, so |browser| is always the browser that owns the DevTools
+// agent for this event. CEF does not provide a frame on these callbacks;
+// C++ passes browser->GetMainFrame().get() as |frame| so managed code can
+// set NativeApi context with the same (browser, frame) convention used by
+// every other UI-thread callback.
+typedef int  (CORECLR_DELEGATE_CALLTYPE* on_devtools_message_fn)(void* browser, void* frame, const void* msg, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_method_result_fn)(void* browser, void* frame, int message_id, int success, const void* result, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_event_fn)(void* browser, void* frame, const char* method, const void* params, int size);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_attached_fn)(void* browser, void* frame);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_devtools_agent_detached_fn)(void* browser, void* frame);
 
 // Resource interception hooks (browser process, IO thread).
 // |handle| identifies the parked CefCallback in the generic native callback
@@ -155,9 +192,11 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_protocol_execution_fn)(void* browser
 //   3 = taken over, the script handles display and completion itself
 // When taking over (1 or 3) the managed side must eventually call
 // complete_native_callback(handle, ok, data) or the page hangs.
-// No frame parameter: CEF does not provide one for JS dialogs; executing
-// JavaScript falls back to the browser's main frame.
-typedef int (CORECLR_DELEGATE_CALLTYPE* on_js_dialog_fn)(void* browser, int dialog_type, const char* origin_url, const char* message_text, const char* default_prompt_text, int64_t handle);
+// CEF does not provide a frame on JS dialogs; C++ passes
+// browser->GetMainFrame().get() as |frame| so the managed side can set
+// NativeApi context uniformly. Executing JavaScript in the takeover path
+// falls back to the browser's main frame anyway.
+typedef int (CORECLR_DELEGATE_CALLTYPE* on_js_dialog_fn)(void* browser, void* frame, int dialog_type, const char* origin_url, const char* message_text, const char* default_prompt_text, int64_t handle);
 
 extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
@@ -183,6 +222,7 @@ extern on_execute_metadsl_fn on_execute_metadsl_fptr;
 extern on_before_command_line_processing_fn on_before_command_line_processing_fptr;
 extern on_get_auth_credentials_fn on_get_auth_credentials_fptr;
 extern on_request_media_access_permission_fn on_request_media_access_permission_fptr;
+extern on_show_permission_prompt_fn on_show_permission_prompt_fptr;
 extern on_certificate_error_fn on_certificate_error_fptr;
 extern on_before_child_process_launch_fn on_before_child_process_launch_fptr;
 extern on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr;

@@ -909,8 +909,11 @@ bool ClientHandler::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
   if (on_console_log_fptr) {
     std::string msg_str = message.ToString();
     std::string src_str = source.ToString();
-    bool handled = on_console_log_fptr(browser.get(), (int)level,
-        msg_str.c_str(), src_str.c_str(), line, max_log_size);
+    // CEF does not provide a frame here; pass browser->GetMainFrame() so C#
+    // can set NativeApi context with the same (browser, frame) convention.
+    CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
+    bool handled = on_console_log_fptr(browser.get(), main_frame.get(),
+        (int)level, msg_str.c_str(), src_str.c_str(), line, max_log_size);
     if (handled) {
       return false;
     }
@@ -1245,8 +1248,10 @@ bool ClientHandler::OnRequestMediaAccessPermission(
   if (on_request_media_access_permission_fptr) {
     std::string originStr = requesting_origin.ToString();
     uint32_t allowed = 0;
+    // CEF provides the requesting |frame| here; pass it through so C# can
+    // set NativeApi context with the accurate frame.
     bool handled = on_request_media_access_permission_fptr(
-        originStr.c_str(), requested_permissions,
+        browser.get(), frame.get(), originStr.c_str(), requested_permissions,
         media_handling_disabled_, &allowed);
     if (handled) {
       // Clamp to the requested set; CEF ignores extra bits but be defensive.
@@ -1262,6 +1267,20 @@ bool ClientHandler::OnRequestMediaAccessPermission(
   }
   // Otherwise let Chromium show its native permission prompt (Chrome style).
   return false;
+}
+
+bool ClientHandler::OnShowPermissionPrompt(
+    CefRefPtr<CefBrowser> browser,
+    uint64_t prompt_id,
+    const CefString& requesting_origin,
+    uint32_t requested_permissions,
+    CefRefPtr<CefPermissionPromptCallback> callback) {
+  CEF_REQUIRE_UI_THREAD();
+  // Delegate to the shared DSL bridge so managed windows (this handler) and
+  // unmanaged / chrome-style / overlay windows (DefaultClientHandler) share
+  // ONE policy source.
+  return BaseClientHandler::MaybeHandlePermissionPromptViaDSL(
+      browser, prompt_id, requesting_origin, requested_permissions, callback);
 }
 
 bool ClientHandler::OnOpenURLFromTab(
@@ -1369,9 +1388,9 @@ bool ClientHandler::GetAuthCredentials(CefRefPtr<CefBrowser> browser,
     int user_len = kMaxAuthLen;
     int pass_len = kMaxAuthLen;
     const bool handled = on_get_auth_credentials_fptr(
-        isProxy, hostStr.c_str(), port, realmStr.c_str(), schemeStr.c_str(),
-        originStr.c_str(), user_buf, user_len, pass_buf, pass_len, handle,
-        attempt);
+        browser.get(), /*frame=*/nullptr, isProxy, hostStr.c_str(), port,
+        realmStr.c_str(), schemeStr.c_str(), originStr.c_str(), user_buf,
+        user_len, pass_buf, pass_len, handle, attempt);
     if (handled) {
       if (user_len > 0 && user_len < kMaxAuthLen && pass_len >= 0 &&
           pass_len < kMaxAuthLen) {
@@ -1423,8 +1442,12 @@ bool ClientHandler::OnCertificateError(CefRefPtr<CefBrowser> browser,
   if (on_certificate_error_fptr) {
     std::string urlStr = request_url.ToString();
     int action = 0;
+    // CEF does not provide a frame here; pass browser->GetMainFrame() so C#
+    // can set NativeApi context with the same (browser, frame) convention.
+    CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
     bool handled = on_certificate_error_fptr(
-        static_cast<int>(cert_error), urlStr.c_str(), &action);
+        browser.get(), main_frame.get(), static_cast<int>(cert_error),
+        urlStr.c_str(), &action);
     if (handled) {
       if (action == 1) {           // Continue: silently proceed.
         callback->Continue();

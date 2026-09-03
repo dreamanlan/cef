@@ -273,6 +273,17 @@ class ClientHandler : public BaseClientHandler,
       const CefString& requesting_origin,
       uint32_t requested_permissions,
       CefRefPtr<CefMediaAccessCallback> callback) override;
+  // Alloy style defaults to CEF_PERMISSION_RESULT_IGNORE, which leaves
+  // Notification.requestPermission() pending forever. Auto-accept the
+  // permission types this app opts into (currently: desktop notifications)
+  // so JS can just call `new Notification(...)` and let Chromium's
+  // NotificationPlatformBridge deliver it to the OS.
+  bool OnShowPermissionPrompt(
+      CefRefPtr<CefBrowser> browser,
+      uint64_t prompt_id,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefPermissionPromptCallback> callback) override;
 
   // CefRequestHandler methods
   bool OnOpenURLFromTab(

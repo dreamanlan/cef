@@ -56,9 +56,13 @@ bool ClientJSDialogHandler::HandleDialog(
   // Exceptions are disabled in this build, so the managed side is responsible
   // for catching its own failures (OnJsDialog wraps everything in try/catch and
   // returns 0 = not taken over on error).
+  // CEF does not provide a frame on JS dialogs; pass browser->GetMainFrame()
+  // so C# can set NativeApi context with the same (browser, frame) convention.
+  CefRefPtr<CefFrame> main_frame = browser->GetMainFrame();
   const int decision =
-      on_js_dialog_fptr(browser.get(), dialog_type, origin.c_str(),
-                        message.c_str(), default_text.c_str(), handle);
+      on_js_dialog_fptr(browser.get(), main_frame.get(), dialog_type,
+                        origin.c_str(), message.c_str(), default_text.c_str(),
+                        handle);
 
   if (decision == JS_DIALOG_DECISION_TAKEOVER ||
       decision == JS_DIALOG_DECISION_SCRIPT_OWNED) {
