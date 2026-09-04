@@ -50,8 +50,8 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_start_fn)(void* browse
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_end_fn)(void* browser, void* frame, const char* url, int http_status_code, bool is_main, char* js_code, int& code_size);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_loading_state_change_fn)(void* browser, void* frame, const char* url, bool is_loading, bool can_go_back, bool can_go_forward);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_load_error_fn)(void* browser, void* frame, int error_code, const char* error_text, const char* failed_url);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_cef_message_fn)(const char* message, const char** args, int arg_count, void* browser, void* frame, int source_process_id);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_receive_cef_message_fn)(const char* message, const uint8_t* args_blob, int args_len, void* browser, void* frame, int source_process_id);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_execute_metadsl_fn)(const uint8_t* args_blob, int args_len, char* result_str, int& result_size, void* browser, void* frame);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_command_line_processing_fn)(int process_type, void* command_line);
 // Called on the CEF IO thread from GetAuthCredentials.
 // |browser| is a raw CefBrowser* from the handler argument (valid for the
@@ -126,7 +126,7 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int 
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, float delta_time);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const char** args, int arg_count, char* result_str, int& result_size, void* browser, void* frame);
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const uint8_t* args_blob, int args_len, char* result_str, int& result_size, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, void* frame, int level, const char* message, const char* source, int line, int& max_log_size);
 
 // DevTools observer callbacks (browser process, UI thread).

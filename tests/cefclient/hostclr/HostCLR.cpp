@@ -643,10 +643,10 @@ void SetHeartbeatIntervalMs(int interval_ms) {
 typedef void (*host_native_log_fn)(const char* msg, void* browser, void* frame);
 typedef void (*send_javascript_code_fn)(const char* code, void* browser, void* frame);
 
-typedef void (*send_cef_message_fn)(const char* msg, const char** args, int argCount, void* browser, void* frame, int source_process_id);
-typedef void (*send_javascript_call_fn)(const char* func, const char** args, int argCount, void* browser, void* frame);
-typedef const char* (*call_javascript_func_in_renderer_fn)(const char* func, const char** args, int argCount, void* browser, void* frame);
-typedef const char* (*execute_javascript_in_renderer_fn)(const char* code, void* browser, void* frame);
+typedef void (*send_cef_message_fn)(const char* msg, const uint8_t* blob, int blob_len, void* browser, void* frame, int source_process_id);
+typedef void (*send_javascript_call_fn)(const char* func, const uint8_t* blob, int blob_len, void* browser, void* frame);
+typedef const char* (*call_javascript_func_in_renderer_fn)(const char* func, const uint8_t* blob, int blob_len, void* browser, void* frame, int* out_len);
+typedef const char* (*execute_javascript_in_renderer_fn)(const char* code, void* browser, void* frame, int* out_len);
 typedef void (*free_native_string_fn)(const char* str);
 
 typedef bool (*command_line_has_switch_fn)(void* command_line, const char* name);
@@ -901,7 +901,7 @@ void host_native_log(const char* msg, void* browser, void* frame)
     syslog(LOG_WARNING, "%s", msg);
 #endif
 }
-void send_cef_message(const char* msg_str, const char** args, int argCount, void* browser, void* frame, int source_process_id)
+void send_cef_message(const char* msg_str, const uint8_t* blob, int blob_len, void* browser, void* frame, int source_process_id)
 {
     if (!msg_str) {
         return;
@@ -910,10 +910,12 @@ void send_cef_message(const char* msg_str, const char** args, int argCount, void
     auto* pFrame = reinterpret_cast<CefFrame*>(frame);
     auto msg = CefProcessMessage::Create(msg_str);
 
-    for (int i = 0; i < argCount; i++) {
-        if (args[i]) {
-            msg->GetArgumentList()->SetString(i, args[i]);
-        }
+    // Carry the JsArg blob verbatim as a single binary argument; the receiving
+    // side deserializes it back into typed nodes without re-encoding.
+    if (blob && blob_len > 0) {
+        CefRefPtr<CefBinaryValue> bin =
+            CefBinaryValue::Create(blob, static_cast<size_t>(blob_len));
+        msg->GetArgumentList()->SetBinary(0, bin);
     }
 
     if (pFrame) {
@@ -937,7 +939,7 @@ void send_javascript_code(const char* code, void* browser, void* frame)
         pBrowser->GetMainFrame()->ExecuteJavaScript(code, pBrowser->GetMainFrame()->GetURL(), 0);
     }
 }
-void send_javascript_call(const char* func, const char** args, int argCount, void* browser, void* frame)
+void send_javascript_call(const char* func, const uint8_t* blob, int blob_len, void* browser, void* frame)
 {
     if (!func) {
         return;
@@ -945,26 +947,17 @@ void send_javascript_call(const char* func, const char** args, int argCount, voi
     auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
     auto* pFrame = reinterpret_cast<CefFrame*>(frame);
     if (pBrowser || pFrame) {
-        if (argCount == 0) {
-            JavaScriptCaller::SendCall(pBrowser, pFrame, func);
-        }
-        else if (argCount == 1) {
-            JavaScriptCaller::SendCall(pBrowser, pFrame, func, args[0]);
-        }
-        else {
-            std::vector<std::string> argVec;
-            for (int i = 0; i < argCount; i++) {
-                if (args[i]) {
-                    argVec.push_back(args[i]);
-                }
-            }
-            JavaScriptCaller::SendCall(pBrowser, pFrame, func, argVec);
-        }
+        std::vector<JsArgNode> nodes =
+            DeserializeNodes(blob, static_cast<size_t>(blob_len > 0 ? blob_len : 0));
+        JavaScriptCaller::SendCallNodes(pBrowser, pFrame, func, nodes);
     }
 }
 
-const char* call_javascript_func_in_renderer(const char* func, const char** args, int argCount, void* browser, void* frame)
+const char* call_javascript_func_in_renderer(const char* func, const uint8_t* blob, int blob_len, void* browser, void* frame, int* out_len)
 {
+    if (out_len) {
+        *out_len = 0;
+    }
     if (!func) {
         return nullptr;
     }
@@ -974,34 +967,30 @@ const char* call_javascript_func_in_renderer(const char* func, const char** args
         return nullptr;
     }
 
-    std::string result;
-    if (argCount == 0) {
-        result = JavaScriptCaller::CallInRenderer(pBrowser, pFrame, func);
-    }
-    else if (argCount == 1) {
-        result = JavaScriptCaller::CallInRenderer(pBrowser, pFrame, func, args[0]);
-    }
-    else {
-        std::vector<std::string> argVec;
-        for (int i = 0; i < argCount; i++) {
-            if (args[i]) {
-                argVec.push_back(args[i]);
-            }
-        }
-        result = JavaScriptCaller::CallInRenderer(pBrowser, pFrame, func, argVec);
-    }
-
-    // Allocate memory for result string (caller must free it)
+    std::vector<JsArgNode> args =
+        DeserializeNodes(blob, static_cast<size_t>(blob_len > 0 ? blob_len : 0));
+    std::vector<JsArgNode> result =
+        JavaScriptCaller::CallInRendererNodes(pBrowser, pFrame, func, args);
     if (result.empty()) {
         return nullptr;
     }
-    char* result_str = new char[result.length() + 1];
-    strcpy(result_str, result.c_str());
-    return result_str;
+
+    // Return the serialized result blob (binary, NOT null-terminated). The
+    // caller reads exactly *out_len bytes and frees via FreeNativeString.
+    std::vector<uint8_t> out = SerializeNodes(result);
+    char* buf = new char[out.size()];
+    std::memcpy(buf, out.data(), out.size());
+    if (out_len) {
+        *out_len = static_cast<int>(out.size());
+    }
+    return buf;
 }
 
-const char* execute_javascript_in_renderer(const char* code, void* browser, void* frame)
+const char* execute_javascript_in_renderer(const char* code, void* browser, void* frame, int* out_len)
 {
+    if (out_len) {
+        *out_len = 0;
+    }
     if (!code || code[0] == '\0') {
         return nullptr;
     }
@@ -1011,15 +1000,19 @@ const char* execute_javascript_in_renderer(const char* code, void* browser, void
         return nullptr;
     }
 
-    std::string result = JavaScriptCaller::ExecuteInRenderer(pBrowser, pFrame, code);
-
-    // Allocate memory for result string (caller must free it)
+    std::vector<JsArgNode> result =
+        JavaScriptCaller::ExecuteInRendererNodes(pBrowser, pFrame, code);
     if (result.empty()) {
         return nullptr;
     }
-    char* result_str = new char[result.length() + 1];
-    strcpy(result_str, result.c_str());
-    return result_str;
+
+    std::vector<uint8_t> out = SerializeNodes(result);
+    char* buf = new char[out.size()];
+    std::memcpy(buf, out.data(), out.size());
+    if (out_len) {
+        *out_len = static_cast<int>(out.size());
+    }
+    return buf;
 }
 
 void free_native_string(const char* str)

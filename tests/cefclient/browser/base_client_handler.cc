@@ -63,18 +63,19 @@ bool BaseClientHandler::OnProcessMessageReceived(
 
   if (on_receive_cef_message_fptr) {
     const std::string& message_name = message->GetName();
-    size_t size = message->GetArgumentList()->GetSize();
-    std::vector<std::string> args_vec;
-    std::vector<const char*> args_ptrs;
-    for (size_t i = 0; i < size; i++) {
-      args_vec.push_back(message->GetArgumentList()->GetString(i).ToString());
-    }
-    for (const auto& arg : args_vec) {
-      args_ptrs.push_back(arg.c_str());
+    CefRefPtr<CefListValue> arg_list = message->GetArgumentList();
+    std::vector<uint8_t> blob;
+    if (arg_list && arg_list->GetSize() > 0 &&
+        arg_list->GetType(0) == VTYPE_BINARY) {
+      CefRefPtr<CefBinaryValue> bin = arg_list->GetBinary(0);
+      if (bin && bin->GetSize() > 0) {
+        blob.resize(bin->GetSize());
+        bin->GetData(blob.data(), bin->GetSize(), 0);
+      }
     }
     on_receive_cef_message_fptr(message_name.c_str(),
-        args_ptrs.empty() ? nullptr : args_ptrs.data(),
-        static_cast<int>(size), browser.get(), frame.get(),
+        blob.empty() ? nullptr : blob.data(),
+        static_cast<int>(blob.size()), browser.get(), frame.get(),
         static_cast<int>(source_process));
     return true;
   }

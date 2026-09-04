@@ -12,7 +12,7 @@
 #include "include/wrapper/cef_helpers.h"
 #include "include/wrapper/cef_message_router.h"
 #include "tests/cefclient/hostclr/HostCLR.h"
-#include "tests/cefclient/hostclr/JavaScriptCaller.h"
+#include "tests/cefclient/hostclr/js_arg_v8.h"
 #include "tests/shared/common/client_app.h"
 
 namespace client::renderer {
@@ -40,29 +40,27 @@ public:
 
       if (on_execute_metadsl_fptr) {
         size_t size = arguments.size();
-        std::vector<std::string> args_vec;
-        std::vector<const char*> args_ptrs;
+        std::vector<JsArgNode> arg_nodes;
 
         for (size_t i = 0; i < size; i++) {
-          // Non-string args are converted to string via JS String() semantics.
-          args_vec.push_back(JavaScriptCaller::V8ValueToString(context, arguments[i]));
+          // Preserve full JS typing (int64/bigint/binary/nested) via JsArg.
+          V8ToNodes(context, arguments[i], arg_nodes);
         }
-
-        for (const auto& arg : args_vec) {
-          args_ptrs.push_back(arg.c_str());
-        }
+        std::vector<uint8_t> args_blob = SerializeNodes(arg_nodes);
 
         std::vector<uint8_t> result_buffer(c_result_buffer_size);
         int result_size = static_cast<int>(result_buffer.size());
-        bool success = on_execute_metadsl_fptr(args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
+        bool success = on_execute_metadsl_fptr(args_blob.data(), static_cast<int>(args_blob.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
 
-        if (success && result_size > 0 && result_size < c_result_buffer_size) {
-          result_buffer[result_size] = '\0';
-          retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
+        if (success && result_size > 0 && result_size <= c_result_buffer_size) {
+          std::vector<JsArgNode> result_nodes = DeserializeNodes(result_buffer.data(), static_cast<size_t>(result_size));
+          CefV8ValueList result_vals;
+          NodesToV8List(context, result_nodes, result_vals);
+          retval = result_vals.empty() ? CefV8Value::CreateUndefined() : result_vals.front();
         } else {
-          retval = CefV8Value::CreateString("");
-          if (result_size >= c_result_buffer_size) {
-            printf_log(LOG_SEVERITY_ERROR, "executeMetaDSL failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
+          retval = CefV8Value::CreateUndefined();
+          if (result_size > c_result_buffer_size) {
+            printf_log(LOG_SEVERITY_ERROR, "executeMetaDSL failed: result_size: %d, buffer: %d", result_size, static_cast<int>(result_buffer.size()));
           }
         }
         return true;
@@ -78,29 +76,27 @@ public:
 
         if (on_call_metadsl_fptr) {
           size_t size = arguments.size();
-          std::vector<std::string> args_vec;
-          std::vector<const char*> args_ptrs;
+          std::vector<JsArgNode> arg_nodes;
 
           for (size_t i = 1; i < size; i++) {
-            // Non-string args are converted to string via JS String() semantics.
-            args_vec.push_back(JavaScriptCaller::V8ValueToString(context, arguments[i]));
+            // Preserve full JS typing (int64/bigint/binary/nested) via JsArg.
+            V8ToNodes(context, arguments[i], arg_nodes);
           }
-
-          for (const auto& arg : args_vec) {
-            args_ptrs.push_back(arg.c_str());
-          }
+          std::vector<uint8_t> args_blob = SerializeNodes(arg_nodes);
 
           std::vector<uint8_t> result_buffer(c_result_buffer_size);
           int result_size = static_cast<int>(result_buffer.size());
-          bool success = on_call_metadsl_fptr(func_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
+          bool success = on_call_metadsl_fptr(func_name.c_str(), args_blob.data(), static_cast<int>(args_blob.size()), reinterpret_cast<char*>(result_buffer.data()), result_size, browser.get(), frame.get());
 
-          if (success && result_size > 0 && result_size < c_result_buffer_size) {
-            result_buffer[result_size] = '\0';
-            retval = CefV8Value::CreateString(std::string(reinterpret_cast<char*>(result_buffer.data()), result_size));
+          if (success && result_size > 0 && result_size <= c_result_buffer_size) {
+            std::vector<JsArgNode> result_nodes = DeserializeNodes(result_buffer.data(), static_cast<size_t>(result_size));
+            CefV8ValueList result_vals;
+            NodesToV8List(context, result_nodes, result_vals);
+            retval = result_vals.empty() ? CefV8Value::CreateUndefined() : result_vals.front();
           } else {
-            retval = CefV8Value::CreateString("");
-            if (result_size >= c_result_buffer_size) {
-              printf_log(LOG_SEVERITY_ERROR, "callMetaDSL failed: result_size: %d, result_buffer.size(): %d", result_size, result_buffer.size());
+            retval = CefV8Value::CreateUndefined();
+            if (result_size > c_result_buffer_size) {
+              printf_log(LOG_SEVERITY_ERROR, "callMetaDSL failed: result_size: %d, buffer: %d", result_size, static_cast<int>(result_buffer.size()));
             }
           }
           return true;
@@ -229,6 +225,71 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
     CefRefPtr<CefV8Value> callFunc = CefV8Value::CreateFunction("callMetaDSL", handler);
     global->SetValue("callMetaDSL", callFunc, V8_PROPERTY_ATTRIBUTE_NONE);
 
+    // Inject the JsArg marshalling helpers used by the native V8<->JsArg
+    // conversion (see js_arg_v8.h). Defined here so they are available before
+    // any page script runs. __cefMarshal normalizes any JS value into a
+    // [tagInt, payload] tree; __cefBuild reconstructs BigInt/Date/ArrayBuffer.
+    static const char* kJsArgHelpers = R"JS(
+(function(){
+  if (window.__cefMarshal && window.__cefBuild) { return; }
+  var T = {Null:0,Undefined:1,Bool:2,Int32:3,UInt32:4,Double:5,BigInt:6,String:7,Binary:8,Array:9,Object:10,DateTime:11};
+  function b64(v){
+    var bytes = (v instanceof ArrayBuffer) ? new Uint8Array(v) : new Uint8Array(v.buffer, v.byteOffset, v.byteLength);
+    var s = '';
+    for (var i = 0; i < bytes.length; i++) { s += String.fromCharCode(bytes[i]); }
+    return btoa(s);
+  }
+  function m(v){
+    if (v === null) { return [T.Null, null]; }
+    var t = typeof v;
+    if (t === 'undefined') { return [T.Undefined, null]; }
+    if (t === 'boolean') { return [T.Bool, v]; }
+    if (t === 'bigint') { return [T.BigInt, v.toString()]; }
+    if (t === 'string') { return [T.String, v]; }
+    if (t === 'number') {
+      if (Number.isInteger(v)) {
+        if (v >= -2147483648 && v <= 2147483647) { return [T.Int32, v]; }
+        if (v >= 0 && v <= 4294967295) { return [T.UInt32, v]; }
+      }
+      return [T.Double, v];
+    }
+    if (t === 'object') {
+      if (v instanceof Date) { return [T.DateTime, v.toISOString()]; }
+      if (v instanceof ArrayBuffer || ArrayBuffer.isView(v)) { return [T.Binary, b64(v)]; }
+      if (Array.isArray(v)) {
+        var arr = [];
+        for (var i = 0; i < v.length; i++) { arr.push(m(v[i])); }
+        return [T.Array, arr];
+      }
+      var flat = [];
+      for (var k in v) {
+        if (Object.prototype.hasOwnProperty.call(v, k)) {
+          flat.push(String(k));
+          flat.push(m(v[k]));
+        }
+      }
+      return [T.Object, flat];
+    }
+    return [T.String, String(v)];
+  }
+  window.__cefMarshal = function(x){ return m(x); };
+  window.__cefBuild = function(tag, payload){
+    switch (tag) {
+      case 6: return BigInt(payload);
+      case 11: return new Date(payload);
+      case 8: {
+        var bin = atob(payload);
+        var bytes = new Uint8Array(bin.length);
+        for (var i = 0; i < bin.length; i++) { bytes[i] = bin.charCodeAt(i); }
+        return bytes.buffer;
+      }
+      default: return payload;
+    }
+  };
+})();
+)JS";
+    frame->ExecuteJavaScript(kJsArgHelpers, frame->GetURL(), 0);
+
     // Register the browser in the renderer-process ref map BEFORE firing any
     // C# callback, and only on the main frame (main frame lifetime == browser
     // lifetime). Sub-frame contexts are tracked implicitly via the main
@@ -295,20 +356,18 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
 
     if (on_receive_cef_message_fptr) {
       std::string message_name = message->GetName();
-      size_t size = message->GetArgumentList()->GetSize();
-
-      std::vector<std::string> args_vec;
-      std::vector<const char*> args_ptrs;
-
-      for (size_t i = 0; i < size; i++) {
-        args_vec.push_back(message->GetArgumentList()->GetString(i).ToString());
+      CefRefPtr<CefListValue> arg_list = message->GetArgumentList();
+      std::vector<uint8_t> blob;
+      if (arg_list && arg_list->GetSize() > 0 &&
+          arg_list->GetType(0) == VTYPE_BINARY) {
+        CefRefPtr<CefBinaryValue> bin = arg_list->GetBinary(0);
+        if (bin && bin->GetSize() > 0) {
+          blob.resize(bin->GetSize());
+          bin->GetData(blob.data(), bin->GetSize(), 0);
+        }
       }
 
-      for (const auto& arg : args_vec) {
-        args_ptrs.push_back(arg.c_str());
-      }
-
-      on_receive_cef_message_fptr(message_name.c_str(), args_ptrs.empty() ? nullptr : args_ptrs.data(), static_cast<int>(args_vec.size()), browser.get(), frame.get(), static_cast<int>(source_process));
+      on_receive_cef_message_fptr(message_name.c_str(), blob.empty() ? nullptr : blob.data(), static_cast<int>(blob.size()), browser.get(), frame.get(), static_cast<int>(source_process));
       return true;
     }
     return false;
