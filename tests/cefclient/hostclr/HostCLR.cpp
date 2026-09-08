@@ -579,6 +579,46 @@ GetBrowserValidSet() {
     return *s_set;
 }
 
+// Frame ref map (both processes): key = frame identifier string, value =
+// CefRefPtr<CefFrame>. Holding the ref keeps the CToCpp wrapper alive so a raw
+// frame pointer handed to C# stays valid after the accessor returns, and
+// returning the same stored wrapper for the same identifier preserves pointer
+// identity. The real frame object lives across the DLL boundary; the raw
+// pointer we can observe (the CToCpp wrapper) is freshly allocated on every
+// GetMainFrame()/GetFrameBy*() call, so the stable frame identifier is the only
+// usable key. Entries are pruned by the heartbeat when a frame becomes invalid
+// or its identifier no longer matches its key.
+static std::map<std::string, CefRefPtr<CefFrame>>&
+GetFrameRefMap() {
+    static auto* s_map = new std::map<std::string, CefRefPtr<CefFrame>>();
+    return *s_map;
+}
+
+// Heartbeat GC for the frame ref map. Runs in every process that has a
+// heartbeat (browser + renderer). Drops entries whose wrapper is null, no
+// longer valid, or whose current identifier no longer equals the map key.
+// Released CefRefPtrs are destroyed outside the lock to avoid re-entering CEF
+// while holding the container mutex.
+static void SweepFrameRefMap() {
+    std::vector<CefRefPtr<CefFrame>> to_release;
+    {
+        std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+        auto& m = GetFrameRefMap();
+        for (auto it = m.begin(); it != m.end();) {
+            CefRefPtr<CefFrame>& f = it->second;
+            bool drop = !f || !f->IsValid() ||
+                        f->GetIdentifier().ToString() != it->first;
+            if (drop) {
+                to_release.push_back(std::move(it->second));
+                it = m.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    (void)to_release;
+}
+
 // Heartbeat implementation
 static bool g_heartbeat_running = false;
 static int g_heartbeat_process_type = 0;
@@ -598,6 +638,8 @@ class HeartbeatTask : public CefTask {
     if (g_heartbeat_process_type == 0) {
       SweepExpiredNativeCallbacks();
     }
+    // Prune stale frame wrappers in this process (browser + renderer).
+    SweepFrameRefMap();
     auto now = std::chrono::steady_clock::now();
     float delta_ms = std::chrono::duration<float, std::milli>(now - g_heartbeat_last_time).count();
     g_heartbeat_last_time = now;
@@ -1264,9 +1306,16 @@ void renderer_ref_add(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame)
     if (!browser) return;
     int id = browser->GetIdentifier();
     CefBrowser* raw = browser.get();
+    // Also seed the frame ref map so the same identifier later yields the same
+    // wrapper from the frame accessors. Compute the identifier before locking.
+    std::string fid;
+    if (frame) fid = frame->GetIdentifier().ToString();
     std::lock_guard<std::mutex> lock(GetRefContainersMutex());
     GetRendererRefMap()[id] = std::make_pair(browser, frame);
     GetRendererValidSet().insert(raw);
+    if (frame && !fid.empty()) {
+        GetFrameRefMap()[fid] = frame;
+    }
 }
 
 void renderer_ref_remove(CefRefPtr<CefBrowser> browser)
@@ -1439,28 +1488,69 @@ const char* browser_get_frame_names(void* browser)
     return alloc_string(result);
 }
 
+// Return a stable raw frame pointer for |frame| by routing through the frame
+// ref map. On a cache hit for the same identifier the previously stored wrapper
+// is returned (pointer identity preserved); otherwise the frame is stored and
+// its wrapper returned. The map owns a CefRefPtr so the wrapper stays alive
+// after this call, fixing the use-after-free that a bare GetMainFrame().get()
+// would produce (the temporary CToCpp wrapper is deleted at end of statement).
+static void* frame_cache_get_or_add(const CefRefPtr<CefFrame>& frame)
+{
+    if (!frame) return nullptr;
+    std::string id = frame->GetIdentifier().ToString();
+    if (id.empty()) return nullptr;
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    auto& m = GetFrameRefMap();
+    auto it = m.find(id);
+    if (it != m.end() && it->second && it->second->IsValid()) {
+        return it->second.get();
+    }
+    m[id] = frame;
+    return frame.get();
+}
+
+// Return the stable stored browser wrapper for |browser| from the process's
+// ref map (browser or renderer). Reuses the existing browser containers so a
+// raw browser pointer handed to C# stays valid.
+static void* browser_cache_get(const CefRefPtr<CefBrowser>& browser)
+{
+    if (!browser) return nullptr;
+    int id = browser->GetIdentifier();
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    if (is_browser_process()) {
+        auto& m = GetBrowserRefMap();
+        auto it = m.find(id);
+        if (it != m.end()) return it->second.first.get();
+    } else {
+        auto& m = GetRendererRefMap();
+        auto it = m.find(id);
+        if (it != m.end()) return it->second.first.get();
+    }
+    return nullptr;
+}
+
 void* browser_get_main_frame(void* browser)
 {
     if (!browser_is_valid(browser)) return nullptr;
-    return reinterpret_cast<CefBrowser*>(browser)->GetMainFrame().get();
+    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetMainFrame());
 }
 
 void* browser_get_focused_frame(void* browser)
 {
     if (!browser_is_valid(browser)) return nullptr;
-    return reinterpret_cast<CefBrowser*>(browser)->GetFocusedFrame().get();
+    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFocusedFrame());
 }
 
 void* browser_get_frame_by_identifier(void* browser, const char* identifier)
 {
     if (!browser_is_valid(browser) || !identifier) return nullptr;
-    return reinterpret_cast<CefBrowser*>(browser)->GetFrameByIdentifier(identifier).get();
+    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFrameByIdentifier(identifier));
 }
 
 void* browser_get_frame_by_name(void* browser, const char* name)
 {
     if (!browser_is_valid(browser) || !name) return nullptr;
-    return reinterpret_cast<CefBrowser*>(browser)->GetFrameByName(name).get();
+    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFrameByName(name));
 }
 
 // --- Browser actions ---
@@ -1582,8 +1672,10 @@ class HostDevToolsObserver : public CefDevToolsMessageObserver {
   // UI-thread callback.
   static CefFrame* GetMainFrameRaw(const CefRefPtr<CefBrowser>& browser) {
     if (!browser) return nullptr;
-    CefRefPtr<CefFrame> f = browser->GetMainFrame();
-    return f.get();
+    // Route through the frame ref map so the returned wrapper is owned and
+    // stays valid; a bare GetMainFrame().get() would return a temporary CToCpp
+    // wrapper deleted at end of statement.
+    return reinterpret_cast<CefFrame*>(frame_cache_get_or_add(browser->GetMainFrame()));
   }
 
   bool OnDevToolsMessage(CefRefPtr<CefBrowser> browser,
@@ -1721,13 +1813,13 @@ bool frame_is_focused(void* frame)
 void* frame_get_parent(void* frame)
 {
     if (!frame) return nullptr;
-    return reinterpret_cast<CefFrame*>(frame)->GetParent().get();
+    return frame_cache_get_or_add(reinterpret_cast<CefFrame*>(frame)->GetParent());
 }
 
 void* frame_get_browser(void* frame)
 {
     if (!frame) return nullptr;
-    return reinterpret_cast<CefFrame*>(frame)->GetBrowser().get();
+    return browser_cache_get(reinterpret_cast<CefFrame*>(frame)->GetBrowser());
 }
 
 // --- Frame actions ---
