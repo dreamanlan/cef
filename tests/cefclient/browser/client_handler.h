@@ -18,8 +18,6 @@
 #if defined(OS_LINUX)
 #include "tests/cefclient/browser/dialog_handler_gtk.h"
 #include "tests/cefclient/browser/print_handler_gtk.h"
-#else
-#include "tests/cefclient/hostclr/js_dialog_handler.h"
 #endif
 
 namespace client {
@@ -142,13 +140,6 @@ class ClientHandler : public BaseClientHandler,
   }
   CefRefPtr<CefPrintHandler> GetPrintHandler() override {
     return print_handler_;
-  }
-#else
-  // Route JS dialogs (alert/confirm/prompt/beforeunload) to managed code. When
-  // managed code declines, the handler returns false and CEF falls back to its
-  // own dialog implementation - identical to registering no handler at all.
-  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override {
-    return managed_js_dialog_handler_;
   }
 #endif
 
@@ -273,17 +264,6 @@ class ClientHandler : public BaseClientHandler,
       const CefString& requesting_origin,
       uint32_t requested_permissions,
       CefRefPtr<CefMediaAccessCallback> callback) override;
-  // Alloy style defaults to CEF_PERMISSION_RESULT_IGNORE, which leaves
-  // Notification.requestPermission() pending forever. Auto-accept the
-  // permission types this app opts into (currently: desktop notifications)
-  // so JS can just call `new Notification(...)` and let Chromium's
-  // NotificationPlatformBridge deliver it to the OS.
-  bool OnShowPermissionPrompt(
-      CefRefPtr<CefBrowser> browser,
-      uint64_t prompt_id,
-      const CefString& requesting_origin,
-      uint32_t requested_permissions,
-      CefRefPtr<CefPermissionPromptCallback> callback) override;
 
   // CefRequestHandler methods
   bool OnOpenURLFromTab(
@@ -320,6 +300,10 @@ class ClientHandler : public BaseClientHandler,
       int port,
       const X509CertificateList& certificates,
       CefRefPtr<CefSelectClientCertificateCallback> callback) override;
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                 TerminationStatus status,
+                                 int error_code,
+                                 const CefString& error_string) override;
   void OnDocumentAvailableInMainFrame(CefRefPtr<CefBrowser> browser) override;
 
   // CefResourceRequestHandler methods
@@ -346,7 +330,6 @@ class ClientHandler : public BaseClientHandler,
 
   // Returns the startup URL.
   std::string startup_url() const { return startup_url_; }
-
 
   // Set/get whether the client should download favicon images. Only safe to
   // call immediately after client creation or on the browser process UI thread.
@@ -384,8 +367,9 @@ class ClientHandler : public BaseClientHandler,
   void NotifyTakeFocus(bool next);
 
   // Test context menu creation.
-  void BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefMenuModel> model);
-  bool ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command_id);
+  void BuildTestMenu(CefRefPtr<CefBrowser> browser,
+                     CefRefPtr<CefMenuModel> model);
+  bool ExecuteTestMenu(CefRefPtr<CefBrowser> browser, int command_id);
 
   void SetOfflineState(CefRefPtr<CefBrowser> browser, bool offline);
 
@@ -405,7 +389,7 @@ class ClientHandler : public BaseClientHandler,
   const bool with_controls_;
 
   // The startup URL.
-  // Note: startup_url_ is inherited from BaseClientHandler.
+  const std::string startup_url_;
 
   // True if mouse cursor change is disabled.
   bool mouse_cursor_change_disabled_;
@@ -427,9 +411,6 @@ class ClientHandler : public BaseClientHandler,
   CefRefPtr<ClientDialogHandlerGtk> file_dialog_handler_;
   CefRefPtr<ClientDialogHandlerGtk> js_dialog_handler_;
   CefRefPtr<ClientPrintHandlerGtk> print_handler_;
-#else
-  // JS dialog handler that forwards to managed code.
-  CefRefPtr<ClientJSDialogHandler> managed_js_dialog_handler_;
 #endif
 
   // Safe to access from any thread during browser lifetime.
@@ -438,12 +419,14 @@ class ClientHandler : public BaseClientHandler,
   // UI THREAD MEMBERS
   // The following members will only be accessed on the CEF UI thread.
 
-  // Track state information for the text context menu.
-  struct MyMenuState {
-    MyMenuState() = default;
+  // Track state information for the test context menu.
+  struct TestMenuState {
+    TestMenuState() = default;
+    bool check_item = true;
+    int radio_item = 0;
     int chrome_theme_mode_item = -1;
     int chrome_theme_color_item = -1;
-  } my_menu_state_;
+  } test_menu_state_;
 
   // Console logging state.
   const std::string console_log_file_;

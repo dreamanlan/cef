@@ -13,8 +13,6 @@
 #include "tests/cefclient/browser/main_context.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/shared/common/client_switches.h"
-#include "tests/shared/common/client_app.h"
-#include "tests/cefclient/hostclr/HostCLR.h"
 
 namespace client::browser {
 
@@ -56,9 +54,6 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
       // Load the CRLSets file from the specified path.
       CefLoadCRLSetsFile(crl_sets_path);
     }
-
-    // Start heartbeat timer for browser process (process_type=0)
-    StartHeartbeat(0);
   }
 
   void OnBeforeCommandLineProcessing(
@@ -67,22 +62,6 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     // Append Chromium command line parameters if touch events are enabled
     if (client::MainContext::Get()->TouchEventsEnabled()) {
       command_line->AppendSwitchWithValue("touch-events", "enabled");
-    }
-
-    // Call C# callback to allow DSL script to process command line
-    if (on_before_command_line_processing_fptr) {
-      int process_type = static_cast<int>(ClientApp::GetProcessType(command_line));
-      on_before_command_line_processing_fptr(process_type, command_line.get());
-    }
-  }
-
-  void OnBeforeChildProcessLaunch(
-      CefRefPtr<ClientAppBrowser> app,
-      CefRefPtr<CefCommandLine> command_line) override {
-    // Call C# callback to allow DSL script to process child process command line
-    if (on_before_child_process_launch_fptr) {
-      int process_type = static_cast<int>(ClientApp::GetProcessType(command_line));
-      on_before_child_process_launch_fptr(process_type, command_line.get());
     }
   }
 
@@ -100,14 +79,6 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
       if (command_line->HasSwitch(kIgnoredSwitche)) {
         LOG(WARNING) << "The --" << kIgnoredSwitche
                      << " command-line switch is ignored on app relaunch.";
-      }
-    }
-
-    // Call C# callback to allow DSL script to handle app relaunch
-    if (on_already_running_app_relaunch_fptr) {
-      std::string cur_dir = current_directory.ToString();
-      if (on_already_running_app_relaunch_fptr(command_line.get(), cur_dir.c_str())) {
-        return false;
       }
     }
 

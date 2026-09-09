@@ -9,10 +9,8 @@
 
 namespace client {
 
-DefaultClientHandler::DefaultClientHandler(std::optional<bool> use_alloy_style,
-                                           const std::string& startup_url)
-    : BaseClientHandler(startup_url),
-      use_alloy_style_(
+DefaultClientHandler::DefaultClientHandler(std::optional<bool> use_alloy_style)
+    : use_alloy_style_(
           use_alloy_style.value_or(MainContext::Get()->UseAlloyStyleGlobal())) {
 }
 
@@ -76,19 +74,6 @@ void DefaultClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   OnBeforePopupAborted(browser, /*popup_id=*/-1);
 
   BaseClientHandler::OnBeforeClose(browser);
-}
-
-bool DefaultClientHandler::OnShowPermissionPrompt(
-    CefRefPtr<CefBrowser> browser,
-    uint64_t prompt_id,
-    const CefString& requesting_origin,
-    uint32_t requested_permissions,
-    CefRefPtr<CefPermissionPromptCallback> callback) {
-  CEF_REQUIRE_UI_THREAD();
-  // Delegate to the shared DSL bridge (same as ClientHandler) so unmanaged /
-  // chrome-style popup / overlay windows share the same policy source.
-  return BaseClientHandler::MaybeHandlePermissionPromptViaDSL(
-      browser, prompt_id, requesting_origin, requested_permissions, callback);
 }
 
 }  // namespace client

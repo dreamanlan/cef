@@ -4,8 +4,6 @@
 
 #include "tests/cefsimple/simple_handler.h"
 
-#include <cstdio>
-#include <cstring>
 #include <sstream>
 #include <string>
 
@@ -16,7 +14,6 @@
 #include "include/views/cef_window.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
-#include "tests/cefclient/hostclr/path_utils.h"
 
 namespace {
 
@@ -104,46 +101,6 @@ void SimpleHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   if (browser_list_.empty()) {
     // All browser windows have closed. Quit the application message loop.
     CefQuitMessageLoop();
-  }
-}
-
-void SimpleHandler::OnLoadEnd(CefRefPtr<CefBrowser> browser,
-  CefRefPtr<CefFrame> frame,
-  int httpStatusCode)
-{
-  const int max_size = 1024 * 1024;
-  if (frame->IsMain()) {
-    char* buf = new char[max_size + 1];
-    memset(buf, 0, max_size + 1);
-    //std::string file = "managed/simple_inject.js";
-#if defined(__APPLE__)
-    std::string baseDir = GetMacMainAppDirPath();
-    std::string lastDirName = GetMacMainAppDirName();
-    if (lastDirName == "cefsimpledbg.app") {
-      baseDir += "/../cefsimple.app/Contents";
-    }
-    else {
-      baseDir += "/Contents";
-    }
-#else
-    std::string baseDir = GetExeDir();
-    std::string lastDirName = GetExeLastDirName();
-    if (lastDirName == "cefclientdbg") {
-      baseDir += "/../cefclient";
-    }
-#endif
-    std::string file = baseDir + "/managed/simple_inject.js";
-    FILE* fp = fopen(file.c_str(), "rb");
-    if (fp != NULL) {
-      fread(buf, 1, max_size, fp);
-      fclose(fp);
-      frame->ExecuteJavaScript(buf, frame->GetURL(), 0);
-    } else {
-      // Log error if file cannot be opened
-      std::string error_msg = "Failed to open simple_inject.js from: " + file;
-      LOG(ERROR) << error_msg;
-    }
-    delete[] buf;
   }
 }
 

@@ -7,10 +7,7 @@
 #include <stdio.h>
 
 #include <algorithm>
-#include <chrono>
-#include <ctime>
 #include <iomanip>
-#include <set>
 #include <sstream>
 #include <string>
 
@@ -24,12 +21,8 @@
 #include "include/cef_x509_certificate.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "tests/cefclient/browser/main_context.h"
-#include "tests/cefclient/browser/resource.h"
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/cefclient/browser/test_runner.h"
-#include "tests/cefclient/hostclr/HostCLR.h"
-#include "tests/cefclient/hostclr/credui_prompt.h"
-#include "tests/cefclient/hostclr/native_callbacks.h"
 #include "tests/shared/browser/resource_util.h"
 #include "tests/shared/common/binary_value_utils.h"
 #include "tests/shared/common/client_switches.h"
@@ -54,21 +47,26 @@ enum client_menu_ids {
   CLIENT_ID_CURSOR_CHANGE_DISABLED,
   CLIENT_ID_MEDIA_HANDLING_DISABLED,
   CLIENT_ID_OFFLINE,
-  CLIENT_ID_INJECT_ALL_FRAME,
+  CLIENT_ID_TESTMENU_SUBMENU,
+  CLIENT_ID_TESTMENU_CHECKITEM,
+  CLIENT_ID_TESTMENU_RADIOITEM1,
+  CLIENT_ID_TESTMENU_RADIOITEM2,
+  CLIENT_ID_TESTMENU_RADIOITEM3,
+
   // Chrome theme selection.
-  CLIENT_ID_THEME,
-  CLIENT_ID_THEME_MODE_SYSTEM,
-  CLIENT_ID_THEME_MODE_LIGHT,
-  CLIENT_ID_THEME_MODE_DARK,
-  CLIENT_ID_THEME_MODE_FIRST = CLIENT_ID_THEME_MODE_SYSTEM,
-  CLIENT_ID_THEME_MODE_LAST = CLIENT_ID_THEME_MODE_DARK,
-  CLIENT_ID_THEME_COLOR_DEFAULT,
-  CLIENT_ID_THEME_COLOR_RED,
-  CLIENT_ID_THEME_COLOR_GREEN,
-  CLIENT_ID_THEME_COLOR_BLUE,
-  CLIENT_ID_THEME_COLOR_FIRST = CLIENT_ID_THEME_COLOR_DEFAULT,
-  CLIENT_ID_THEME_COLOR_LAST = CLIENT_ID_THEME_COLOR_BLUE,
-  CLIENT_ID_THEME_CUSTOM,
+  CLIENT_ID_TESTMENU_THEME,
+  CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM,
+  CLIENT_ID_TESTMENU_THEME_MODE_LIGHT,
+  CLIENT_ID_TESTMENU_THEME_MODE_DARK,
+  CLIENT_ID_TESTMENU_THEME_MODE_FIRST = CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM,
+  CLIENT_ID_TESTMENU_THEME_MODE_LAST = CLIENT_ID_TESTMENU_THEME_MODE_DARK,
+  CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT,
+  CLIENT_ID_TESTMENU_THEME_COLOR_RED,
+  CLIENT_ID_TESTMENU_THEME_COLOR_GREEN,
+  CLIENT_ID_TESTMENU_THEME_COLOR_BLUE,
+  CLIENT_ID_TESTMENU_THEME_COLOR_FIRST = CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT,
+  CLIENT_ID_TESTMENU_THEME_COLOR_LAST = CLIENT_ID_TESTMENU_THEME_COLOR_BLUE,
+  CLIENT_ID_TESTMENU_THEME_CUSTOM,
 };
 
 // Constants for Chrome theme colors.
@@ -479,69 +477,6 @@ void FilterContextMenuModel(CefRefPtr<CefMenuModel> model) {
   }
 }
 
-// --- Auth state tracking for the CredUI fallback ---------------------------
-//
-// A target key here identifies a (proxy vs origin, host, port, realm) tuple.
-// The set records which targets already had credentials supplied at least
-// once in the current process. A second GetAuthCredentials call for the same
-// target therefore means "previous credentials failed": we treat that as a
-// retry and let the credui fallback purge any stale saved entry before
-// prompting again.
-//
-// All access is on the CEF IO thread (GetAuthCredentials and the native
-// callback closure both run there), so no locking is needed.
-
-std::set<std::string>& GetAuthSuppliedSet() {
-  static auto* s_set = new std::set<std::string>();
-  return *s_set;
-}
-
-std::string MakeAuthTargetKey(bool is_proxy,
-                              const std::string& host,
-                              int port,
-                              const std::string& realm) {
-  std::string key = is_proxy ? "CefClientProxyAuth:" : "CefClientOriginAuth:";
-  key += host;
-  key += ":";
-  key += std::to_string(port);
-  if (!is_proxy) {
-    key += ":";
-    key += realm;
-  }
-  return key;
-}
-
-bool HasAuthBeenSupplied(const std::string& key) {
-  const auto& s = GetAuthSuppliedSet();
-  return s.find(key) != s.end();
-}
-
-void MarkAuthSupplied(const std::string& key) {
-  GetAuthSuppliedSet().insert(key);
-}
-
-// Trampoline that captures the browser (to grab the HWND on the UI thread)
-// and then dispatches to RunCredUIFallback. Runs on the CEF UI thread.
-void CredUIFallbackOnUiThread(CefRefPtr<CefBrowser> browser,
-                              int64_t handle,
-                              std::string target_key,
-                              bool is_proxy,
-                              std::string host,
-                              int port,
-                              std::string realm,
-                              int attempt) {
-  CEF_REQUIRE_UI_THREAD();
-  void* hwnd = nullptr;
-  if (browser) {
-    auto host_ref = browser->GetHost();
-    if (host_ref) {
-      hwnd = reinterpret_cast<void*>(host_ref->GetWindowHandle());
-    }
-  }
-  RunCredUIFallback(handle, target_key, is_proxy, host, port, realm, attempt,
-                    hwnd);
-}
-
 }  // namespace
 
 class ClientDownloadImageCallback : public CefDownloadImageCallback {
@@ -571,13 +506,13 @@ ClientHandler::ClientHandler(Delegate* delegate,
                              bool is_osr,
                              bool with_controls,
                              const std::string& startup_url)
-    : BaseClientHandler(startup_url),
-      use_views_(delegate ? delegate->UseViews()
+    : use_views_(delegate ? delegate->UseViews()
                           : MainContext::Get()->UseViewsGlobal()),
       use_alloy_style_(delegate ? delegate->UseAlloyStyle()
                                 : MainContext::Get()->UseAlloyStyleGlobal()),
       is_osr_(is_osr),
       with_controls_(with_controls),
+      startup_url_(startup_url),
       delegate_(delegate),
       console_log_file_(MainContext::Get()->GetConsoleLogPath()) {
   // This handler is used with RootWindows that are explicitly tracked by
@@ -635,10 +570,6 @@ ClientHandler::ClientHandler(Delegate* delegate,
       print_handler_ = new ClientPrintHandlerGtk();
     }
   }
-#else
-  // Managed JS dialog bridge. Harmless when no managed hook is registered:
-  // the handler returns false and CEF uses its default dialog implementation.
-  managed_js_dialog_handler_ = new ClientJSDialogHandler();
 #endif  // defined(OS_LINUX)
 }
 
@@ -691,23 +622,6 @@ bool ClientHandler::OnChromeCommand(CefRefPtr<CefBrowser> browser,
                                     cef_window_open_disposition_t disposition) {
   CEF_REQUIRE_UI_THREAD();
   DCHECK(!use_alloy_style_);
-
-  // Intercept window/tab creation commands to use cefclient's RootWindow
-  // instead of Chrome's default behavior, but only if --use-cef-popup is specified.
-  // This ensures all new windows/tabs support C# interop and inject.js when enabled.
-  if (MainContext::Get()->UseCefPopup()) {
-    CEF_DECLARE_COMMAND_ID(IDC_NEW_WINDOW);
-    CEF_DECLARE_COMMAND_ID(IDC_NEW_TAB);
-    CEF_DECLARE_COMMAND_ID(IDC_NEW_INCOGNITO_WINDOW);
-
-    if (command_id == IDC_NEW_WINDOW ||
-        command_id == IDC_NEW_TAB ||
-        command_id == IDC_NEW_INCOGNITO_WINDOW) {
-      // Use RunTest with ID_TESTS_WINDOW_NEW to create a new RootWindow
-      test_runner::RunTest(browser, ID_TESTS_WINDOW_NEW);
-      return true;  // Block default Chrome behavior
-    }
-  }
 
   const bool allowed = IsAllowedAppMenuCommandId(command_id) ||
                        IsAllowedContextMenuCommandId(command_id);
@@ -817,8 +731,8 @@ void ClientHandler::OnBeforeContextMenu(CefRefPtr<CefBrowser> browser,
       model->SetChecked(CLIENT_ID_OFFLINE, true);
     }
 
-    // Custom context menu features.
-    BuildCustomMenu(browser, model);
+    // Test context menu features.
+    BuildTestMenu(browser, model);
   }
 
   if (delegate_) {
@@ -857,7 +771,7 @@ bool ClientHandler::OnContextMenuCommand(CefRefPtr<CefBrowser> browser,
       SetOfflineState(browser, offline_);
       return true;
     default:  // Allow default handling, if any.
-      return ExecuteCustomMenu(browser, command_id);
+      return ExecuteTestMenu(browser, command_id);
   }
 }
 
@@ -903,56 +817,6 @@ bool ClientHandler::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
                                      const CefString& source,
                                      int line) {
   CEF_REQUIRE_UI_THREAD();
-
-  // Callback to C# before writing console.log.
-  int max_log_size = 128 * 1024;
-  if (on_console_log_fptr) {
-    std::string msg_str = message.ToString();
-    std::string src_str = source.ToString();
-    // CEF does not provide a frame here; pass browser->GetMainFrame() so C#
-    // can set NativeApi context with the same (browser, frame) convention.
-    CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
-    bool handled = on_console_log_fptr(browser.get(), main_frame.get(),
-        (int)level, msg_str.c_str(), src_str.c_str(), line, max_log_size);
-    if (handled) {
-      return false;
-    }
-    if (max_log_size <= 0) {
-      max_log_size = 128 * 1024;
-    }
-  }
-
-  // Rotate log file if size exceeds max_log_size.
-  FILE* check = fopen(console_log_file_.c_str(), "rb");
-  if (check) {
-    fseek(check, 0, SEEK_END);
-    long size = ftell(check);
-    fclose(check);
-    if (size > max_log_size) {
-      auto now = std::chrono::system_clock::now();
-      auto time_t_now = std::chrono::system_clock::to_time_t(now);
-      auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    now.time_since_epoch()) %
-                1000;
-      struct tm local_tm;
-#if defined(OS_WIN)
-      localtime_s(&local_tm, &time_t_now);
-#else
-      localtime_r(&time_t_now, &local_tm);
-#endif
-      std::stringstream ts;
-      ts << std::put_time(&local_tm, "%Y%m%d_%H%M%S") << "."
-         << std::setfill('0') << std::setw(3) << ms.count();
-      std::string dir;
-      std::string::size_type pos = console_log_file_.rfind('/');
-      if (pos == std::string::npos)
-        pos = console_log_file_.rfind('\\');
-      if (pos != std::string::npos)
-        dir = console_log_file_.substr(0, pos + 1);
-      std::string rotated = dir + "console_" + ts.str() + ".log";
-      rename(console_log_file_.c_str(), rotated.c_str());
-    }
-  }
 
   FILE* file = fopen(console_log_file_.c_str(), "a");
   if (file) {
@@ -1137,11 +1001,6 @@ bool ClientHandler::OnBeforePopup(
     bool* no_javascript_access) {
   CEF_REQUIRE_UI_THREAD();
 
-  printf_log(LOG_SEVERITY_INFO,
-            "OnBeforePopup: source_browser=%d, popup_id=%d, url=%s, disposition=%d, user_gesture=%d",
-            browser->GetIdentifier(), popup_id, target_url.ToString().c_str(),
-            static_cast<int>(target_disposition), user_gesture ? 1 : 0);
-
   if (target_disposition == CEF_WOD_NEW_PICTURE_IN_PICTURE) {
     // Use default handling for document picture-in-picture popups.
     client = nullptr;
@@ -1172,10 +1031,6 @@ void ClientHandler::OnBeforeDevToolsPopup(
     CefRefPtr<CefDictionaryValue>& extra_info,
     bool* use_default_window) {
   CEF_REQUIRE_UI_THREAD();
-
-  printf_log(LOG_SEVERITY_INFO,
-            "OnBeforeDevToolsPopup: source_browser=%d",
-            browser->GetIdentifier());
 
   // Potentially create a new RootWindow for the DevTools popup browser that
   // will be created immediately after this method returns.
@@ -1241,46 +1096,9 @@ bool ClientHandler::OnRequestMediaAccessPermission(
     const CefString& requesting_origin,
     uint32_t requested_permissions,
     CefRefPtr<CefMediaAccessCallback> callback) {
-  CEF_REQUIRE_UI_THREAD();
-
-  // Highest priority: DSL / C# override. Handler decides freely; menu state is
-  // passed through as an input so DSL can honor or ignore it.
-  if (on_request_media_access_permission_fptr) {
-    std::string originStr = requesting_origin.ToString();
-    uint32_t allowed = 0;
-    // CEF provides the requesting |frame| here; pass it through so C# can
-    // set NativeApi context with the accurate frame.
-    bool handled = on_request_media_access_permission_fptr(
-        browser.get(), frame.get(), originStr.c_str(), requested_permissions,
-        media_handling_disabled_, &allowed);
-    if (handled) {
-      // Clamp to the requested set; CEF ignores extra bits but be defensive.
-      callback->Continue(allowed & requested_permissions);
-      return true;
-    }
-  }
-  // Kill-switch: when media handling is globally disabled from the UI, deny
-  // every request without prompting.
-  if (media_handling_disabled_) {
-    callback->Continue(CEF_MEDIA_PERMISSION_NONE);
-    return true;
-  }
-  // Otherwise let Chromium show its native permission prompt (Chrome style).
-  return false;
-}
-
-bool ClientHandler::OnShowPermissionPrompt(
-    CefRefPtr<CefBrowser> browser,
-    uint64_t prompt_id,
-    const CefString& requesting_origin,
-    uint32_t requested_permissions,
-    CefRefPtr<CefPermissionPromptCallback> callback) {
-  CEF_REQUIRE_UI_THREAD();
-  // Delegate to the shared DSL bridge so managed windows (this handler) and
-  // unmanaged / chrome-style / overlay windows (DefaultClientHandler) share
-  // ONE policy source.
-  return BaseClientHandler::MaybeHandlePermissionPromptViaDSL(
-      browser, prompt_id, requesting_origin, requested_permissions, callback);
+  callback->Continue(media_handling_disabled_ ? CEF_MEDIA_PERMISSION_NONE
+                                              : requested_permissions);
+  return true;
 }
 
 bool ClientHandler::OnOpenURLFromTab(
@@ -1328,107 +1146,20 @@ bool ClientHandler::GetAuthCredentials(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefAuthCallback> callback) {
   CEF_REQUIRE_IO_THREAD();
 
-  const std::string hostStr = host.ToString();
-  const std::string realmStr = realm.ToString();
-  const std::string schemeStr = scheme.ToString();
-  const std::string originStr = origin_url.ToString();
-  const std::string target_key =
-      MakeAuthTargetKey(isProxy, hostStr, port, realmStr);
-  const int attempt = HasAuthBeenSupplied(target_key) ? 1 : 0;
-  const int browser_id = browser ? browser->GetIdentifier() : 0;
-
-  printf_log(LOG_SEVERITY_INFO,
-            "GetAuthCredentials: isProxy=%d host=%s port=%d realm=%s "
-            "scheme=%s origin=%s attempt=%d target=%s",
-            isProxy ? 1 : 0, hostStr.c_str(), port, realmStr.c_str(),
-            schemeStr.c_str(), originStr.c_str(), attempt,
-            target_key.c_str());
-
-  // Park the CefAuthCallback in the generic native-callback registry so that
-  // either the managed side (asynchronous DSL takeover) or our own credui
-  // fallback (on the UI thread) can complete it later. The closure runs on
-  // the IO thread which is where CefAuthCallback::Continue/Cancel must be
-  // called.
-  const std::string target_for_closure = target_key;
-  const int64_t handle = RegisterNativeCallback(
-      browser_id, TID_IO,
-      [callback, target_for_closure](bool ok, const std::string& data,
-                                     int /*code*/) {
-        if (ok) {
-          std::string user;
-          std::string pass;
-          const auto pos = data.find('\n');
-          if (pos != std::string::npos) {
-            user = data.substr(0, pos);
-            pass = data.substr(pos + 1);
-          } else {
-            user = data;
-          }
-          MarkAuthSupplied(target_for_closure);
-          callback->Continue(user, pass);
-        } else {
-          callback->Cancel();
-        }
-      },
-      kJsDialogTimeoutMs);
-
-  // Ask the C#/DSL layer for credentials (configured via set_web_auth).
-  // Three-state contract (see HostCLR.h):
-  //   handled == false                 -> DSL declined; run credui fallback.
-  //   handled == true, user_len == 0   -> DSL took ownership; managed side
-  //                                       will complete |handle| later via
-  //                                       native_callback_complete.
-  //   handled == true, user_len > 0    -> DSL supplied credentials
-  //                                       synchronously; discard |handle|
-  //                                       and Continue directly.
-  if (on_get_auth_credentials_fptr) {
-    const int kMaxAuthLen = 256;
-    char user_buf[kMaxAuthLen + 1];
-    char pass_buf[kMaxAuthLen + 1];
-    int user_len = kMaxAuthLen;
-    int pass_len = kMaxAuthLen;
-    const bool handled = on_get_auth_credentials_fptr(
-        browser.get(), /*frame=*/nullptr, isProxy, hostStr.c_str(), port,
-        realmStr.c_str(), schemeStr.c_str(), originStr.c_str(), user_buf,
-        user_len, pass_buf, pass_len, handle, attempt);
-    if (handled) {
-      if (user_len > 0 && user_len < kMaxAuthLen && pass_len >= 0 &&
-          pass_len < kMaxAuthLen) {
-        // Synchronous: use the buffers directly. Discard the parked handle.
-        user_buf[user_len] = '\0';
-        pass_buf[pass_len] = '\0';
-        printf_log(LOG_SEVERITY_INFO,
-                  "GetAuthCredentials: using credentials from C# layer "
-                  "(user=%s, pass_len=%d)",
-                  user_buf, pass_len);
-        DiscardNativeCallback(handle);
-        MarkAuthSupplied(target_key);
-        callback->Continue(user_buf, pass_buf);
-        return true;
-      }
-      // Asynchronous takeover: managed side owns |handle| now.
-      printf_log(LOG_SEVERITY_INFO,
-                "GetAuthCredentials: DSL took over handle=%lld",
-                static_cast<long long>(handle));
-      return true;
-    }
-    printf_log(LOG_SEVERITY_INFO,
-              "GetAuthCredentials: DSL declined, running native credui "
-              "fallback (attempt=%d)",
-              attempt);
-  } else {
-    printf_log(LOG_SEVERITY_INFO,
-              "GetAuthCredentials: no managed handler, running native credui "
-              "fallback (attempt=%d)",
-              attempt);
+  // Used for testing authentication with a proxy server.
+  // For example, CCProxy on Windows.
+  if (isProxy) {
+    callback->Continue("guest", "guest");
+    return true;
   }
 
-  // Fallback: Credential Manager + Windows credui prompt on the UI thread.
-  CefPostTask(TID_UI,
-              base::BindOnce(&CredUIFallbackOnUiThread, browser, handle,
-                             target_key, isProxy, hostStr, port, realmStr,
-                             attempt));
-  return true;
+  // Used for testing authentication with https://jigsaw.w3.org/HTTP/.
+  if (host == "jigsaw.w3.org") {
+    callback->Continue("guest", "guest");
+    return true;
+  }
+
+  return false;
 }
 
 bool ClientHandler::OnCertificateError(CefRefPtr<CefBrowser> browser,
@@ -1438,32 +1169,15 @@ bool ClientHandler::OnCertificateError(CefRefPtr<CefBrowser> browser,
                                        CefRefPtr<CefCallback> callback) {
   CEF_REQUIRE_UI_THREAD();
 
-  // Highest priority: DSL / C# override.
-  if (on_certificate_error_fptr) {
-    std::string urlStr = request_url.ToString();
-    int action = 0;
-    // CEF does not provide a frame here; pass browser->GetMainFrame() so C#
-    // can set NativeApi context with the same (browser, frame) convention.
-    CefRefPtr<CefFrame> main_frame = browser ? browser->GetMainFrame() : nullptr;
-    bool handled = on_certificate_error_fptr(
-        browser.get(), main_frame.get(), static_cast<int>(cert_error),
-        urlStr.c_str(), &action);
-    if (handled) {
-      if (action == 1) {           // Continue: silently proceed.
-        callback->Continue();
-        return true;
-      }
-      if (action == 2) {           // Cancel: silently cancel.
-        callback->Cancel();
-        return true;
-      }
-      // action == 0 or unknown -> fall through to the default interstitial.
-    }
+  if (cert_error == ERR_CERT_COMMON_NAME_INVALID &&
+      request_url.ToString().starts_with("https://www.magpcss.com/")) {
+    // Allow magpcss.com to load despite having a certificate common name of
+    // magpcss.org.
+    callback->Continue();
+    return true;
   }
 
-  // Let Chromium show its default certificate-error interstitial. No app-side
-  // allowlist / silent bypass.
-  return false;
+  return false;  // Cancel the request.
 }
 
 bool ClientHandler::OnSelectClientCertificate(
@@ -1498,6 +1212,44 @@ bool ClientHandler::OnSelectClientCertificate(
   }
 
   return true;
+}
+
+void ClientHandler::OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                              TerminationStatus status,
+                                              int error_code,
+                                              const CefString& error_string) {
+  CEF_REQUIRE_UI_THREAD();
+  BaseClientHandler::OnRenderProcessTerminated(browser, status, error_code,
+                                               error_string);
+
+  LOG(ERROR) << "Render process terminated with status "
+             << test_runner::GetErrorString(status) << " ("
+             << error_string.ToString() << ")";
+
+  // Don't reload if there's no start URL, or if the crash URL was specified.
+  if (startup_url_.empty() || startup_url_ == "chrome://crash") {
+    return;
+  }
+
+  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+  std::string url = frame->GetURL();
+
+  // Don't reload if the termination occurred before any URL had successfully
+  // loaded.
+  if (url.empty()) {
+    return;
+  }
+
+  // Convert URLs to lowercase for easier comparison.
+  url = AsciiStrToLower(url);
+  const std::string& start_url = AsciiStrToLower(startup_url_);
+
+  // Don't reload the URL that just resulted in termination.
+  if (url.find(start_url) == 0) {
+    return;
+  }
+
+  frame->LoadURL(startup_url_);
 }
 
 void ClientHandler::OnDocumentAvailableInMainFrame(
@@ -1782,34 +1534,45 @@ void ClientHandler::NotifyTakeFocus(bool next) {
   }
 }
 
-void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<CefMenuModel> model) {
+void ClientHandler::BuildTestMenu(CefRefPtr<CefBrowser> browser,
+                                  CefRefPtr<CefMenuModel> model) {
   if (model->GetCount() > 0) {
     model->AddSeparator();
   }
 
-  model->AddCheckItem(CLIENT_ID_INJECT_ALL_FRAME, "Inject All Frame");
+  // Build the sub menu.
+  CefRefPtr<CefMenuModel> submenu =
+      model->AddSubMenu(CLIENT_ID_TESTMENU_SUBMENU, "Context Menu Test");
+  submenu->AddCheckItem(CLIENT_ID_TESTMENU_CHECKITEM, "Check Item");
+  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM1, "Radio Item 1", 0);
+  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM2, "Radio Item 2", 0);
+  submenu->AddRadioItem(CLIENT_ID_TESTMENU_RADIOITEM3, "Radio Item 3", 0);
 
   // Check the check item.
-  if (inject_all_frame_) {
-    model->SetChecked(CLIENT_ID_INJECT_ALL_FRAME, true);
+  if (test_menu_state_.check_item) {
+    submenu->SetChecked(CLIENT_ID_TESTMENU_CHECKITEM, true);
   }
+
+  // Check the selected radio item.
+  submenu->SetChecked(
+      CLIENT_ID_TESTMENU_RADIOITEM1 + test_menu_state_.radio_item, true);
 
   // Build the theme sub menu.
   CefRefPtr<CefMenuModel> theme_menu =
-      model->AddSubMenu(CLIENT_ID_THEME, "Theme");
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_SYSTEM, "System", 1);
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_LIGHT, "Light", 1);
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_MODE_DARK, "Dark", 1);
+      model->AddSubMenu(CLIENT_ID_TESTMENU_THEME, "Theme");
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM, "System", 1);
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_LIGHT, "Light", 1);
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_MODE_DARK, "Dark", 1);
   theme_menu->AddSeparator();
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_DEFAULT, "Default",
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT, "Default",
                            2);
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_RED, "Red", 2);
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_GREEN, "Green", 2);
-  theme_menu->AddRadioItem(CLIENT_ID_THEME_COLOR_BLUE, "Blue", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_RED, "Red", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_GREEN, "Green", 2);
+  theme_menu->AddRadioItem(CLIENT_ID_TESTMENU_THEME_COLOR_BLUE, "Blue", 2);
 
   if (!use_alloy_style_) {
     theme_menu->AddSeparator();
-    theme_menu->AddItem(CLIENT_ID_THEME_CUSTOM, "Custom...");
+    theme_menu->AddItem(CLIENT_ID_TESTMENU_THEME_CUSTOM, "Custom...");
   }
 
   auto request_context = browser->GetHost()->GetRequestContext();
@@ -1817,13 +1580,13 @@ void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
   int checked_mode_item = -1;
   switch (request_context->GetChromeColorSchemeMode()) {
     case CEF_COLOR_VARIANT_SYSTEM:
-      checked_mode_item = CLIENT_ID_THEME_MODE_SYSTEM;
+      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM;
       break;
     case CEF_COLOR_VARIANT_LIGHT:
-      checked_mode_item = CLIENT_ID_THEME_MODE_LIGHT;
+      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_LIGHT;
       break;
     case CEF_COLOR_VARIANT_DARK:
-      checked_mode_item = CLIENT_ID_THEME_MODE_DARK;
+      checked_mode_item = CLIENT_ID_TESTMENU_THEME_MODE_DARK;
       break;
     default:
       NOTREACHED();
@@ -1833,13 +1596,13 @@ void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
   int checked_color_item = -1;
   const cef_color_t color = request_context->GetChromeColorSchemeColor();
   if (color == kColorTransparent) {
-    checked_color_item = CLIENT_ID_THEME_COLOR_DEFAULT;
+    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_DEFAULT;
   } else if (color == kColorRed) {
-    checked_color_item = CLIENT_ID_THEME_COLOR_RED;
+    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_RED;
   } else if (color == kColorGreen) {
-    checked_color_item = CLIENT_ID_THEME_COLOR_GREEN;
+    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_GREEN;
   } else if (color == kColorBlue) {
-    checked_color_item = CLIENT_ID_THEME_COLOR_BLUE;
+    checked_color_item = CLIENT_ID_TESTMENU_THEME_COLOR_BLUE;
   }
 
   // Check the selected radio item, if any.
@@ -1847,56 +1610,62 @@ void ClientHandler::BuildCustomMenu(CefRefPtr<CefBrowser> browser, CefRefPtr<Cef
     theme_menu->SetChecked(checked_mode_item, true);
 
     // Update the selected item.
-    my_menu_state_.chrome_theme_mode_item =
-        checked_mode_item - CLIENT_ID_THEME_MODE_FIRST;
+    test_menu_state_.chrome_theme_mode_item =
+        checked_mode_item - CLIENT_ID_TESTMENU_THEME_MODE_FIRST;
   }
   if (checked_color_item != -1) {
     theme_menu->SetChecked(checked_color_item, true);
 
     // Update the selected item.
-    my_menu_state_.chrome_theme_color_item =
-        checked_color_item - CLIENT_ID_THEME_COLOR_FIRST;
+    test_menu_state_.chrome_theme_color_item =
+        checked_color_item - CLIENT_ID_TESTMENU_THEME_COLOR_FIRST;
   }
 }
 
-bool ClientHandler::ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command_id) {
-  if (command_id == CLIENT_ID_INJECT_ALL_FRAME) {
+bool ClientHandler::ExecuteTestMenu(CefRefPtr<CefBrowser> browser,
+                                    int command_id) {
+  if (command_id == CLIENT_ID_TESTMENU_CHECKITEM) {
     // Toggle the check item.
-    inject_all_frame_ = !inject_all_frame_;
+    test_menu_state_.check_item ^= 1;
     return true;
-  } else if (command_id >= CLIENT_ID_THEME_MODE_FIRST &&
-             command_id <= CLIENT_ID_THEME_COLOR_LAST) {
-    int selected_mode_item = my_menu_state_.chrome_theme_mode_item;
-    if (command_id >= CLIENT_ID_THEME_MODE_FIRST &&
-        command_id <= CLIENT_ID_THEME_MODE_LAST) {
-      selected_mode_item = command_id - CLIENT_ID_THEME_MODE_FIRST;
-      if (selected_mode_item != my_menu_state_.chrome_theme_mode_item) {
+  } else if (command_id >= CLIENT_ID_TESTMENU_RADIOITEM1 &&
+             command_id <= CLIENT_ID_TESTMENU_RADIOITEM3) {
+    // Store the selected radio item.
+    test_menu_state_.radio_item = (command_id - CLIENT_ID_TESTMENU_RADIOITEM1);
+    return true;
+  } else if (command_id >= CLIENT_ID_TESTMENU_THEME_MODE_FIRST &&
+             command_id <= CLIENT_ID_TESTMENU_THEME_COLOR_LAST) {
+    int selected_mode_item = test_menu_state_.chrome_theme_mode_item;
+    if (command_id >= CLIENT_ID_TESTMENU_THEME_MODE_FIRST &&
+        command_id <= CLIENT_ID_TESTMENU_THEME_MODE_LAST) {
+      selected_mode_item = command_id - CLIENT_ID_TESTMENU_THEME_MODE_FIRST;
+      if (selected_mode_item != test_menu_state_.chrome_theme_mode_item) {
         // Update the selected item.
-        my_menu_state_.chrome_theme_mode_item = selected_mode_item;
+        test_menu_state_.chrome_theme_mode_item = selected_mode_item;
       }
     }
 
-    int selected_color_item = my_menu_state_.chrome_theme_color_item;
-    if (command_id >= CLIENT_ID_THEME_COLOR_FIRST &&
-        command_id <= CLIENT_ID_THEME_COLOR_LAST) {
-      selected_color_item = command_id - CLIENT_ID_THEME_COLOR_FIRST;
-      if (selected_color_item != my_menu_state_.chrome_theme_color_item) {
+    int selected_color_item = test_menu_state_.chrome_theme_color_item;
+    if (command_id >= CLIENT_ID_TESTMENU_THEME_COLOR_FIRST &&
+        command_id <= CLIENT_ID_TESTMENU_THEME_COLOR_LAST) {
+      selected_color_item = command_id - CLIENT_ID_TESTMENU_THEME_COLOR_FIRST;
+      if (selected_color_item != test_menu_state_.chrome_theme_color_item) {
         // Udpate the selected item.
-        my_menu_state_.chrome_theme_color_item = selected_color_item;
+        test_menu_state_.chrome_theme_color_item = selected_color_item;
       }
     }
 
     // Don't change the color mode unless a selection has been made.
     cef_color_variant_t variant = CEF_COLOR_VARIANT_TONAL_SPOT;
     if (selected_mode_item != -1) {
-      switch (CLIENT_ID_THEME_MODE_FIRST + selected_mode_item) {
-        case CLIENT_ID_THEME_MODE_SYSTEM:
+      switch (CLIENT_ID_TESTMENU_THEME_MODE_FIRST + selected_mode_item) {
+        case CLIENT_ID_TESTMENU_THEME_MODE_SYSTEM:
           variant = CEF_COLOR_VARIANT_SYSTEM;
           break;
-        case CLIENT_ID_THEME_MODE_LIGHT:
+        case CLIENT_ID_TESTMENU_THEME_MODE_LIGHT:
           variant = CEF_COLOR_VARIANT_LIGHT;
           break;
-        case CLIENT_ID_THEME_MODE_DARK:
+        case CLIENT_ID_TESTMENU_THEME_MODE_DARK:
           variant = CEF_COLOR_VARIANT_DARK;
           break;
         default:
@@ -1907,14 +1676,14 @@ bool ClientHandler::ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command
     // Don't change the user color unless a selection has been made.
     cef_color_t color = kColorTransparent;
     if (selected_color_item != -1) {
-      switch (CLIENT_ID_THEME_COLOR_FIRST + selected_color_item) {
-        case CLIENT_ID_THEME_COLOR_RED:
+      switch (CLIENT_ID_TESTMENU_THEME_COLOR_FIRST + selected_color_item) {
+        case CLIENT_ID_TESTMENU_THEME_COLOR_RED:
           color = kColorRed;
           break;
-        case CLIENT_ID_THEME_COLOR_GREEN:
+        case CLIENT_ID_TESTMENU_THEME_COLOR_GREEN:
           color = kColorGreen;
           break;
-        case CLIENT_ID_THEME_COLOR_BLUE:
+        case CLIENT_ID_TESTMENU_THEME_COLOR_BLUE:
           color = kColorBlue;
           break;
         default:
@@ -1925,7 +1694,7 @@ bool ClientHandler::ExecuteCustomMenu(CefRefPtr<CefBrowser> browser, int command
     browser->GetHost()->GetRequestContext()->SetChromeColorScheme(variant,
                                                                   color);
     return true;
-  } else if (command_id == CLIENT_ID_THEME_CUSTOM) {
+  } else if (command_id == CLIENT_ID_TESTMENU_THEME_CUSTOM) {
     browser->GetMainFrame()->LoadURL("chrome://settings/manageProfile");
     return true;
   }

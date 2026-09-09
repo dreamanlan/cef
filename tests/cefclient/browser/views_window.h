@@ -297,11 +297,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
 
   CefRefPtr<ViewsOverlayControls> overlay_controls_;
 
-  // Custom titlebar for frameless + Chrome toolbar mode (Windows only).
-  bool with_custom_titlebar_ = false;
-  CefRefPtr<CefPanel> title_bar_;
-  CefRefPtr<CefLabelButton> title_label_;
-
   // Overlay browser view state.
   bool with_overlay_browser_ = false;
   std::string initial_url_;

@@ -8,7 +8,6 @@
 
 #include <set>
 
-#include "include/cef_command_line.h"
 #include "tests/shared/common/client_app.h"
 
 namespace client {
@@ -21,10 +20,6 @@ class ClientAppRenderer : public ClientApp, public CefRenderProcessHandler {
   // constructor. See CefRenderProcessHandler for documentation.
   class Delegate : public virtual CefBaseRefCounted {
    public:
-    virtual void OnBeforeCommandLineProcessing(
-        CefRefPtr<ClientAppRenderer> app,
-        CefRefPtr<CefCommandLine> command_line) {}
-
     virtual void OnWebKitInitialized(CefRefPtr<ClientAppRenderer> app) {}
 
     virtual void OnBrowserCreated(CefRefPtr<ClientAppRenderer> app,
@@ -88,9 +83,6 @@ class ClientAppRenderer : public ClientApp, public CefRenderProcessHandler {
   static void CreateDelegates(DelegateSet& delegates);
 
   // CefApp methods.
-  void OnBeforeCommandLineProcessing(
-      const CefString& process_type,
-      CefRefPtr<CefCommandLine> command_line) override;
   CefRefPtr<CefRenderProcessHandler> GetRenderProcessHandler() override {
     return this;
   }

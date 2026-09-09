@@ -9,7 +9,6 @@
 
 #include "include/cef_parser.h"
 #include "tests/cefclient/browser/test_runner.h"
-#include "tests/cefclient/hostclr/path_utils.h"
 #include "tests/shared/browser/client_app_browser.h"
 #include "tests/shared/common/client_switches.h"
 #include "tests/shared/common/string_util.h"
@@ -19,7 +18,7 @@ namespace client {
 namespace {
 
 // The default URL to load in a browser window.
-const char kDefaultUrl[] = "https://www.baidu.com";
+const char kDefaultUrl[] = "https://www.google.com";
 
 // Returns the ARGB value for |color|.
 cef_color_t ParseColor(const std::string& color) {
@@ -146,11 +145,7 @@ CefRefPtr<CefCommandLine> MainContextImpl::GetCommandLine() {
 }
 
 std::string MainContextImpl::GetConsoleLogPath() {
-#if defined(__APPLE__)
-  return GetMacAppSupportDir() + "console.log";
-#else
   return GetAppWorkingDirectory() + "console.log";
-#endif
 }
 
 std::string MainContextImpl::GetMainURL(
@@ -191,28 +186,11 @@ bool MainContextImpl::UseDefaultPopup() {
           command_line_->HasSwitch(switches::kUseViewsDefaultPopup));
 }
 
-bool MainContextImpl::UseCefPopup() {
-  return command_line_->HasSwitch(switches::kUseCefPopup);
-}
-
 void MainContextImpl::PopulateSettings(CefSettings* settings) {
   client::ClientAppBrowser::PopulateSettings(command_line_, *settings);
 
-  // Use standard Chrome user-agent to avoid exposing cefclient identity.
-  CefString(&settings->user_agent_product) = "Chrome/150.0.7871.187";
-
-  // Set application-specific cache path to avoid process singleton conflicts
-#if defined(__APPLE__)
-  std::string appSupportDir = GetMacAppSupportDir();
-  CefString(&settings->root_cache_path) = appSupportDir + "cache";
-  CefString(&settings->log_file) = appSupportDir + "debug.log";
-#else
-  CefString(&settings->root_cache_path) = GetExeDir() + "/cefclient_cache";
-#endif
-  if (command_line_->HasSwitch(switches::kCachePath)) {
-    CefString(&settings->cache_path) =
-        command_line_->GetSwitchValue(switches::kCachePath);
-  }
+  CefString(&settings->cache_path) =
+      command_line_->GetSwitchValue(switches::kCachePath);
 
   if (use_windowless_rendering_) {
     settings->windowless_rendering_enabled = true;

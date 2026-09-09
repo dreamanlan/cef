@@ -1979,10 +1979,6 @@ if (is_mac) {
           cflags_c = invoker.helper_cflags_c
         }
 
-        if (defined(invoker.helper_libs)) {
-          libs = invoker.helper_libs
-        }
-
         # Disable clang modules for this target (see issue #3611).
         use_libcxx_modules = false
       }
@@ -2018,9 +2014,6 @@ if (is_mac) {
         }
         if (defined(invoker.helper_cflags_c)) {
           helper_cflags_c = invoker.helper_cflags_c
-        }
-        if (defined(invoker.helper_libs)) {
-          helper_libs = invoker.helper_libs
         }
 
         helper_name_suffix = _helper_suffix
@@ -2086,10 +2079,6 @@ if (is_mac) {
         cflags_c = invoker.cflags_c
       }
 
-      if (defined(invoker.libs)) {
-        libs = invoker.libs
-      }
-
       info_plist_target = ":${app_name}_plist"
 
       # Disable clang modules for this target (see issue #3611).
@@ -2151,10 +2140,6 @@ if (is_mac) {
     helper_defines = [
       "CEF_USE_SANDBOX",
     ]
-    helper_libs = [
-      "//cef/tests/cefclient/hostclr/coreclr/libnethost.a",
-      "c++",
-    ]
 
     info_plist = "tests/cefclient/mac/Info.plist.in"
     sources = includes_common +
@@ -2177,11 +2162,6 @@ if (is_mac) {
       "AppKit.framework",
       "IOSurface.framework",
       "OpenGL.framework",
-      "Security.framework",
-    ]
-    libs = [
-      "//cef/tests/cefclient/hostclr/coreclr/libnethost.a",
-      "c++",
     ]
     defines = [
       "CEF_USE_SANDBOX",
@@ -2729,6 +2709,229 @@ if (is_mac) {
 
       # Disable clang modules for this target (see issue #3611).
       use_libcxx_modules = false
+    }
+  }
+
+
+  #
+  # myapp targets (forked from tests/{cefclient,cefsimple,shared}).
+  #
+  # Source lists are maintained explicitly in myapp/myapp_sources.gypi, fully
+  # decoupled from cef_paths2.gypi so the "tests" tree stays pristine for clean
+  # CEF upgrades. This correctly handles myapp-only files (hostclr) and renamed
+  # resources (webagent.ico / websimple.ico). Only Windows and Linux are wired
+  # up here; macOS uses the cef_app bundle template and is intentionally not
+  # forked.
+  #
+  myapp_paths = exec_script("//cef/tools/gypi_to_gn.py",
+                            [ rebase_path("myapp/myapp_sources.gypi") ],
+                            "scope",
+                            [ "myapp/myapp_sources.gypi" ])
+
+  # myapp_cefclient common (non-platform) sources.
+  myapp_cefclient_sources =
+      myapp_paths.myapp_shared_sources_browser +
+      myapp_paths.myapp_shared_sources_common +
+      myapp_paths.myapp_shared_sources_renderer +
+      myapp_paths.myapp_cefclient_sources_browser +
+      myapp_paths.myapp_cefclient_sources_common +
+      myapp_paths.myapp_cefclient_sources_renderer
+
+  # myapp_cefsimple common (non-platform) sources.
+  myapp_cefsimple_sources = myapp_paths.myapp_cefsimple_sources_common
+
+  # Platform-specific source lists are assigned inside their matching platform
+  # guard so the assignment is always consumed (GN treats an unread assignment
+  # as an error; is_linux vars would be unused on Windows and vice versa).
+  if (is_win) {
+    myapp_cefclient_sources_win =
+        myapp_paths.myapp_shared_sources_win +
+        myapp_paths.myapp_cefclient_sources_win +
+        myapp_paths.myapp_cefclient_sources_resources_win_rc
+
+    myapp_cefsimple_sources_win =
+        myapp_paths.myapp_cefsimple_sources_win +
+        myapp_paths.myapp_cefsimple_sources_resources_win_rc
+  }
+
+  if (is_linux) {
+    myapp_cefclient_sources_linux =
+        myapp_paths.myapp_shared_sources_linux +
+        myapp_paths.myapp_cefclient_sources_linux
+
+    myapp_cefsimple_sources_linux = myapp_paths.myapp_cefsimple_sources_linux
+  }
+
+  if (is_linux) {
+    myapp_cefclient_sources_resources =
+        myapp_paths.myapp_shared_sources_resources +
+        myapp_paths.myapp_cefclient_sources_resources
+
+    copy("copy_myapp_cefclient_files") {
+      sources = myapp_cefclient_sources_resources
+      outputs = [ "${root_out_dir}/myapp_cefclient_files/{{source_file_part}}" ]
+    }
+  }
+
+  executable("webagent") {
+    # Necessary because the libcef target is testonly.
+    testonly = true
+
+    sources = includes_common +
+              gypi_paths2.includes_wrapper +
+              myapp_cefclient_sources
+
+    deps = [
+      ":libcef",
+      ":libcef_dll_wrapper",
+    ]
+
+    defines = [
+      "CEF_USE_SANDBOX",
+    ]
+
+    # Disable clang modules for this target (see issue #3611).
+    use_libcxx_modules = false
+
+    if (is_win) {
+      sources += includes_win +
+                 gypi_paths2.includes_wrapper_win +
+                 myapp_cefclient_sources_win
+
+      # Set /SUBSYSTEM:WINDOWS.
+      configs -= [ "//build/config/win:console" ]
+      configs += [ "//build/config/win:windowed" ]
+
+      # Delay-load as many DLLs as possible for sandbox and startup perf
+      # improvements.
+      configs += [
+        "//build/config/win:delayloads",
+        "//build/config/win:delayloads_not_for_child_dll",
+      ]
+
+      defines += [
+        "CEF_USE_ATL",
+      ]
+
+      deps += [
+        ":cef_sandbox",
+        "//build/win:default_exe_manifest",
+      ]
+
+      libs = [
+        "comctl32.lib",
+        "d3d11.lib",
+        "imm32.lib",
+        "oleacc.lib",
+        "rpcrt4.lib",
+        "shlwapi.lib",
+      ]
+
+      if (target_cpu != "arm64") {
+        libs += [
+          "glu32.lib",
+          "opengl32.lib",
+        ]
+        ldflags = [
+          "/DELAYLOAD:glu32.dll",
+          "/DELAYLOAD:oleaut32.dll",
+          "/DELAYLOAD:opengl32.dll",
+        ]
+      }
+    }
+
+    if (is_linux) {
+      sources += includes_linux +
+                 myapp_cefclient_sources_linux
+
+      deps += [
+        ":copy_myapp_cefclient_files",
+      ]
+
+      libs = [
+        "GL",
+        "X11",
+      ]
+
+      if (cef_use_gtk) {
+        configs += [
+          ":gtk",
+        ]
+        cflags = [
+          # Don't warn about deprecated GDK/GTK functions.
+          "-Wno-deprecated-declarations",
+        ]
+      }
+
+      if (!is_component_build) {
+        # Set rpath to find our own libfreetype even in a non-component build.
+        configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+      }
+    }
+  }
+
+  executable("websimple") {
+    # Necessary because the libcef target is testonly.
+    testonly = true
+
+    sources = includes_common +
+              gypi_paths2.includes_wrapper +
+              myapp_cefsimple_sources
+
+    deps = [
+      ":libcef",
+      ":libcef_dll_wrapper",
+    ]
+
+    defines = [
+      "CEF_USE_SANDBOX",
+    ]
+
+    # Disable clang modules for this target (see issue #3611).
+    use_libcxx_modules = false
+
+    if (is_win) {
+      sources += includes_win +
+                 gypi_paths2.includes_wrapper_win +
+                 myapp_cefsimple_sources_win
+
+      # Set /SUBSYSTEM:WINDOWS.
+      configs -= [ "//build/config/win:console" ]
+      configs += [ "//build/config/win:windowed" ]
+
+      # Delay-load as many DLLs as possible for sandbox and startup perf
+      # improvements.
+      configs += [
+        "//build/config/win:delayloads",
+        "//build/config/win:delayloads_not_for_child_dll",
+      ]
+
+      deps += [
+        ":cef_sandbox",
+        "//build/win:default_exe_manifest",
+      ]
+
+      libs = [
+        "comctl32.lib",
+        "shlwapi.lib",
+        "rpcrt4.lib",
+      ]
+    }
+
+    if (is_linux) {
+      sources += includes_linux +
+                 myapp_cefsimple_sources_linux
+
+      if (ozone_platform_x11) {
+        libs = [
+          "X11",
+        ]
+      }
+
+      if (!is_component_build) {
+        # Set rpath to find our own libfreetype even in a non-component build.
+        configs += [ "//build/config/gcc:rpath_for_built_shared_libraries" ]
+      }
     }
   }
 

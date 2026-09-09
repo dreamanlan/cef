@@ -131,7 +131,7 @@ void SimpleApp::OnContextInitialized() {
   // that instead of the default URL.
   url = command_line->GetSwitchValue("url");
   if (url.empty()) {
-    url = "https://wx.qq.com/";
+    url = "https://www.google.com";
   }
 
   // Views is enabled by default (add `--use-native` to disable).

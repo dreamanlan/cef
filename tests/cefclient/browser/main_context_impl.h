@@ -36,7 +36,6 @@ class MainContextImpl : public MainContext {
   bool UseAlloyStyleGlobal() override;
   bool TouchEventsEnabled() override;
   bool UseDefaultPopup() override;
-  bool UseCefPopup() override;
   void PopulateSettings(CefSettings* settings) override;
   void PopulateBrowserSettings(CefBrowserSettings* settings) override;
   void PopulateOsrSettings(OsrRendererSettings* settings) override;

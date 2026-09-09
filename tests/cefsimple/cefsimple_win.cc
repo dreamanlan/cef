@@ -7,7 +7,6 @@
 #include "include/cef_command_line.h"
 #include "include/cef_sandbox_win.h"
 #include "include/cef_version_info.h"
-#include "tests/cefclient/hostclr/path_utils.h"
 #include "tests/cefsimple/simple_app.h"
 
 namespace {
@@ -40,9 +39,6 @@ int RunMain(HINSTANCE hInstance,
   if (!sandbox_info) {
     settings.no_sandbox = true;
   }
-
-  // Set application-specific cache path to avoid process singleton conflicts
-  CefString(&settings.root_cache_path) = GetExeDir() + "/cefsimple_cache";
 
   // SimpleApp implements application-level callbacks for the browser process.
   // It will create the first browser instance in OnContextInitialized() after

@@ -12,7 +12,6 @@
 
 #include "include/cef_command_line.h"
 #include "include/cef_request_context_handler.h"
-#include "tests/cefclient/browser/cef_query_handler.h"
 #include "tests/cefclient/browser/image_cache.h"
 #include "tests/cefclient/browser/root_window.h"
 #include "tests/cefclient/browser/temp_window.h"
@@ -80,52 +79,7 @@ class RootWindowManager : public RootWindow::Delegate {
   void OtherBrowserCreated(int browser_id, int opener_browser_id);
   void OtherBrowserClosed(int browser_id, int opener_browser_id);
 
-  // Temporarily disable termination when all windows are closed.
-  // Used for hot reload functionality.
-  void SetDisableTermination(bool disable);
-
-  // Execute hot reload flow: close windows, terminate renderer processes,
-  // copy files, and create new window.
-  void ExecuteHotReload(
-      const std::string& url,
-      const std::vector<cef_query_handler::FileCopyInfo>& files,
-      base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
-      bool custom_process_killer);
-
  private:
-  // Internal method to update disable_termination_ flag with logging.
-  // All modifications to disable_termination_ should go through this method.
-  void SetDisableTerminationInternal(bool disable);
-
-  // Internal method for hot reload flow: copy files and create new window.
-  void OnCopyFilesAndCreateWindow(
-      const std::string& url,
-      const std::vector<cef_query_handler::FileCopyInfo>& files,
-      base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback);
-
-  // Internal method for hot reload flow: terminate renderer processes and copy files.
-  void TerminateRendererProcessesAndCopy(
-      const std::string& url,
-      const std::vector<cef_query_handler::FileCopyInfo>& files,
-      base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
-      int elapsed_ms,
-      int poll_interval_ms,
-      int max_wait_time_ms,
-      bool custom_process_killer);
-
-  // Internal method for hot reload flow: check file lock and copy files.
-  void CheckFileLockAndCopy(
-      const std::string& url,
-      const std::vector<cef_query_handler::FileCopyInfo>& files,
-      base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
-      int elapsed_ms,
-      int poll_interval_ms,
-      int max_wait_time_ms);
-
   // Allow deletion via std::unique_ptr only.
   friend std::default_delete<RootWindowManager>;
 
@@ -150,18 +104,7 @@ class RootWindowManager : public RootWindow::Delegate {
   void MaybeCleanup();
   void CleanupOnUIThread();
 
-  // Helper function to count renderer processes using CefTaskManager.
-  // Returns the number of renderer processes, or -1 on error.
-  // Must be called on UI thread.
-  static int CefCountRenderProcess();
-
-  // Helper function to terminate renderer processes using CefTaskManager.
-  // Returns the number of terminated renderer processes, or -1 on error.
-  // Must be called on UI thread.
-  static int CefTerminateRenderProcess();
-
   const bool terminate_when_all_windows_closed_;
-  bool disable_termination_ = false;
   bool request_context_per_browser_;
   bool request_context_shared_cache_;
 
