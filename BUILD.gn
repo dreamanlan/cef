@@ -306,6 +306,14 @@ includes_mac = gypi_paths2.includes_mac + gypi_paths2.includes_mac_capi
 includes_linux = gypi_paths2.includes_linux + gypi_paths2.includes_linux_capi
 includes_win = gypi_paths2.includes_win + gypi_paths2.includes_win_capi
 
+# Explicit source lists for the myapp fork (webagent / websimple); see
+# myapp/myapp_sources.gypi. Loaded at global scope so both the macOS (cef_app
+# bundle) and non-macOS (executable) target blocks below can consume it.
+myapp_paths = exec_script("//cef/tools/gypi_to_gn.py",
+                          [ rebase_path("myapp/myapp_sources.gypi") ],
+                          "scope",
+                          [ "myapp/myapp_sources.gypi" ])
+
 # CAPI-only includes for pure C implementations.
 includes_common_capi = gypi_paths2.includes_common_capi + gypi_paths2.includes_capi
 includes_mac_capi = gypi_paths2.includes_mac_capi
@@ -2240,6 +2248,158 @@ if (is_mac) {
 
 
   #
+  # webagent app targets (myapp fork of cefclient).
+  #
+
+  bundle_data("webagent_resources_bundle_data") {
+    sources = myapp_paths.myapp_shared_sources_resources +
+              myapp_paths.myapp_cefclient_sources_resources + [
+      "myapp/cefclient/mac/cefclient.icns",
+    ]
+
+    outputs = [
+      "{{bundle_resources_dir}}/{{source_file_part}}",
+    ]
+  }
+
+  bundle_data("webagent_resources_bundle_data_english") {
+    sources = [
+      "myapp/cefclient/mac/English.lproj/InfoPlist.strings",
+    ]
+
+    outputs = [
+      "{{bundle_resources_dir}}/English.lproj/{{source_file_part}}",
+    ]
+  }
+
+  mac_xib_bundle_data("webagent_xibs") {
+    sources = [
+      "myapp/cefclient/mac/English.lproj/MainMenu.xib",
+    ]
+
+    output_path = "{{bundle_resources_dir}}/English.lproj"
+  }
+
+  cef_app("webagent") {
+    # Necessary because the cef_framework target is testonly.
+    testonly = true
+
+    helper_info_plist = "myapp/cefclient/mac/helper-Info.plist.in"
+    helper_sources = includes_common +
+                     includes_mac +
+                     gypi_paths2.includes_wrapper +
+                     gypi_paths2.includes_wrapper_mac +
+                     myapp_paths.myapp_shared_sources_common +
+                     myapp_paths.myapp_shared_sources_renderer +
+                     myapp_paths.myapp_shared_sources_mac_helper +
+                     myapp_paths.myapp_cefclient_sources_common +
+                     myapp_paths.myapp_cefclient_sources_renderer
+    helper_deps = [
+      ":libcef_dll_wrapper",
+    ]
+    helper_defines = [
+      "CEF_USE_SANDBOX",
+    ]
+
+    info_plist = "myapp/cefclient/mac/Info.plist.in"
+    sources = includes_common +
+              includes_mac +
+              gypi_paths2.includes_wrapper +
+              gypi_paths2.includes_wrapper_mac +
+              myapp_paths.myapp_shared_sources_browser +
+              myapp_paths.myapp_shared_sources_common +
+              myapp_paths.myapp_shared_sources_mac +
+              myapp_paths.myapp_cefclient_sources_browser +
+              myapp_paths.myapp_cefclient_sources_common +
+              myapp_paths.myapp_cefclient_sources_mac
+    deps = [
+      ":libcef_dll_wrapper",
+      ":webagent_resources_bundle_data",
+      ":webagent_resources_bundle_data_english",
+      ":webagent_xibs",
+    ]
+    frameworks = [
+      "AppKit.framework",
+      "IOSurface.framework",
+      "OpenGL.framework",
+    ]
+    defines = [
+      "CEF_USE_SANDBOX",
+    ]
+  }
+
+
+  #
+  # websimple app targets (myapp fork of cefsimple).
+  #
+
+  bundle_data("websimple_resources_bundle_data") {
+    sources = [
+      "myapp/cefsimple/mac/cefsimple.icns",
+    ]
+
+    outputs = [
+      "{{bundle_resources_dir}}/{{source_file_part}}",
+    ]
+  }
+
+  bundle_data("websimple_resources_bundle_data_english") {
+    sources = [
+      "myapp/cefsimple/mac/English.lproj/InfoPlist.strings",
+    ]
+
+    outputs = [
+      "{{bundle_resources_dir}}/English.lproj/{{source_file_part}}",
+    ]
+  }
+
+  mac_xib_bundle_data("websimple_xibs") {
+    sources = [
+      "myapp/cefsimple/mac/English.lproj/MainMenu.xib",
+    ]
+    output_path = "{{bundle_resources_dir}}/English.lproj"
+  }
+
+  cef_app("websimple") {
+    # Necessary because the cef_framework target is testonly.
+    testonly = true
+
+    helper_info_plist = "myapp/cefsimple/mac/helper-Info.plist.in"
+    helper_sources = includes_common +
+                     includes_mac +
+                     gypi_paths2.includes_wrapper +
+                     gypi_paths2.includes_wrapper_mac +
+                     myapp_paths.myapp_cefsimple_sources_mac_helper
+    helper_deps = [
+      ":libcef_dll_wrapper",
+    ]
+    helper_defines = [
+      "CEF_USE_SANDBOX",
+    ]
+
+    info_plist = "myapp/cefsimple/mac/Info.plist.in"
+    sources = includes_common +
+              includes_mac +
+              gypi_paths2.includes_wrapper +
+              gypi_paths2.includes_wrapper_mac +
+              myapp_paths.myapp_cefsimple_sources_common +
+              myapp_paths.myapp_cefsimple_sources_mac
+    deps = [
+      ":libcef_dll_wrapper",
+      ":websimple_resources_bundle_data",
+      ":websimple_resources_bundle_data_english",
+      ":websimple_xibs",
+    ]
+    frameworks = [
+      "AppKit.framework",
+    ]
+    defines = [
+      "CEF_USE_SANDBOX",
+    ]
+  }
+
+
+  #
   # cefsimple_capi app targets (Pure C API implementation).
   #
 
@@ -2714,19 +2874,13 @@ if (is_mac) {
 
 
   #
-  # myapp targets (forked from tests/{cefclient,cefsimple,shared}).
+  # myapp executable targets (webagent / websimple) for Windows and Linux.
   #
-  # Source lists are maintained explicitly in myapp/myapp_sources.gypi, fully
-  # decoupled from cef_paths2.gypi so the "tests" tree stays pristine for clean
-  # CEF upgrades. This correctly handles myapp-only files (hostclr) and renamed
-  # resources (webagent.ico / websimple.ico). Only Windows and Linux are wired
-  # up here; macOS uses the cef_app bundle template and is intentionally not
-  # forked.
+  # Source lists come from myapp/myapp_sources.gypi via the global myapp_paths
+  # scope. This correctly handles myapp-only files (hostclr) and renamed
+  # resources (webagent.ico / websimple.ico). macOS is handled separately by
+  # the cef_app bundle targets above.
   #
-  myapp_paths = exec_script("//cef/tools/gypi_to_gn.py",
-                            [ rebase_path("myapp/myapp_sources.gypi") ],
-                            "scope",
-                            [ "myapp/myapp_sources.gypi" ])
 
   # myapp_cefclient common (non-platform) sources.
   myapp_cefclient_sources =

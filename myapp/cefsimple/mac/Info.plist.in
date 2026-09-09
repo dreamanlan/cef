@@ -9,7 +9,7 @@
 	<key>CFBundleIconFile</key>
 	<string>cefsimple.icns</string>
 	<key>CFBundleIdentifier</key>
-	<string>org.cef.cefsimple</string>
+	<string>org.cef.websimple</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
