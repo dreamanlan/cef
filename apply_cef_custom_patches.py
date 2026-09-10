@@ -66,8 +66,12 @@ def run_python_tool(cef_root, tool_path, arguments):
 
 
 def git_apply_ok(cef_root, extra_args):
+    # --ignore-whitespace makes git apply tolerate line-ending (CRLF vs LF)
+    # differences. On Windows core.autocrlf checks out source as CRLF while the
+    # *.patch files are LF, and without this the context lines fail to match
+    # (e.g. BUILD.gn hunk @@ -306 ...). It is a no-op where line endings match.
     result = subprocess.run(
-        ["git", "apply", *extra_args],
+        ["git", "apply", "--ignore-whitespace", *extra_args],
         cwd=cef_root,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

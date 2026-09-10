@@ -135,7 +135,11 @@ function Test-GitApply {
 
     Push-Location $script:cefRoot
     try {
-        & git apply @ExtraArgs 2>$null
+        # --ignore-whitespace makes git apply tolerate line-ending (CRLF vs LF)
+        # differences. On Windows core.autocrlf checks out source as CRLF while
+        # the *.patch files are LF, and without this the context lines fail to
+        # match. It is a no-op where line endings already match.
+        & git apply --ignore-whitespace @ExtraArgs 2>$null
         return ($LASTEXITCODE -eq 0)
     } finally {
         Pop-Location
@@ -160,7 +164,7 @@ function Invoke-PatchFile {
 
     Push-Location $script:cefRoot
     try {
-        & git apply $PatchPath
+        & git apply --ignore-whitespace $PatchPath
         if ($LASTEXITCODE -ne 0) {
             throw "git apply failed for $description"
         }
