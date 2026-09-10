@@ -78,8 +78,10 @@ void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
                                       CefRefPtr<CefView> location_bar,
                                       bool is_chrome_toolbar) {
   DCHECK(!window_);
-  DCHECK(menu_button);
-  DCHECK(location_bar);
+
+  // |menu_button| and |location_bar| are both optional. The frameless HTML tab
+  // bar mode only needs the window control buttons overlay; the menu entry and
+  // address bar are provided elsewhere (Chrome toolbar / HTML tab bar).
 
   window_ = window;
   window_maximized_ = window_->IsMaximized();
@@ -113,21 +115,26 @@ void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
     panel_controller_->SetVisible(true);
   }
 
-  // Menu button.
-  menu_button->SetBackgroundColor(kBackgroundColor);
-  menu_controller_ = window_->AddOverlayView(
-      menu_button, GetMenuDockingMode(use_bottom_controls_),
-      /*can_activate=*/false);
-  menu_controller_->SetInsets(insets);
-  menu_controller_->SetVisible(true);
+  // Menu button (optional).
+  if (menu_button) {
+    menu_button->SetBackgroundColor(kBackgroundColor);
+    menu_controller_ = window_->AddOverlayView(
+        menu_button, GetMenuDockingMode(use_bottom_controls_),
+        /*can_activate=*/false);
+    menu_controller_->SetInsets(insets);
+    menu_controller_->SetVisible(true);
+  }
 
-  // Location bar. Will be made visible in UpdateControls().
-  location_bar_ = location_bar;
-  is_chrome_toolbar_ = is_chrome_toolbar;
-  // Use a 100% transparent background for the Chrome toolbar.
-  location_bar_->SetBackgroundColor(is_chrome_toolbar_ ? 0 : kBackgroundColor);
-  location_controller_ = window_->AddOverlayView(
-      location_bar_, CEF_DOCKING_MODE_CUSTOM, /*can_activate=*/false);
+  // Location bar (optional). Will be made visible in UpdateControls().
+  if (location_bar) {
+    location_bar_ = location_bar;
+    is_chrome_toolbar_ = is_chrome_toolbar;
+    // Use a 100% transparent background for the Chrome toolbar.
+    location_bar_->SetBackgroundColor(is_chrome_toolbar_ ? 0
+                                                         : kBackgroundColor);
+    location_controller_ = window_->AddOverlayView(
+        location_bar_, CEF_DOCKING_MODE_CUSTOM, /*can_activate=*/false);
+  }
 }
 
 void ViewsOverlayControls::Destroy() {
@@ -137,14 +144,25 @@ void ViewsOverlayControls::Destroy() {
     panel_controller_->Destroy();
     panel_controller_ = nullptr;
   }
-  menu_controller_->Destroy();
-  menu_controller_ = nullptr;
+  if (menu_controller_) {
+    menu_controller_->Destroy();
+    menu_controller_ = nullptr;
+  }
   location_bar_ = nullptr;
-  location_controller_->Destroy();
-  location_controller_ = nullptr;
+  if (location_controller_) {
+    location_controller_->Destroy();
+    location_controller_ = nullptr;
+  }
 }
 
 void ViewsOverlayControls::UpdateControls() {
+  // Without a location bar (frameless HTML tab bar mode) there is nothing to
+  // reposition here; the window buttons overlay docks itself automatically.
+  if (!location_bar_ || !location_controller_ || !menu_controller_) {
+    MaybeUpdateMaximizeButton();
+    return;
+  }
+
   // Update location bar size, position and visibility.
   const auto window_bounds = window_->GetBounds();
   auto bounds = window_bounds;

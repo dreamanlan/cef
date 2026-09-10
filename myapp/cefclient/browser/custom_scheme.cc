@@ -89,33 +89,139 @@ std::string GetUrlHost(const std::string& url) {
 }
 
 // Built-in HTML tab bar served for <scheme>://tabbar/ when managed code does
-// not take over the request. It is intentionally minimal: it renders a static
-// bar with draggable regions (-webkit-app-region) so the hosting window can be
-// moved, and forwards tab commands through window.cefQuery. The real tab UI is
-// expected to be supplied by managed code (C#/DSL) via on_custom_scheme.
+// not take over the request. It is a self-contained functional skeleton: it
+// renders a tab strip, supports new/close/select entirely on the front end,
+// keeps draggable regions (-webkit-app-region) so the frameless window can be
+// moved, reserves space on the button side for the native window-control
+// overlay, and reports every command through window.cefQuery
+// ({channel:'tabbar', action:...}). A reverse channel (window.__tabbarApi) lets
+// C++ push address / loading state back (see ViewsWindow reverse push). Managed
+// code (C#/DSL) may still fully replace this page via on_custom_scheme.
 std::string BuildBuiltinTabbarPage() {
-  return
-      "<!DOCTYPE html><html><head><meta charset=\"utf-8\">"
-      "<style>"
-      "html,body{margin:0;padding:0;height:100%;overflow:hidden;"
-      "font-family:Segoe UI,Arial,sans-serif;font-size:13px;"
-      "background:#dee1e6;color:#3c4043;}"
-      ".tabbar{display:flex;align-items:center;height:100%;"
-      "-webkit-app-region:drag;}"
-      ".tab{-webkit-app-region:no-drag;padding:6px 14px;margin:4px 2px;"
-      "background:#fff;border-radius:8px 8px 0 0;cursor:default;}"
-      ".newtab{-webkit-app-region:no-drag;padding:6px 10px;cursor:pointer;}"
-      "</style></head><body>"
-      "<div class=\"tabbar\">"
-      "<div class=\"tab\">Tab</div>"
-      "<div class=\"newtab\" id=\"newtab\">+</div>"
-      "</div>"
-      "<script>"
-      "document.getElementById('newtab').addEventListener('click',function(){"
-      "if(window.cefQuery){window.cefQuery({request:'tabbar:newtab',"
-      "onSuccess:function(){},onFailure:function(){}});}});"
-      "</script>"
-      "</body></html>";
+  return R"TABBAR(<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;
+    font-family:'Segoe UI',Arial,sans-serif;font-size:13px;
+    background:#dee1e6;color:#3c4043;user-select:none;}
+  .tabbar{display:flex;align-items:flex-end;height:100%;box-sizing:border-box;
+    -webkit-app-region:drag;padding:0 140px 0 8px;}
+  .tabbar.mac{padding:0 8px 0 92px;}
+  .tabs{display:flex;align-items:flex-end;height:100%;overflow:hidden;
+    flex:0 1 auto;}
+  .tab{-webkit-app-region:no-drag;display:flex;align-items:center;
+    max-width:200px;min-width:90px;height:30px;margin:0 1px;padding:0 4px 0 10px;
+    background:#f1f3f4;border-radius:8px 8px 0 0;cursor:default;
+    white-space:nowrap;overflow:hidden;}
+  .tab.active{background:#fff;}
+  .tab .title{flex:1;overflow:hidden;text-overflow:ellipsis;}
+  .tab .close{-webkit-app-region:no-drag;margin-left:6px;width:16px;height:16px;
+    line-height:16px;text-align:center;border-radius:50%;cursor:pointer;
+    flex:none;}
+  .tab .close:hover{background:#d0d3d6;}
+  .newtab{-webkit-app-region:no-drag;width:28px;height:28px;line-height:26px;
+    text-align:center;margin:0 4px;border-radius:50%;cursor:pointer;
+    font-size:18px;flex:none;}
+  .newtab:hover{background:#c8ccd0;}
+</style>
+</head>
+<body>
+<div class="tabbar" id="tabbar">
+  <div class="tabs" id="tabs"></div>
+  <div class="newtab" id="newtab" title="New tab">+</div>
+</div>
+<script>
+(function(){
+  var tabs=[];
+  var nextId=1;
+  var activeId=0;
+  if(/Mac/i.test(navigator.platform)){
+    document.getElementById('tabbar').classList.add('mac');
+  }
+  function send(action,extra){
+    if(!window.cefQuery){return;}
+    var msg={channel:'tabbar',action:action};
+    if(extra){for(var k in extra){msg[k]=extra[k];}}
+    window.cefQuery({request:JSON.stringify(msg),
+      onSuccess:function(){},onFailure:function(){}});
+  }
+  function render(){
+    var c=document.getElementById('tabs');
+    c.innerHTML='';
+    tabs.forEach(function(t){
+      var el=document.createElement('div');
+      el.className='tab'+(t.id===activeId?' active':'');
+      el.setAttribute('data-id',t.id);
+      var ti=document.createElement('span');
+      ti.className='title';
+      ti.textContent=t.title||'New Tab';
+      el.appendChild(ti);
+      var cl=document.createElement('span');
+      cl.className='close';
+      cl.textContent='\u00d7';
+      cl.setAttribute('data-close',t.id);
+      el.appendChild(cl);
+      c.appendChild(el);
+    });
+  }
+  function addTab(title,activate){
+    var id=nextId++;
+    tabs.push({id:id,title:title||'New Tab',url:''});
+    if(activate!==false){activeId=id;}
+    render();
+    return id;
+  }
+  function closeTab(id){
+    var i=tabs.findIndex(function(t){return t.id===id;});
+    if(i<0){return;}
+    tabs.splice(i,1);
+    if(activeId===id){activeId=tabs.length?tabs[Math.max(0,i-1)].id:0;}
+    render();
+  }
+  function selectTab(id){activeId=id;render();}
+  document.getElementById('newtab').addEventListener('click',function(){
+    var id=addTab('New Tab',true);send('newtab',{id:id});
+  });
+  document.getElementById('tabs').addEventListener('click',function(e){
+    var closeId=e.target.getAttribute&&e.target.getAttribute('data-close');
+    if(closeId){var cid=parseInt(closeId,10);closeTab(cid);
+      send('closetab',{id:cid});return;}
+    var el=e.target;
+    while(el&&el!==this&&!(el.getAttribute&&el.getAttribute('data-id'))){
+      el=el.parentNode;
+    }
+    if(el&&el.getAttribute){
+      var sid=parseInt(el.getAttribute('data-id'),10);
+      if(sid){selectTab(sid);send('selecttab',{id:sid});}
+    }
+  });
+  // Reverse channel: C++ pushes state updates for the active tab here.
+  window.__tabbarApi={
+    setActiveTitle:function(title){
+      var t=tabs.find(function(x){return x.id===activeId;});
+      if(t){t.title=title;render();}
+    },
+    setActiveUrl:function(url){
+      var t=tabs.find(function(x){return x.id===activeId;});
+      if(t){t.url=url;}
+    },
+    setState:function(json){
+      try{
+        var s=(typeof json==='string')?JSON.parse(json):json;
+        if(s.title!==undefined){this.setActiveTitle(s.title);}
+        if(s.url!==undefined){this.setActiveUrl(s.url);}
+      }catch(e){}
+    },
+    reset:function(){tabs=[];nextId=1;activeId=0;render();}
+  };
+  // Seed an initial tab representing the content browser already shown.
+  addTab('New Tab',true);
+})();
+</script>
+</body>
+</html>)TABBAR";
 }
 
 // Builds the JSON body used by the C++ fallback so it flows through the same

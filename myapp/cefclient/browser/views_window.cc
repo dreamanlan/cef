@@ -874,6 +874,10 @@ void ViewsWindow::OnWindowCreated(CefRefPtr<CefWindow> window) {
     // created and inserted in OnWindowChanged (after the content view is added).
     CefBoxLayoutSettings settings;
     settings.horizontal = false;
+    // Stretch children to the full window width; otherwise the tab bar strip
+    // (preferred width 0) collapses to zero width and disappears on resize /
+    // content relayout (issue 1). See AddBrowserView() for details.
+    settings.cross_axis_alignment = CEF_AXIS_ALIGNMENT_STRETCH;
     CefRefPtr<CefBoxLayout> box_layout = window_->SetToBoxLayout(settings);
     window_->AddChildView(browser_view_);
     box_layout->SetFlexForView(browser_view_, 1);
@@ -1167,6 +1171,18 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
                                     chrome_toolbar_type_ != CEF_CTT_NONE);
     }
 
+    if (!overlay_controls_ && with_html_tabbar_ && !with_standard_buttons_) {
+      // Frameless HTML tab bar window: float native window buttons
+      // (min/max/close) over the top-right of the tab strip row (issue 2). The
+      // menu entry and address bar are provided by the Chrome toolbar / HTML
+      // tab bar, so no menu or location bar overlay is created here.
+      overlay_controls_ = new ViewsOverlayControls(
+          /*with_window_buttons=*/true, use_bottom_controls_);
+      overlay_controls_->Initialize(window_, /*menu_button=*/nullptr,
+                                    /*location_bar=*/nullptr,
+                                    /*is_chrome_toolbar=*/false);
+    }
+
     if (with_overlay_browser_) {
       overlay_browser_ = new ViewsOverlayBrowser(this);
 
@@ -1290,6 +1306,10 @@ ViewsWindow::ViewsWindow(WindowType type,
 
   with_controls_ = is_normal_type && delegate_->WithControls();
 
+  // Gated HTML tab bar strip (docked at the top of the content box). Computed
+  // early because it feeds the frameless decision below.
+  with_html_tabbar_ = is_normal_type;
+
   const bool hide_frame = command_line->HasSwitch(switches::kHideFrame);
   const bool show_overlays = is_normal_type && hide_frame && !with_controls_ &&
                              !command_line->HasSwitch(switches::kHideOverlays);
@@ -1299,8 +1319,11 @@ ViewsWindow::ViewsWindow(WindowType type,
   accepts_first_mouse_ = command_line->HasSwitch(switches::kAcceptsFirstMouse);
 
   // Without a window frame. Only apply to normal windows, so that DevTools
-  // and dialog windows always have a frame for dragging.
-  frameless_ = hide_frame && is_normal_type;
+  // and dialog windows always have a frame for dragging. HTML tab bar windows
+  // are frameless by default so the tab strip can occupy the title bar area
+  // (issue 2); native window buttons are then provided as an overlay floating
+  // over the top-right of the tab strip (see OnWindowChanged).
+  frameless_ = (hide_frame || with_html_tabbar_) && is_normal_type;
 
   // With an overlay that mimics window controls.
   with_overlay_controls_ = show_overlays;
@@ -1345,9 +1368,6 @@ ViewsWindow::ViewsWindow(WindowType type,
   move_pip_enabled_ = command_line->HasSwitch(switches::kMovePipEnabled);
   allow_pip_without_user_activation_ =
       command_line->HasSwitch(switches::kPipNoUserActivationEnabled);
-
-  // Gated HTML tab bar strip (docked at the top of the content box).
-  with_html_tabbar_ = (type_ == WindowType::NORMAL);
 }
 
 void ViewsWindow::SetBrowserView(CefRefPtr<CefBrowserView> browser_view) {
@@ -1423,6 +1443,14 @@ void ViewsWindow::AddBrowserView() {
   CefBoxLayoutSettings window_layout_settings;
   window_layout_settings.horizontal = false;
   window_layout_settings.between_child_spacing = 2;
+  // Stretch children across the full window width. CefBoxLayoutSettings is
+  // zero-initialized, so cross_axis_alignment defaults to START, which pins
+  // each child to its preferred cross-axis size. The HTML tab bar strip
+  // reports a preferred width of 0, so under START it would collapse to zero
+  // width and disappear on resize / content relayout (issue 1). STRETCH matches
+  // Chromium's own views::BoxLayout default and makes every top row (menu bar,
+  // toolbar, tab bar) span the full width.
+  window_layout_settings.cross_axis_alignment = CEF_AXIS_ALIGNMENT_STRETCH;
   CefRefPtr<CefBoxLayout> window_layout =
       window_->SetToBoxLayout(window_layout_settings);
 
