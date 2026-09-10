@@ -3,13 +3,33 @@ param(
     [switch]$ForceGenerate
 )
 
+# Apply custom CEF source patches used by this project:
+#   1. OnBeforeResourceResponse: a new CefResourceRequestHandler callback that
+#      lets clients inspect/modify response headers before CEF processes them.
+#      This one introduces a brand-new CEF API, so it is handled by bespoke
+#      logic below (insert the added=next versioned method, then run the
+#      official CEF generation tools). It cannot be a static unified diff
+#      because the generation tools rewrite added=next into a concrete,
+#      environment-determined API version number.
+#   2. Every *.patch file under myapp/patch/: static unified diffs that do not
+#      introduce any CEF API (e.g. the --use-chrome-window window.open->tab
+#      merge, the response-header override plumbing in the .cc files). These
+#      are applied with `git apply` and are idempotent: if a patch already
+#      reverse-applies cleanly it is considered applied and skipped.
+#
+# CEF has no built-in mechanism to auto-apply patches against its own source
+# (only against Chromium), so this script performs the edits directly.
+#
+# To add a new static patch later, just drop a *.patch file into myapp/patch/
+# (e.g. `git diff -- path/to/file > myapp/patch/NN-name.patch`). No code change
+# is needed here or in the Python script.
+
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $cefRoot = $PSScriptRoot
+$patchDir = Join-Path $cefRoot "myapp/patch"
 $headerPath = Join-Path $cefRoot "include/cef_resource_request_handler.h"
-$wrapperPath = Join-Path $cefRoot "libcef/browser/net_service/resource_request_handler_wrapper.cc"
-$proxyPath = Join-Path $cefRoot "libcef/browser/net_service/proxy_url_loader_factory.cc"
 $translatorPath = Join-Path $cefRoot "tools/translator.py"
 $versionManagerPath = Join-Path $cefRoot "tools/version_manager.py"
 
@@ -110,6 +130,72 @@ function Invoke-PythonTool {
     }
 }
 
+function Test-GitApply {
+    param([string[]]$ExtraArgs)
+
+    Push-Location $script:cefRoot
+    try {
+        & git apply @ExtraArgs 2>$null
+        return ($LASTEXITCODE -eq 0)
+    } finally {
+        Pop-Location
+    }
+}
+
+function Invoke-PatchFile {
+    # Idempotently apply a single unified-diff patch via git apply.
+    # Returns $true when freshly applied, $false when already applied.
+    param([string]$PatchPath)
+
+    $description = Split-Path -Leaf $PatchPath
+
+    if (Test-GitApply @("--reverse", "--check", $PatchPath)) {
+        Write-Host "Already applied: $description"
+        return $false
+    }
+
+    if (-not (Test-GitApply @("--check", $PatchPath))) {
+        throw "Patch does not apply and is not already applied: $description"
+    }
+
+    Push-Location $script:cefRoot
+    try {
+        & git apply $PatchPath
+        if ($LASTEXITCODE -ne 0) {
+            throw "git apply failed for $description"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host "Applied: $description"
+    return $true
+}
+
+function Invoke-StaticPatches {
+    if (-not (Test-Path -LiteralPath $script:patchDir -PathType Container)) {
+        throw "Patch directory does not exist: $script:patchDir"
+    }
+
+    $patchFiles = Get-ChildItem -LiteralPath $script:patchDir -Filter "*.patch" -File |
+        Sort-Object Name
+    if ($patchFiles.Count -eq 0) {
+        Write-Host "No static patches found under $script:patchDir"
+        return $false
+    }
+
+    $changed = $false
+    foreach ($patchFile in $patchFiles) {
+        if (Invoke-PatchFile $patchFile.FullName) {
+            $changed = $true
+        }
+    }
+    return $changed
+}
+
+# 1. The OnBeforeResourceResponse API edit (bespoke; may trigger CEF generation
+#    tools below). Generation rewrites added=next into a concrete version
+#    number, which a static diff cannot express, so it stays in-script.
 $headerMethodBody = @'
   ///
   /// Called on the IO thread after response headers are received and before
@@ -171,8 +257,8 @@ if (-not $headerText.Contains("OnBeforeResourceResponse")) {
         ($versionedHeaderMethodBody + $resourceResponseAnchor) `
         "public API method") {
         $sourceChanged = $true
-        $introducedNext = $true
     }
+    $introducedNext = $true
 } elseif ($headerText.Contains($headerMethodBody)) {
     if (Replace-Exact `
         $headerPath `
@@ -180,8 +266,8 @@ if (-not $headerText.Contains("OnBeforeResourceResponse")) {
         $versionedHeaderMethodBody `
         "public API version metadata") {
         $sourceChanged = $true
-        $introducedNext = $true
     }
+    $introducedNext = $true
 } else {
     $guardedMethodPattern = '(?s)#if CEF_API_ADDED\((?:CEF_NEXT|\d+)\)\n.*?/\*--cef\([^\r\n]*added=(?:next|\d+)[^\r\n]*\)--\*/\n\s*virtual void OnBeforeResourceResponse\(.*?\n#endif'
     if (-not [System.Text.RegularExpressions.Regex]::IsMatch(
@@ -199,171 +285,9 @@ if (-not $headerText.Contains("OnBeforeResourceResponse")) {
     }
 }
 
-$resetOld = @'
-      pending_request_ = pending_request;
-      pending_response_ = nullptr;
-      request_ = request;
-'@
-$resetNew = @'
-      pending_request_ = pending_request;
-      pending_response_ = nullptr;
-      override_response_headers_ = nullptr;
-      request_ = request;
-'@
-if (Replace-Exact `
-    $wrapperPath `
-    $resetOld `
-    $resetNew `
-    "reset response header override state") {
-    $sourceChanged = $true
-}
-
-$fieldOld = @'
-    CefRefPtr<CefRequestImpl> pending_request_;
-    CefRefPtr<CefResponseImpl> pending_response_;
-    raw_ptr<network::ResourceRequest> request_;
-'@
-$fieldNew = @'
-    CefRefPtr<CefRequestImpl> pending_request_;
-    CefRefPtr<CefResponseImpl> pending_response_;
-    scoped_refptr<net::HttpResponseHeaders> override_response_headers_;
-    raw_ptr<network::ResourceRequest> request_;
-'@
-if (Replace-Exact `
-    $wrapperPath `
-    $fieldOld `
-    $fieldNew `
-    "store response header override state") {
-    $sourceChanged = $true
-}
-
-$processOld = @'
-    if (!state->handler_) {
-      return;
-    }
-
-    if (!state->pending_response_) {
-      state->pending_response_ = new CefResponseImpl();
-    } else {
-      state->pending_response_->SetReadOnly(false);
-    }
-
-    if (headers) {
-      state->pending_response_->SetResponseHeaders(*headers);
-    }
-
-    state->pending_response_->SetReadOnly(true);
-  }
-
-  void OnRequestResponse(
-'@
-$processNew = @'
-    state->override_response_headers_ = nullptr;
-
-    if (!state->handler_) {
-      return;
-    }
-
-    if (!state->pending_response_) {
-      state->pending_response_ = new CefResponseImpl();
-    } else {
-      state->pending_response_->SetReadOnly(false);
-    }
-
-    if (headers) {
-      state->pending_response_->SetResponseHeaders(*headers);
-    }
-
-    const auto original_headers =
-        state->pending_response_->GetResponseHeaders();
-
-    state->handler_->OnBeforeResourceResponse(
-        init_state_->browser_, init_state_->GetFrame(),
-        state->pending_request_.get(), state->pending_response_.get());
-
-    const auto modified_headers =
-        state->pending_response_->GetResponseHeaders();
-    state->pending_response_->SetReadOnly(true);
-
-    if (original_headers && modified_headers &&
-        original_headers->raw_headers() != modified_headers->raw_headers()) {
-      state->override_response_headers_ = modified_headers;
-    }
-  }
-
-  void OnRequestResponse(
-'@
-if (Replace-Exact `
-    $wrapperPath `
-    $processOld `
-    $processNew `
-    "invoke response callback and capture modified headers") {
-    $sourceChanged = $true
-}
-
-$redirectOld = @'
-    auto exec_callback = base::BindOnce(
-        std::move(callback), ResponseMode::CONTINUE, nullptr, new_url);
-'@
-$redirectNew = @'
-    auto exec_callback = base::BindOnce(
-        std::move(callback), ResponseMode::CONTINUE,
-        std::move(state->override_response_headers_), new_url);
-'@
-if (Replace-Exact `
-    $wrapperPath `
-    $redirectOld `
-    $redirectNew `
-    "forward redirect response header overrides") {
-    $sourceChanged = $true
-}
-
-$responseOld = @'
-    auto exec_callback =
-        base::BindOnce(std::move(callback), response_mode, nullptr, new_url);
-'@
-$responseNew = @'
-    auto exec_callback =
-        base::BindOnce(std::move(callback), response_mode,
-                       std::move(state->override_response_headers_), new_url);
-'@
-if (Replace-Exact `
-    $wrapperPath `
-    $responseOld `
-    $responseNew `
-    "forward normal response header overrides") {
-    $sourceChanged = $true
-}
-
-$proxyOld = @'
-  override_headers_ = override_headers;
-  if (override_headers_) {
-    // Make sure to update current_response_, since when OnReceiveResponse
-    // is called we will not use its headers as it might be missing the
-    // Set-Cookie line (which gets stripped by the IPC layer).
-    current_response_->headers = override_headers_;
-  }
-  redirect_url_ = redirect_url;
-'@
-$proxyNew = @'
-  override_headers_ = override_headers;
-  if (override_headers_) {
-    if (current_response_) {
-      // Preserve the override for response paths that do not use
-      // OnHeadersReceived.
-      current_response_->headers = override_headers_;
-    } else {
-      // Preserve the override for the subsequent OnReceiveResponse call.
-      current_headers_ = override_headers_;
-    }
-  }
-  redirect_url_ = redirect_url;
-'@
-if (Replace-Exact `
-    $proxyPath `
-    $proxyOld `
-    $proxyNew `
-    "preserve overrides without current_response") {
+# 2. Every static unified diff under myapp/patch/. These never introduce a CEF
+#    API, so they never set $introducedNext.
+if (Invoke-StaticPatches) {
     $sourceChanged = $true
 }
 

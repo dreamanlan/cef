@@ -1,0 +1,22 @@
+diff --git a/libcef/browser/browser_info_manager.cc b/libcef/browser/browser_info_manager.cc
+index e981ec240..8960bc36a 100644
+--- a/libcef/browser/browser_info_manager.cc
++++ b/libcef/browser/browser_info_manager.cc
+@@ -217,6 +217,17 @@ bool CefBrowserInfoManager::CanCreateWindow(
+       // TODO(chrome): Expose a mechanism for the client to choose default
+       // creation.
+       pending_popup->use_default_browser_creation = true;
++    } else if ((disposition == WindowOpenDisposition::NEW_FOREGROUND_TAB ||
++                disposition == WindowOpenDisposition::NEW_BACKGROUND_TAB) &&
++               base::CommandLine::ForCurrentProcess()->HasSwitch(
++                   "use-chrome-window")) {
++      // Only under the app's global --use-chrome-window mode (a Chrome
++      // self-created native tabstrip window) make tab-disposition
++      // window.open()/target=_blank merge into the opener window's tabstrip
++      // like real Chrome, instead of opening a standalone window. Chrome style
++      // popups (POPUP-style chrome view without a visible tabstrip) are
++      // intentionally left untouched so their popups remain standalone windows.
++      pending_popup->use_default_browser_creation = true;
+     }
+ 
+     create_params.popup_with_views_hosted_opener = ShouldCreateViewsHostedPopup(

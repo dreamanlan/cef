@@ -1,10 +1,33 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
+
+# Apply custom CEF source patches used by this project:
+#   1. OnBeforeResourceResponse: a new CefResourceRequestHandler callback that
+#      lets clients inspect/modify response headers before CEF processes them.
+#      This one introduces a brand-new CEF API, so it is handled by bespoke
+#      logic below (insert the added=next versioned method, then run the
+#      official CEF generation tools). It cannot be a static unified diff
+#      because the generation tools rewrite added=next into a concrete,
+#      environment-determined API version number.
+#   2. Every *.patch file under myapp/patch/: static unified diffs that do not
+#      introduce any CEF API (e.g. the --use-chrome-window window.open->tab
+#      merge, the response-header override plumbing in the .cc files). These
+#      are applied with `git apply` and are idempotent: if a patch already
+#      reverse-applies cleanly it is considered applied and skipped.
+#
+# CEF has no built-in mechanism to auto-apply patches against its own source
+# (only against Chromium), so this script performs the edits directly.
+#
+# To add a new static patch later, just drop a *.patch file into myapp/patch/
+# (e.g. `git diff -- path/to/file > myapp/patch/NN-name.patch`). No code change
+# is needed here or in the PowerShell script.
 
 import argparse
 import re
 import subprocess
 import sys
 from pathlib import Path
+
+PATCH_SUBDIR = "myapp/patch"
 
 
 def read_normalized(path):
@@ -42,11 +65,72 @@ def run_python_tool(cef_root, tool_path, arguments):
     subprocess.run(command, cwd=cef_root, check=True)
 
 
+def git_apply_ok(cef_root, extra_args):
+    result = subprocess.run(
+        ["git", "apply", *extra_args],
+        cwd=cef_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    return result.returncode == 0, result.stderr.decode("utf-8", "replace")
+
+
+def apply_patch_file(cef_root, patch_path):
+    """Idempotently apply a single unified-diff patch via git apply.
+
+    Returns True when the patch was freshly applied, False when it was already
+    applied. Raises RuntimeError when the patch neither applies nor is already
+    applied (e.g. the source anchor changed upstream).
+    """
+    description = patch_path.name
+    patch_arg = str(patch_path)
+
+    reverse_ok, _ = git_apply_ok(
+        cef_root, ["--reverse", "--check", patch_arg]
+    )
+    if reverse_ok:
+        print(f"Already applied: {description}")
+        return False
+
+    forward_ok, forward_err = git_apply_ok(cef_root, ["--check", patch_arg])
+    if not forward_ok:
+        raise RuntimeError(
+            f"Patch does not apply and is not already applied: {description}\n"
+            f"{forward_err.strip()}"
+        )
+
+    applied_ok, applied_err = git_apply_ok(cef_root, [patch_arg])
+    if not applied_ok:
+        raise RuntimeError(
+            f"git apply failed for {description}\n{applied_err.strip()}"
+        )
+    print(f"Applied: {description}")
+    return True
+
+
+def apply_static_patches(cef_root):
+    patch_dir = cef_root / PATCH_SUBDIR
+    if not patch_dir.is_dir():
+        raise RuntimeError(f"Patch directory does not exist: {patch_dir}")
+
+    patch_files = sorted(patch_dir.glob("*.patch"))
+    if not patch_files:
+        print(f"No static patches found under {patch_dir}")
+        return False
+
+    source_changed = False
+    for patch_path in patch_files:
+        if apply_patch_file(cef_root, patch_path):
+            source_changed = True
+    return source_changed
+
+
 def parse_arguments():
     parser = argparse.ArgumentParser(
         description=(
-            "Apply the OnBeforeResourceResponse CEF patch and run the "
-            "official CEF generation tools."
+            "Apply custom CEF source patches: the OnBeforeResourceResponse API "
+            "callback (with official CEF generation) plus every static unified "
+            "diff under myapp/patch/."
         )
     )
     parser.add_argument(
@@ -68,34 +152,13 @@ def parse_arguments():
     return parser.parse_args()
 
 
-def main():
-    args = parse_arguments()
-    cef_root = args.cef_root.expanduser().resolve()
+def apply_api_header_patch(header_path):
+    """Apply the OnBeforeResourceResponse API edit.
 
-    header_path = cef_root / "include/cef_resource_request_handler.h"
-    wrapper_path = (
-        cef_root
-        / "libcef/browser/net_service/resource_request_handler_wrapper.cc"
-    )
-    proxy_path = (
-        cef_root / "libcef/browser/net_service/proxy_url_loader_factory.cc"
-    )
-    translator_path = cef_root / "tools/translator.py"
-    version_manager_path = cef_root / "tools/version_manager.py"
-
-    for required_path in (
-        header_path,
-        wrapper_path,
-        proxy_path,
-        translator_path,
-        version_manager_path,
-    ):
-        if not required_path.is_file():
-            raise RuntimeError(f"Required file does not exist: {required_path}")
-
-    source_changed = False
-    introduced_next = False
-
+    Returns (source_changed, introduced_next). This edit introduces a new CEF
+    API, so it is kept as bespoke logic: generation tools rewrite added=next
+    into a concrete version number, which a static diff cannot express.
+    """
     header_method_body = """\
   ///
   /// Called on the IO thread after response headers are received and before
@@ -156,201 +219,62 @@ def main():
             versioned_header_method_body + resource_response_anchor,
             "public API method",
         ):
-            source_changed = True
-            introduced_next = True
-    elif header_method_body in header_text:
+            return True, True
+        return False, True
+
+    if header_method_body in header_text:
         if replace_exact(
             header_path,
             header_method_body,
             versioned_header_method_body,
             "public API version metadata",
         ):
-            source_changed = True
-            introduced_next = True
-    else:
-        guarded_method_pattern = re.compile(
-            r"#if CEF_API_ADDED\((?:CEF_NEXT|\d+)\)\n"
-            r".*?/\*--cef\([^\r\n]*added=(?:next|\d+)[^\r\n]*\)--\*/\n"
-            r"\s*virtual void OnBeforeResourceResponse\(.*?\n#endif",
-            re.DOTALL,
+            return True, True
+        return False, True
+
+    guarded_method_pattern = re.compile(
+        r"#if CEF_API_ADDED\((?:CEF_NEXT|\d+)\)\n"
+        r".*?/\*--cef\([^\r\n]*added=(?:next|\d+)[^\r\n]*\)--\*/\n"
+        r"\s*virtual void OnBeforeResourceResponse\(.*?\n#endif",
+        re.DOTALL,
+    )
+    if not guarded_method_pattern.search(header_text):
+        raise RuntimeError(
+            "OnBeforeResourceResponse exists but does not have "
+            "recognized CEF API version metadata."
         )
-        if not guarded_method_pattern.search(header_text):
-            raise RuntimeError(
-                "OnBeforeResourceResponse exists but does not have "
-                "recognized CEF API version metadata."
-            )
 
-        if (
-            "CEF_API_ADDED(CEF_NEXT)" in header_text
-            and "added=next" in header_text
-        ):
-            introduced_next = True
-            print("Already applied: public API method with NEXT metadata")
-        else:
-            print("Already applied: public API method with an exact API version")
+    if "CEF_API_ADDED(CEF_NEXT)" in header_text and "added=next" in header_text:
+        print("Already applied: public API method with NEXT metadata")
+        return False, True
 
-    reset_old = """\
-      pending_request_ = pending_request;
-      pending_response_ = nullptr;
-      request_ = request;
-"""
-    reset_new = """\
-      pending_request_ = pending_request;
-      pending_response_ = nullptr;
-      override_response_headers_ = nullptr;
-      request_ = request;
-"""
-    if replace_exact(
-        wrapper_path,
-        reset_old,
-        reset_new,
-        "reset response header override state",
-    ):
-        source_changed = True
+    print("Already applied: public API method with an exact API version")
+    return False, False
 
-    field_old = """\
-    CefRefPtr<CefRequestImpl> pending_request_;
-    CefRefPtr<CefResponseImpl> pending_response_;
-    raw_ptr<network::ResourceRequest> request_;
-"""
-    field_new = """\
-    CefRefPtr<CefRequestImpl> pending_request_;
-    CefRefPtr<CefResponseImpl> pending_response_;
-    scoped_refptr<net::HttpResponseHeaders> override_response_headers_;
-    raw_ptr<network::ResourceRequest> request_;
-"""
-    if replace_exact(
-        wrapper_path,
-        field_old,
-        field_new,
-        "store response header override state",
-    ):
-        source_changed = True
 
-    process_old = """\
-    if (!state->handler_) {
-      return;
-    }
+def main():
+    args = parse_arguments()
+    cef_root = args.cef_root.expanduser().resolve()
 
-    if (!state->pending_response_) {
-      state->pending_response_ = new CefResponseImpl();
-    } else {
-      state->pending_response_->SetReadOnly(false);
-    }
+    header_path = cef_root / "include/cef_resource_request_handler.h"
+    translator_path = cef_root / "tools/translator.py"
+    version_manager_path = cef_root / "tools/version_manager.py"
 
-    if (headers) {
-      state->pending_response_->SetResponseHeaders(*headers);
-    }
+    for required_path in (header_path, translator_path, version_manager_path):
+        if not required_path.is_file():
+            raise RuntimeError(f"Required file does not exist: {required_path}")
 
-    state->pending_response_->SetReadOnly(true);
-  }
-"""
-    process_new = """\
-    state->override_response_headers_ = nullptr;
+    source_changed = False
+    introduced_next = False
 
-    if (!state->handler_) {
-      return;
-    }
+    # 1. The OnBeforeResourceResponse API edit (bespoke; may trigger CEF
+    #    generation tools below).
+    header_changed, introduced_next = apply_api_header_patch(header_path)
+    source_changed = source_changed or header_changed
 
-    if (!state->pending_response_) {
-      state->pending_response_ = new CefResponseImpl();
-    } else {
-      state->pending_response_->SetReadOnly(false);
-    }
-
-    if (headers) {
-      state->pending_response_->SetResponseHeaders(*headers);
-    }
-
-    const auto original_headers =
-        state->pending_response_->GetResponseHeaders();
-
-    state->handler_->OnBeforeResourceResponse(
-        init_state_->browser_, init_state_->GetFrame(),
-        state->pending_request_.get(), state->pending_response_.get());
-
-    const auto modified_headers =
-        state->pending_response_->GetResponseHeaders();
-    state->pending_response_->SetReadOnly(true);
-
-    if (original_headers && modified_headers &&
-        original_headers->raw_headers() != modified_headers->raw_headers()) {
-      state->override_response_headers_ = modified_headers;
-    }
-  }
-"""
-    if replace_exact(
-        wrapper_path,
-        process_old,
-        process_new,
-        "invoke response callback and capture modified headers",
-    ):
-        source_changed = True
-
-    redirect_old = """\
-    auto exec_callback = base::BindOnce(
-        std::move(callback), ResponseMode::CONTINUE, nullptr, new_url);
-"""
-    redirect_new = """\
-    auto exec_callback = base::BindOnce(
-        std::move(callback), ResponseMode::CONTINUE,
-        std::move(state->override_response_headers_), new_url);
-"""
-    if replace_exact(
-        wrapper_path,
-        redirect_old,
-        redirect_new,
-        "forward redirect response header overrides",
-    ):
-        source_changed = True
-
-    response_old = """\
-    auto exec_callback =
-        base::BindOnce(std::move(callback), response_mode, nullptr, new_url);
-"""
-    response_new = """\
-    auto exec_callback =
-        base::BindOnce(std::move(callback), response_mode,
-                       std::move(state->override_response_headers_), new_url);
-"""
-    if replace_exact(
-        wrapper_path,
-        response_old,
-        response_new,
-        "forward normal response header overrides",
-    ):
-        source_changed = True
-
-    proxy_old = """\
-  override_headers_ = override_headers;
-  if (override_headers_) {
-    // Make sure to update current_response_, since when OnReceiveResponse
-    // is called we will not use its headers as it might be missing the
-    // Set-Cookie line (which gets stripped by the IPC layer).
-    current_response_->headers = override_headers_;
-  }
-  redirect_url_ = redirect_url;
-"""
-    proxy_new = """\
-  override_headers_ = override_headers;
-  if (override_headers_) {
-    if (current_response_) {
-      // Preserve the override for response paths that do not use
-      // OnHeadersReceived.
-      current_response_->headers = override_headers_;
-    } else {
-      // Preserve the override for the subsequent OnReceiveResponse call.
-      current_headers_ = override_headers_;
-    }
-  }
-  redirect_url_ = redirect_url;
-"""
-    if replace_exact(
-        proxy_path,
-        proxy_old,
-        proxy_new,
-        "preserve overrides without current_response",
-    ):
+    # 2. Every static unified diff under myapp/patch/. These never introduce a
+    #    CEF API, so they never set introduced_next.
+    if apply_static_patches(cef_root):
         source_changed = True
 
     if introduced_next or args.force_generate:
