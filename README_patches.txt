@@ -3,13 +3,13 @@ CEF 自定义 Patch 管理说明
 ================================================================================
 
 本项目对 CEF 自身源码做了若干定制修改。由于 CEF 自带的补丁机制只对
-Chromium 生效、不能对 CEF 自己的源码自动打补丁，因此这里用两个等价的脚本来
-统一管理这些修改：
+Chromium 生效、不能对 CEF 自己的源码自动打补丁，因此这里用脚本来统一管理这些
+修改。每类脚本都提供 Python 与 PowerShell 两个等价版本（互相独立、互不调用）：
 
-    apply_cef_custom_patches.py     Python 版（推荐，零额外依赖）
-    apply_cef_custom_patches.ps1    PowerShell 版（功能与 py 完全一致）
+    apply_cef_custom_patches.py / .ps1        应用补丁
+    regenerate_cef_custom_patches.py / .ps1   升级 CEF 后重新生成补丁（修行号漂移）
 
-两个脚本互相独立、互不调用，实现同一套逻辑。任选其一运行即可。
+任选 Python 或 PowerShell 版运行即可，二者行为一致。
 
 
 --------------------------------------------------------------------------------
@@ -75,6 +75,61 @@ myapp/patch/ 下的每个 *.patch 都是标准的 unified diff（用 git diff �
     --cef-root <路径>        指定 CEF 源码根（默认取脚本所在目录）
     --force-generate         即使没有引入新 API 也强制跑一次官方生成工具
                              （PowerShell 版对应 -ForceGenerate）
+
+
+--------------------------------------------------------------------------------
+三之二、升级 CEF 后的工作流（修正行号漂移）★
+--------------------------------------------------------------------------------
+
+升级 / 重新同步 CEF 源码后，上游文件行号会变化，导致 myapp/patch/*.patch 里
+记录的行号（@@ -NNN ...）与新源码对不上，即“行号漂移”。处理步骤：
+
+  1. 升级 / 重新同步 CEF 源码树（此时工作区等于新的上游 HEAD，是干净的）。
+
+  2. 应用补丁：
+
+         python3 ./apply_cef_custom_patches.py
+         # 或 pwsh -File ./apply_cef_custom_patches.ps1
+
+     apply 内部用 `git apply --ignore-whitespace`，能容忍一定的行号偏移和
+     CRLF/LF 差异，把我们的改动自动定位并打到新源码上。
+     ★ 如果某个 patch 此处报错（does not apply），说明上游把该处上下文改得
+       太多，git 已无法自动定位——需要人工打开对应文件、手动把改动加回去，
+       然后直接进入第 3 步用它重新生成 patch。★
+
+  3. 重新生成补丁，把行号/上下文刷新为新源码的：
+
+         python3 ./regenerate_cef_custom_patches.py
+         # 或 pwsh -File ./regenerate_cef_custom_patches.ps1
+
+     它对每个已应用的 patch，用 `git diff` 按该 patch 涉及的文件重新导出，
+     覆盖旧 patch。输出示例：
+
+         Unchanged: 01-...patch          （无漂移，内容未变）
+         Regenerated: 04-BUILD.gn.patch  （行号已刷新）
+         Skipped (not currently applied, won't overwrite): 03-...patch
+
+  4. 检查并提交刷新后的 patch：
+
+         git diff -- myapp/patch
+
+为什么第 2 步能打上、第 3 步还要重新生成？
+  - 第 2 步 `git apply` 是“带偏移地”把改动打到文件里，源码结果是对的，
+    但它不会去修改 myapp/patch/ 里的 patch 文件本身（里面仍是旧行号）。
+  - 第 3 步从工作区反向导出，才把 patch 文件的行号/上下文更新为新源码的，
+    这样 patch 文件本身与最新源码保持一致，下次升级 diff 更干净。
+
+regenerate 的安全保护（重要）：
+  * 只有当某 patch “当前确实已应用”（其反向 diff 能干净套回）且
+    `git diff` 结果非空时，才会覆盖该 patch 文件。
+  * 否则一律 Skipped，【绝不】用空内容把 patch 冲掉。所以哪怕你忘了先跑
+    apply，regenerate 也不会破坏已有 patch。
+  * OnBeforeResourceResponse 那条 API 修改不是静态 patch（见第二节），
+    regenerate 不处理它；升级后它由 apply 脚本重新插入并触发官方生成。
+
+注意：regenerate 按“整文件 git diff”导出。请确保被 patch 的文件里【只有】
+我们的定制改动、没有混入其它未提交改动，否则那些改动会被一并写进 patch。
+正常升级流程（第 1 步干净、第 2 步 apply）天然满足这一点。
 
 
 --------------------------------------------------------------------------------
