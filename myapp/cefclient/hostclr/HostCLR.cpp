@@ -2179,6 +2179,22 @@ void response_set_url(void* response, const char* url)
 
 // Custom scheme handler factory (un)registration. Delegates to the browser
 // process implementation in browser/custom_scheme.cc.
+//
+// On macOS the Helper app does not link browser/custom_scheme.cc (it is not in
+// the Helper's source list), so provide inert stubs there. Scheme handler
+// factory registration is a browser-process-only operation and is never invoked
+// from a Helper (renderer/GPU/etc.) process.
+#if defined(WEBAGENT_HELPER_PROCESS)
+int register_custom_scheme(const char* /*scheme*/, const char* /*domain*/)
+{
+    return 0;
+}
+
+int unregister_custom_scheme(const char* /*scheme*/, const char* /*domain*/)
+{
+    return 0;
+}
+#else
 int register_custom_scheme(const char* scheme, const char* domain)
 {
     return client::custom_scheme::RegisterSchemeFactory(
@@ -2190,6 +2206,7 @@ int unregister_custom_scheme(const char* scheme, const char* domain)
     return client::custom_scheme::UnregisterSchemeFactory(
                scheme ? scheme : "", domain ? domain : "") ? 1 : 0;
 }
+#endif  // defined(WEBAGENT_HELPER_PROCESS)
 
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)

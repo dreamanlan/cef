@@ -2310,6 +2310,12 @@ if (is_mac) {
     ]
     helper_defines = [
       "CEF_USE_SANDBOX",
+
+      # The Helper app does not include the browser-only source list
+      # (myapp_cefclient_sources_browser), so browser/custom_scheme.cc is not
+      # compiled here. HostCLR.cpp is in the shared common list and would
+      # otherwise reference its symbols; this define stubs out those calls.
+      "WEBAGENT_HELPER_PROCESS",
     ]
     helper_libs = [
       "//cef/myapp/cefclient/hostclr/coreclr/libnethost.a",
