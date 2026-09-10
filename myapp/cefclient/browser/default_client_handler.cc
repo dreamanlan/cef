@@ -93,7 +93,18 @@ void DefaultClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
   // Close all popups that have this browser as the opener.
-  OnBeforePopupAborted(browser, /*popup_id=*/-1);
+  //
+  // This opener-close -> cascade-close-children behavior is only appropriate
+  // for dependent popups (e.g. `--use-default-popup`). Under
+  // `--use-chrome-window`, window.open produces a full Chrome-managed
+  // tab/window that the user can drag out into its own top-level window; just
+  // like real Chrome, closing the opener must NOT force-close those. Doing so
+  // also mis-fires because the opener->child ownership map is not updated when
+  // a tab is detached, so a dragged-out window would be wrongly closed and can
+  // drive other_browser_ct_ to 0, terminating the whole browser.
+  if (!MainContext::Get()->UseChromeWindowGlobal()) {
+    OnBeforePopupAborted(browser, /*popup_id=*/-1);
+  }
 
   BaseClientHandler::OnBeforeClose(browser);
 }
