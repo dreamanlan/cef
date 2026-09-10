@@ -17,6 +17,7 @@
 #include "myapp/cefclient/browser/main_context.h"
 #include "myapp/cefclient/browser/resource.h"
 #include "myapp/cefclient/browser/views_style.h"
+#include "myapp/cefclient/common/custom_scheme_common.h"
 #include "myapp/shared/browser/geometry_util.h"
 #include "myapp/shared/common/client_switches.h"
 
@@ -58,9 +59,31 @@ enum ControlIds {
   ID_TITLEBAR_MINIMIZE,
   ID_TITLEBAR_MAXIMIZE,
   ID_TITLEBAR_CLOSE,
+
+  // HTML tab bar view (enabled by default for NORMAL windows).
+  ID_TABBAR_VIEW,
 };
 
 typedef std::vector<CefRefPtr<CefLabelButton>> LabelButtons;
+
+// Fixed height (in DIP) of the HTML tab bar strip for NORMAL windows.
+const int kHtmlTabbarHeight = 40;
+
+// Minimal BrowserView delegate for the HTML tab bar strip. It only pins the
+// preferred height; all other behavior uses CefBrowserViewDelegate defaults
+// (no Chrome toolbar, default runtime style), so the strip renders as a plain
+// fixed height page docked at the top of the content box.
+class TabbarViewDelegate : public CefBrowserViewDelegate {
+ public:
+  TabbarViewDelegate() = default;
+
+  CefSize GetPreferredSize(CefRefPtr<CefView> view) override {
+    return CefSize(0, kHtmlTabbarHeight);
+  }
+
+ private:
+  IMPLEMENT_REFCOUNTING(TabbarViewDelegate);
+};
 
 // Make all |buttons| the same size.
 void MakeButtonsSameSize(const LabelButtons& buttons) {
@@ -845,6 +868,18 @@ void ViewsWindow::OnWindowCreated(CefRefPtr<CefWindow> window) {
     if (delegate_->GetInitialShowState() == CEF_SHOW_STATE_FULLSCREEN) {
       ShowTopControls(false);
     }
+  } else if (with_html_tabbar_) {
+    // Gated shell: use a vertical box layout so the HTML tab bar strip can be
+    // docked above the content BrowserView. The tab bar BrowserView itself is
+    // created and inserted in OnWindowChanged (after the content view is added).
+    CefBoxLayoutSettings settings;
+    settings.horizontal = false;
+    CefRefPtr<CefBoxLayout> box_layout = window_->SetToBoxLayout(settings);
+    window_->AddChildView(browser_view_);
+    box_layout->SetFlexForView(browser_view_, 1);
+
+    // Choose a reasonable minimum window size.
+    minimum_window_size_ = CefSize(100, 100);
   } else {
     // Add the BrowserView as the only child of the Window.
     window_->AddChildView(browser_view_);
@@ -873,6 +908,7 @@ void ViewsWindow::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   delegate_->OnViewsWindowDestroyed(this);
 
   browser_view_ = nullptr;
+  tabbar_view_ = nullptr;
   button_menu_model_ = nullptr;
   if (menu_bar_) {
     menu_bar_->Reset();
@@ -1143,6 +1179,25 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
                                    request_context_);
       request_context_ = nullptr;
     }
+
+    if (with_html_tabbar_ && !tabbar_view_) {
+      // Dock a fixed height HTML tab bar strip at the top of the content box.
+      // A separate client instance is required by the cefclient architecture;
+      // DefaultClientHandler joins the same browser query/callback system.
+      CefRefPtr<CefClient> tabbar_client =
+          new DefaultClientHandler(use_alloy_style_);
+      const std::string tabbar_url =
+          std::string(custom_scheme::kCustomSchemeName) + "://tabbar/";
+      CefBrowserSettings tabbar_settings;
+      tabbar_view_ = CefBrowserView::CreateBrowserView(
+          tabbar_client, tabbar_url, tabbar_settings, /*extra_info=*/nullptr,
+          /*request_context=*/nullptr, new TabbarViewDelegate());
+      tabbar_view_->SetID(ID_TABBAR_VIEW);
+      // Insert above the content BrowserView (which is the only existing child
+      // in the no-controls path, or below the controls otherwise).
+      window_->AddChildViewAt(tabbar_view_, 0);
+      window_->Layout();
+    }
   } else {
     // Remove any controls that may include the Chrome toolbar before removing
     // the BrowserView.
@@ -1163,6 +1218,12 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
     if (overlay_browser_) {
       overlay_browser_->Destroy();
       overlay_browser_ = nullptr;
+    }
+
+    if (tabbar_view_) {
+      // Remove the tab bar strip before the content BrowserView is removed.
+      window_->RemoveChildView(tabbar_view_);
+      tabbar_view_ = nullptr;
     }
   }
 }
@@ -1284,6 +1345,9 @@ ViewsWindow::ViewsWindow(WindowType type,
   move_pip_enabled_ = command_line->HasSwitch(switches::kMovePipEnabled);
   allow_pip_without_user_activation_ =
       command_line->HasSwitch(switches::kPipNoUserActivationEnabled);
+
+  // Gated HTML tab bar strip (docked at the top of the content box).
+  with_html_tabbar_ = (type_ == WindowType::NORMAL);
 }
 
 void ViewsWindow::SetBrowserView(CefRefPtr<CefBrowserView> browser_view) {

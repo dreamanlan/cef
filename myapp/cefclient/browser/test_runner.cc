@@ -29,6 +29,7 @@
 #include "myapp/cefclient/browser/media_router_test.h"
 #include "myapp/cefclient/browser/preferences_test.h"
 #include "myapp/cefclient/browser/resource.h"
+#include "myapp/cefclient/browser/custom_scheme.h"
 #include "myapp/cefclient/browser/response_filter_test.h"
 #include "myapp/cefclient/browser/root_window_manager.h"
 #include "myapp/cefclient/browser/scheme_test.h"
@@ -904,6 +905,7 @@ void CreateMessageHandlers(MessageHandlerSet& handlers) {
 void RegisterSchemeHandlers() {
   // Register the scheme handler.
   scheme_test::RegisterSchemeHandlers();
+  custom_scheme::RegisterSchemeHandlers();
 }
 
 CefRefPtr<CefResponseFilter> GetResourceResponseFilter(

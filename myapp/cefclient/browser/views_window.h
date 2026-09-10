@@ -309,6 +309,12 @@ class ViewsWindow : public CefBrowserViewDelegate,
   CefRefPtr<CefRequestContext> request_context_;
   CefRefPtr<ViewsOverlayBrowser> overlay_browser_;
 
+  // HTML tab bar state (enabled by default for NORMAL windows). When enabled,
+  // a fixed height BrowserView is docked at the top of the content box and
+  // loads the custom scheme tab bar page; the content browser fills the rest.
+  bool with_html_tabbar_ = false;
+  CefRefPtr<CefBrowserView> tabbar_view_;
+
   std::optional<float> default_titlebar_height_;
   std::optional<float> override_titlebar_height_;
 

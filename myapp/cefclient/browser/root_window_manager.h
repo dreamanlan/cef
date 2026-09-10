@@ -35,6 +35,12 @@ class RootWindowManager : public RootWindow::Delegate {
   scoped_refptr<RootWindow> CreateRootWindow(
       std::unique_ptr<RootWindowConfig> config);
 
+  // Host a Chrome-style browser in a Chrome self-created native (tabstrip)
+  // top-level window at |url|, instead of a client RootWindow. The browser is
+  // tracked via OtherBrowserCreated/Closed and drives termination through the
+  // same counter. This method can be called from anywhere.
+  void CreateChromeWindow(const std::string& url);
+
   // Create a new native popup window.
   // If |with_controls| is true the window will show controls.
   // If |with_osr| is true the window will use off-screen rendering.

@@ -230,12 +230,18 @@ void RemoveMenuItem(NSMenu* menu, SEL action_selector) {
     }
   }
 
-  auto window_config = std::make_unique<client::RootWindowConfig>();
-  window_config->with_osr = with_osr_;
+  if (main_context->UseChromeWindowGlobal()) {
+    // Chrome self-created native (tabstrip) window; no client RootWindow.
+    main_context->GetRootWindowManager()->CreateChromeWindow(
+        main_context->GetMainURL(nullptr));
+  } else {
+    auto window_config = std::make_unique<client::RootWindowConfig>();
+    window_config->with_osr = with_osr_;
 
-  // Create the first window.
-  main_context->GetRootWindowManager()->CreateRootWindow(
-      std::move(window_config));
+    // Create the first window.
+    main_context->GetRootWindowManager()->CreateRootWindow(
+        std::move(window_config));
+  }
 }
 
 - (void)tryToTerminateApplication:(NSApplication*)app {

@@ -39,6 +39,19 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_completed_fn)(voi
 // later call complete_native_callback(handle, ok, response, error_code), where
 // ok=true sends Success(response) and ok=false sends Failure(error_code, response).
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_cef_query_fn)(void* browser, void* frame, int64_t query_id, const char* request, bool persistent, int64_t handle, int& out_result);
+// Custom scheme request routed to managed code (browser process, UI thread).
+// |handle| is a native async callback handle. |html_code| is a caller-owned
+// buffer of |html_size| bytes (capacity in, produced length out). Tri-state
+// return value:
+//   return false             -> C++ serves its built-in fallback.
+//   return true, html_size==0 -> async takeover: the managed side must later
+//     call complete_native_callback(handle, true, response, 0) where |response|
+//     is a JSON string {"status":int,"mime":string,"body":string,"base64":bool}
+//     (a non-JSON payload is treated as an HTML body).
+//   return true, html_size>0  -> synchronous HTML: C++ completes the callback
+//     itself with |html_code| as a text/html (200) body; the managed side must
+//     NOT call complete_native_callback for this handle.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_custom_scheme_fn)(void* browser, void* frame, int64_t handle, const char* scheme, const char* url, const char* method, const char* referrer, char* html_code, int& html_size);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_init_fn)(void* browser, void* frame, const char* url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_renderer_finalize_fn)(void* browser, void* frame);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_loading_state_change_fn)(void* browser, void* frame, const char* url, bool is_loading, bool can_go_back, bool can_go_forward);
@@ -205,6 +218,7 @@ extern on_browser_finalize_fn on_browser_finalize_fptr;
 extern on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr;
 extern on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr;
 extern on_browser_cef_query_fn on_browser_cef_query_fptr;
+extern on_custom_scheme_fn on_custom_scheme_fptr;
 extern on_renderer_init_fn on_renderer_init_fptr;
 extern on_renderer_finalize_fn on_renderer_finalize_fptr;
 extern on_loading_state_change_fn on_loading_state_change_fptr;

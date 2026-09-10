@@ -37,6 +37,7 @@ class MainContextImpl : public MainContext {
   bool TouchEventsEnabled() override;
   bool UseDefaultPopup() override;
   bool UseCefPopup() override;
+  bool UseChromeWindowGlobal() override;
   void PopulateSettings(CefSettings* settings) override;
   void PopulateBrowserSettings(CefBrowserSettings* settings) override;
   void PopulateOsrSettings(OsrRendererSettings* settings) override;

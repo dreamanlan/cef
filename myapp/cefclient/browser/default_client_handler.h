@@ -8,13 +8,18 @@
 
 #include <optional>
 
+#include "include/cef_display_handler.h"
 #include "myapp/cefclient/browser/base_client_handler.h"
+#if !defined(OS_LINUX)
+#include "myapp/cefclient/hostclr/js_dialog_handler.h"
+#endif
 
 namespace client {
 
 // Default client handler for unmanaged browser windows. Used with Chrome
 // style only.
 class DefaultClientHandler : public BaseClientHandler,
+                             public CefDisplayHandler,
                              public CefPermissionHandler {
  public:
   // If |use_alloy_style| is nullopt the global default will be used.
@@ -30,12 +35,18 @@ class DefaultClientHandler : public BaseClientHandler,
   static CefRefPtr<DefaultClientHandler> GetForClient(
       CefRefPtr<CefClient> client);
 
-  // CefClient methods (route CefPermissionHandler back to us so unmanaged
-  // windows share the same auto-accept policy as ClientHandler; see
-  // BaseClientHandler::MaybeAutoAcceptPermissionPrompt).
+  // CefClient methods. Route Display / Permission / JSDialog back to us so
+  // chrome-UI-created (unmanaged) windows forward the same C# / DSL callbacks
+  // that ClientHandler exposes on managed windows.
+  CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
     return this;
   }
+#if !defined(OS_LINUX)
+  CefRefPtr<CefJSDialogHandler> GetJSDialogHandler() override {
+    return managed_js_dialog_handler_;
+  }
+#endif
 
  protected:
   bool OnBeforePopup(
@@ -56,7 +67,21 @@ class DefaultClientHandler : public BaseClientHandler,
                             int popup_id) override;
   void OnBeforeClose(CefRefPtr<CefBrowser> browser) override;
 
+  // CefDisplayHandler methods. Forward console output to the shared C# / DSL
+  // callback; unlike ClientHandler this handler owns no console log file.
+  bool OnConsoleMessage(CefRefPtr<CefBrowser> browser,
+                        cef_log_severity_t level,
+                        const CefString& message,
+                        const CefString& source,
+                        int line) override;
+
   // CefPermissionHandler methods
+  bool OnRequestMediaAccessPermission(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      const CefString& requesting_origin,
+      uint32_t requested_permissions,
+      CefRefPtr<CefMediaAccessCallback> callback) override;
   bool OnShowPermissionPrompt(
       CefRefPtr<CefBrowser> browser,
       uint64_t prompt_id,
@@ -64,10 +89,31 @@ class DefaultClientHandler : public BaseClientHandler,
       uint32_t requested_permissions,
       CefRefPtr<CefPermissionPromptCallback> callback) override;
 
+  // CefRequestHandler methods
+  bool GetAuthCredentials(CefRefPtr<CefBrowser> browser,
+                          const CefString& origin_url,
+                          bool isProxy,
+                          const CefString& host,
+                          int port,
+                          const CefString& realm,
+                          const CefString& scheme,
+                          CefRefPtr<CefAuthCallback> callback) override;
+  bool OnCertificateError(CefRefPtr<CefBrowser> browser,
+                          ErrorCode cert_error,
+                          const CefString& request_url,
+                          CefRefPtr<CefSSLInfo> ssl_info,
+                          CefRefPtr<CefCallback> callback) override;
+
  private:
   // Used to determine the object type.
   virtual const void* GetTypeKey() const override { return &kTypeKey; }
   static constexpr int kTypeKey = 0;
+
+#if !defined(OS_LINUX)
+  // Forwards JS dialogs (alert/confirm/prompt/beforeunload) to managed code,
+  // same as ClientHandler on managed windows.
+  CefRefPtr<ClientJSDialogHandler> managed_js_dialog_handler_;
+#endif
 
   const bool use_alloy_style_;
 

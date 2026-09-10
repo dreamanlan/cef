@@ -2,6 +2,7 @@
 // reserved. Use of this source code is governed by a BSD-style license that
 // can be found in the LICENSE file.
 
+#include "myapp/cefclient/common/custom_scheme_common.h"
 #include "myapp/cefclient/common/scheme_test_common.h"
 #include "myapp/shared/common/client_app.h"
 
@@ -10,6 +11,7 @@ namespace client {
 // static
 void ClientApp::RegisterCustomSchemes(CefRawPtr<CefSchemeRegistrar> registrar) {
   scheme_test::RegisterCustomSchemes(registrar);
+  custom_scheme::RegisterCustomSchemes(registrar);
 }
 
 }  // namespace client

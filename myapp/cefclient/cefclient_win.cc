@@ -324,14 +324,20 @@ int RunMain(HINSTANCE hInstance,
   // Register scheme handlers.
   test_runner::RegisterSchemeHandlers();
 
-  auto window_config = std::make_unique<RootWindowConfig>();
-  window_config->always_on_top =
-      command_line->HasSwitch(switches::kAlwaysOnTop);
-  window_config->with_osr =
-      settings.windowless_rendering_enabled ? true : false;
+  if (context->UseChromeWindowGlobal()) {
+    // Chrome self-created native (tabstrip) window; no client RootWindow.
+    context->GetRootWindowManager()->CreateChromeWindow(
+        context->GetMainURL(command_line));
+  } else {
+    auto window_config = std::make_unique<RootWindowConfig>();
+    window_config->always_on_top =
+        command_line->HasSwitch(switches::kAlwaysOnTop);
+    window_config->with_osr =
+        settings.windowless_rendering_enabled ? true : false;
 
-  // Create the first window.
-  context->GetRootWindowManager()->CreateRootWindow(std::move(window_config));
+    // Create the first window.
+    context->GetRootWindowManager()->CreateRootWindow(std::move(window_config));
+  }
 
   // Run the message loop. This will block until Quit() is called by the
   // RootWindowManager after all windows have been destroyed.

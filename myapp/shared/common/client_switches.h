@@ -58,6 +58,7 @@ namespace client::switches
     extern const char kAcceptsFirstMouse[];
     extern const char kUseAlloyStyle[];
     extern const char kUseChromeStyleWindow[];
+    extern const char kUseChromeWindow[];
     extern const char kShowOverlayBrowser[];
     extern const char kUseAngle[];
     extern const char kOzonePlatform[];

@@ -12,6 +12,7 @@
 
 #include "include/base/cef_callback.h"
 #include "include/base/cef_logging.h"
+#include "include/cef_browser.h"
 #include "include/cef_task_manager.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
@@ -127,6 +128,30 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindow(
   OnRootWindowCreated(root_window);
 
   return root_window;
+}
+
+void RootWindowManager::CreateChromeWindow(const std::string& url) {
+  // Host a Chrome-style browser in a Chrome self-created native window. No
+  // parent + Chrome runtime style yields a fully styled Chrome UI (tabstrip)
+  // top-level window (mirrors cefsimple's --use-native path). The browser has
+  // no client RootWindow; DefaultClientHandler joins the C# browser-query
+  // system and is tracked as an "other browser", so termination is driven by
+  // the same counter (other_browser_ct_) as default Chrome UI windows.
+  // CefBrowserHost::CreateBrowser may be called on any browser process thread.
+  CefBrowserSettings settings;
+  MainContext::Get()->PopulateBrowserSettings(&settings);
+
+  CefWindowInfo window_info;
+#if defined(OS_WIN)
+  window_info.SetAsPopup(nullptr, "webagent");
+#endif
+  window_info.runtime_style = CEF_RUNTIME_STYLE_CHROME;
+
+  CefRefPtr<CefClient> client =
+      new DefaultClientHandler(/*use_alloy_style=*/false, url);
+
+  CefBrowserHost::CreateBrowser(window_info, client, url, settings, nullptr,
+                                nullptr);
 }
 
 scoped_refptr<RootWindow> RootWindowManager::CreateRootWindowAsPopup(

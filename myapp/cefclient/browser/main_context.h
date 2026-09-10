@@ -61,6 +61,10 @@ class MainContext {
   // Returns true if cefclient popup should be used for Chrome commands.
   virtual bool UseCefPopup() = 0;
 
+  // Returns true if the app should host a Chrome-style browser in a Chrome
+  // self-created native (tabstrip) window instead of a client RootWindow.
+  virtual bool UseChromeWindowGlobal() = 0;
+
   // Populate |settings| based on command-line arguments.
   virtual void PopulateSettings(CefSettings* settings) = 0;
   virtual void PopulateBrowserSettings(CefBrowserSettings* settings) = 0;

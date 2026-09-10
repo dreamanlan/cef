@@ -64,6 +64,7 @@ namespace client::switches
     const char kAcceptsFirstMouse[] = "accepts-first-mouse";
     const char kUseAlloyStyle[] = "use-alloy-style";
     const char kUseChromeStyleWindow[] = "use-chrome-style-window";
+    const char kUseChromeWindow[] = "use-chrome-window";
     const char kShowOverlayBrowser[] = "show-overlay-browser";
     const char kUseAngle[] = "use-angle";
     const char kOzonePlatform[] = "ozone-platform";

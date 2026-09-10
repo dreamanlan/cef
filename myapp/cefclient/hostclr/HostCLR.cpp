@@ -8,6 +8,7 @@
 #include "include/cef_task.h"
 #include "include/cef_parser.h"
 #include "include/cef_devtools_message_observer.h"
+#include "myapp/cefclient/browser/custom_scheme.h"
 #include "JavaScriptCaller.h"
 #include "path_utils.h"
 
@@ -489,6 +490,7 @@ on_browser_finalize_fn on_browser_finalize_fptr = nullptr;
 on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr = nullptr;
 on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr = nullptr;
 on_browser_cef_query_fn on_browser_cef_query_fptr = nullptr;
+on_custom_scheme_fn on_custom_scheme_fptr = nullptr;
 on_renderer_init_fn on_renderer_init_fptr = nullptr;
 on_renderer_finalize_fn on_renderer_finalize_fptr = nullptr;
 on_loading_state_change_fn on_loading_state_change_fptr = nullptr;
@@ -810,6 +812,12 @@ typedef void (*set_heartbeat_interval_fn)(int interval_ms);
 // thread; the pending CEF callback is resumed on the thread it belongs to.
 typedef int (*native_callback_complete_fn)(int64_t handle, int ok, const char* data, int code);
 
+// Custom scheme handler factory (un)registration (browser process). Returns 1
+// on success, 0 on failure. Exposed to managed code as register_custom_scheme /
+// unregister_custom_scheme.
+typedef int (*register_custom_scheme_fn)(const char* scheme, const char* domain);
+typedef int (*unregister_custom_scheme_fn)(const char* scheme, const char* domain);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -922,6 +930,9 @@ typedef struct {
     set_heartbeat_interval_fn SetHeartbeatInterval;
     // Generic async callback completion
     native_callback_complete_fn NativeCallbackComplete;
+    // Custom scheme handler factory (un)registration
+    register_custom_scheme_fn RegisterCustomScheme;
+    unregister_custom_scheme_fn UnregisterCustomScheme;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -2166,6 +2177,20 @@ void response_set_url(void* response, const char* url)
         url ? CefString(url) : CefString());
 }
 
+// Custom scheme handler factory (un)registration. Delegates to the browser
+// process implementation in browser/custom_scheme.cc.
+int register_custom_scheme(const char* scheme, const char* domain)
+{
+    return client::custom_scheme::RegisterSchemeFactory(
+               scheme ? scheme : "", domain ? domain : "") ? 1 : 0;
+}
+
+int unregister_custom_scheme(const char* scheme, const char* domain)
+{
+    return client::custom_scheme::UnregisterSchemeFactory(
+               scheme ? scheme : "", domain ? domain : "") ? 1 : 0;
+}
+
 // Function to call .NET Core method
 int load_dotnet_method(bool is_debug, int& rc)
 {
@@ -2275,6 +2300,9 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
     // Generic async callback completion
     api.NativeCallbackComplete = &native_callback_complete;
+    // Custom scheme handler factory (un)registration
+    api.RegisterCustomScheme = &register_custom_scheme;
+    api.UnregisterCustomScheme = &unregister_custom_scheme;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -2492,6 +2520,17 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_browser_cef_query_fptr);
     if (rc || !on_browser_cef_query_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_cef_query");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnCustomScheme"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnCustomSchemeDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_custom_scheme_fptr);
+    if (rc || !on_custom_scheme_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_custom_scheme");
     }
 
     rc = load_assembly_and_get_function_pointer(
