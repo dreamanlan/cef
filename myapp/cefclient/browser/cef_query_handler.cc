@@ -17,9 +17,11 @@
 #include "include/wrapper/cef_closure_task.h"
 #include "include/cef_parser.h"
 #include "myapp/cefclient/browser/main_context.h"
+#include "myapp/cefclient/browser/default_client_handler.h"
 #include "myapp/cefclient/browser/root_window.h"
 #include "myapp/cefclient/browser/root_window_manager.h"
 #include "myapp/cefclient/browser/test_runner.h"
+#include "myapp/cefclient/browser/views_window.h"
 #include "myapp/cefclient/hostclr/HostCLR.h"
 #include "myapp/cefclient/hostclr/native_callbacks.h"
 
@@ -251,6 +253,18 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     // Parse request as JSON
     CefRefPtr<CefDictionaryValue> request_dict = ParseJSON(request);
 
+    // HTML tab bar strip messages ({ "channel": "tabbar", ... }) are handled
+    // entirely in C++ (no DSL/C# hop): height reports drive the docked strip's
+    // layout; navigation actions drive the content browser. See §8 of
+    // TABBAR_DESIGN.md.
+    if (request_dict &&
+        request_dict->HasKey("channel") &&
+        request_dict->GetType("channel") == VTYPE_STRING &&
+        request_dict->GetString("channel") == "tabbar") {
+      HandleTabbarQuery(browser, request_dict, callback);
+      return;
+    }
+
     // Native file dialog actions handled entirely in C++ (no DSL/C# hop).
     // Payload:
     //   { "action": "show_file_dialog",
@@ -410,6 +424,67 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     IMPLEMENT_REFCOUNTING(FileDialogCb);
     DISALLOW_COPY_AND_ASSIGN(FileDialogCb);
   };
+
+  // Resolve the ViewsWindow that owns the tab bar strip |browser|, then apply
+  // the requested action (height report -> relayout; navigation -> content
+  // browser). Runs on the main (UI) thread.
+  static void HandleTabbarQuery(CefRefPtr<CefBrowser> browser,
+                                CefRefPtr<CefDictionaryValue> request_dict,
+                                CefRefPtr<Callback> callback) {
+    ViewsWindow* window = nullptr;
+    if (browser && browser->GetHost()) {
+      CefRefPtr<DefaultClientHandler> handler =
+          DefaultClientHandler::GetForClient(browser->GetHost()->GetClient());
+      if (handler) {
+        window = handler->GetTabbarOwnerWindow();
+      }
+    }
+    if (!window) {
+      callback->Failure(-1, "ERROR: no tab bar owner window");
+      return;
+    }
+
+    std::string action;
+    if (request_dict->HasKey("action") &&
+        request_dict->GetType("action") == VTYPE_STRING) {
+      action = request_dict->GetString("action").ToString();
+    }
+
+    if (action == "resize") {
+      int height = 0;
+      if (request_dict->HasKey("height")) {
+        const cef_value_type_t t = request_dict->GetType("height");
+        if (t == VTYPE_INT) {
+          height = request_dict->GetInt("height");
+        } else if (t == VTYPE_DOUBLE) {
+          height = static_cast<int>(request_dict->GetDouble("height") + 0.5);
+        }
+      }
+      if (height > 0) {
+        window->SetTabbarHeight(height);
+      }
+      callback->Success("OK");
+      return;
+    }
+
+    if (action == "back" || action == "forward" || action == "reload" ||
+        action == "reload_nocache" || action == "stop" ||
+        action == "navigate") {
+      std::string url;
+      if (request_dict->HasKey("url") &&
+          request_dict->GetType("url") == VTYPE_STRING) {
+        url = request_dict->GetString("url").ToString();
+      }
+      window->ExecuteTabbarCommand(action, url);
+      callback->Success("OK");
+      return;
+    }
+
+    // newtab / closetab / selecttab: the window currently hosts a single
+    // content browser, so acknowledge without switching (multi-browser tab
+    // management is a future enhancement). The HTML still manages tab UI.
+    callback->Success("OK");
+  }
 
   static void HandleShowFileDialog(CefRefPtr<CefBrowser> browser,
                                     CefRefPtr<CefDictionaryValue> request_dict,

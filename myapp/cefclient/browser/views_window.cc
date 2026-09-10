@@ -5,6 +5,8 @@
 #include "myapp/cefclient/browser/views_window.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <fstream>
 
 #include "include/base/cef_build.h"
 #include "include/base/cef_callback.h"
@@ -66,22 +68,113 @@ enum ControlIds {
 
 typedef std::vector<CefRefPtr<CefLabelButton>> LabelButtons;
 
-// Fixed height (in DIP) of the HTML tab bar strip for NORMAL windows.
-const int kHtmlTabbarHeight = 40;
+// Height model (in DIP) of the HTML tab bar strip for NORMAL windows.
+// The single row constant is the tab strip row height and is the sole source
+// of the base height; the navigation-toolbar row is an increment added only
+// for Alloy-style windows (Chrome-style draws its own toolbar). See §6.5 of
+// TABBAR_DESIGN.md.
+const int kHtmlTabbarRowHeight = 34;
+const int kHtmlTabbarNavRowHeight = 42;
 
-// Minimal BrowserView delegate for the HTML tab bar strip. It only pins the
-// preferred height; all other behavior uses CefBrowserViewDelegate defaults
-// (no Chrome toolbar, default runtime style), so the strip renders as a plain
-// fixed height page docked at the top of the content box.
+// Initial (pre-report) strip height by window style. HTML reports the real
+// height via cefQuery once loaded; this is only the first-frame guidance.
+int InitialTabbarHeight(bool use_alloy_style) {
+  return use_alloy_style ? (kHtmlTabbarRowHeight + kHtmlTabbarNavRowHeight)
+                         : kHtmlTabbarRowHeight;
+}
+
+// First-frame guidance persistence: C++ stores only the LAST reported strip
+// height per window style (a rendering seed, NOT tab bar state -- that lives
+// in the HTML/localStorage). On next launch the window lays out with this
+// number before the HTML reports, avoiding a first-frame jump. See §6.5.
+std::string TabbarHeightFilePath(bool use_alloy_style) {
+  std::string dir = MainContext::Get()->GetAppWorkingDirectory();
+  if (!dir.empty() && dir.back() != '/' && dir.back() != '\\') {
+    dir += '/';
+  }
+  return dir + (use_alloy_style ? "tabbar_height_alloy.txt"
+                                : "tabbar_height_chrome.txt");
+}
+
+int LoadTabbarHeightGuidance(bool use_alloy_style) {
+  const int fallback = InitialTabbarHeight(use_alloy_style);
+  std::ifstream f(TabbarHeightFilePath(use_alloy_style));
+  if (!f.is_open()) {
+    return fallback;
+  }
+  int v = 0;
+  f >> v;
+  if (!f || v < kHtmlTabbarRowHeight || v > 400) {
+    return fallback;
+  }
+  return v;
+}
+
+void SaveTabbarHeightGuidance(bool use_alloy_style, int height) {
+  std::ofstream f(TabbarHeightFilePath(use_alloy_style),
+                  std::ios::out | std::ios::trunc);
+  if (f.is_open()) {
+    f << height;
+  }
+}
+
+// Escape a string into a JS double-quoted string literal for ExecuteJavaScript.
+std::string JsStringLiteral(const std::string& s) {
+  std::string out = "\"";
+  for (char c : s) {
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\r': out += "\\r"; break;
+      case '\t': out += "\\t"; break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          char buf[8];
+          snprintf(buf, sizeof(buf), "\\u%04x", static_cast<unsigned char>(c));
+          out += buf;
+        } else {
+          out += c;
+        }
+    }
+  }
+  out += "\"";
+  return out;
+}
+
+// Minimal BrowserView delegate for the HTML tab bar strip. It pins the
+// preferred height (read from the owning ViewsWindow so height reports from
+// the HTML take effect) and, critically, reports the same runtime style as the
+// content browser: a mismatch makes the strip render blank (white screen).
 class TabbarViewDelegate : public CefBrowserViewDelegate {
  public:
-  TabbarViewDelegate() = default;
+  TabbarViewDelegate(ViewsWindow* owner, bool use_alloy_style)
+      : owner_(owner), use_alloy_style_(use_alloy_style) {}
 
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override {
-    return CefSize(0, kHtmlTabbarHeight);
+    // Width must be > 0: libcef CalculatePreferredSize (view_view.h) discards
+    // the whole CefSize when CefSize::IsEmpty() is true (width <= 0 ||
+    // height <= 0), which would drop the pinned height and fall back to the
+    // web content's large preferred size (tab bar grabbing ~half the window).
+    // The actual strip width is stretched to the full window by the box
+    // layout's CEF_AXIS_ALIGNMENT_STRETCH cross-axis alignment.
+    const int height =
+        owner_ ? owner_->GetTabbarHeightDip() : kHtmlTabbarRowHeight;
+    return CefSize(1, height);
+  }
+
+  cef_runtime_style_t GetBrowserRuntimeStyle() override {
+    // MUST match the content browser's runtime style. A docked BrowserView
+    // whose style differs from its window host renders blank; this was the
+    // root cause of the tab bar white-screen. Alloy-style windows host Alloy
+    // browsers, Chrome-style windows host Chrome browsers.
+    return use_alloy_style_ ? CEF_RUNTIME_STYLE_ALLOY
+                            : CEF_RUNTIME_STYLE_CHROME;
   }
 
  private:
+  ViewsWindow* const owner_;  // Not owned; the window outlives the strip.
+  const bool use_alloy_style_;
   IMPLEMENT_REFCOUNTING(TabbarViewDelegate);
 };
 
@@ -311,6 +404,12 @@ void ViewsWindow::SetAddress(const std::string& url) {
   if (location_bar_ && location_bar_->AsTextfield() && !url.empty()) {
     location_bar_->AsTextfield()->SetText(url);
   }
+
+  // Push the address to the HTML tab bar's own address row (Alloy-style).
+  PushToTabbar(
+      "window.__tabbarApi&&__tabbarApi.onAddressChanged&&"
+      "__tabbarApi.onAddressChanged(" +
+      JsStringLiteral(url) + ");");
 }
 
 void ViewsWindow::SetTitle(const std::string& title) {
@@ -324,6 +423,11 @@ void ViewsWindow::SetTitle(const std::string& title) {
     title_label_->SetText(title);
   }
 #endif
+  // Push the document title to the HTML tab bar (active tab label).
+  PushToTabbar(
+      "window.__tabbarApi&&__tabbarApi.setActiveTitle&&"
+      "__tabbarApi.setActiveTitle(" +
+      JsStringLiteral(title) + ");");
 }
 
 void ViewsWindow::SetFavicon(CefRefPtr<CefImage> image) {
@@ -377,6 +481,16 @@ void ViewsWindow::SetLoadingState(bool isLoading,
   can_go_back_ = canGoBack;
   can_go_forward_ = canGoForward;
 
+  // Push loading / navigation state to the HTML tab bar (reload/stop button,
+  // back/forward enablement). Done before the early return below so the tab
+  // bar stays in sync regardless of the Chrome-toolbar short-circuit.
+  PushToTabbar(
+      "window.__tabbarApi&&__tabbarApi.onLoadingStateChanged&&"
+      "__tabbarApi.onLoadingStateChanged({isLoading:" +
+      std::string(isLoading ? "true" : "false") +
+      ",canGoBack:" + std::string(canGoBack ? "true" : "false") +
+      ",canGoForward:" + std::string(canGoForward ? "true" : "false") + "});");
+
   if (!window_ || chrome_toolbar_type_ == CEF_CTT_NORMAL) {
     return;
   }
@@ -391,20 +505,50 @@ void ViewsWindow::SetLoadingState(bool isLoading,
 void ViewsWindow::SetDraggableRegions(
     const std::vector<CefDraggableRegion>& regions) {
   CEF_REQUIRE_UI_THREAD();
+  // Regions reported by the content browser (in content BrowserView coords).
+  content_regions_ = regions;
+  ApplyDraggableRegions();
+}
 
-  if (!window_ || !browser_view_) {
+void ViewsWindow::SetTabbarDraggableRegions(
+    const std::vector<CefDraggableRegion>& regions) {
+  CEF_REQUIRE_UI_THREAD();
+  // Regions reported by the tab bar HTML (in tab bar BrowserView coords).
+  tabbar_regions_ = regions;
+  ApplyDraggableRegions();
+}
+
+void ViewsWindow::ApplyDraggableRegions() {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (!window_) {
     return;
   }
 
-  last_regions_ = regions;
+  // Two sources, each converted from its OWN view's coordinate space, then
+  // merged: CefWindow::SetDraggableRegions replaces the whole set each call,
+  // so content and tab bar regions must be combined here (not overwrite each
+  // other). See §7.2 of TABBAR_DESIGN.md.
+  std::vector<CefDraggableRegion> window_regions;
 
-  // Convert the regions from BrowserView to Window coordinates.
-  std::vector<CefDraggableRegion> window_regions = regions;
-  for (auto& region : window_regions) {
-    CefPoint origin = CefPoint(region.bounds.x, region.bounds.y);
-    browser_view_->ConvertPointToWindow(origin);
-    region.bounds.x = origin.x;
-    region.bounds.y = origin.y;
+  if (browser_view_) {
+    for (auto region : content_regions_) {
+      CefPoint origin(region.bounds.x, region.bounds.y);
+      browser_view_->ConvertPointToWindow(origin);
+      region.bounds.x = origin.x;
+      region.bounds.y = origin.y;
+      window_regions.push_back(region);
+    }
+  }
+
+  if (tabbar_view_) {
+    for (auto region : tabbar_regions_) {
+      CefPoint origin(region.bounds.x, region.bounds.y);
+      tabbar_view_->ConvertPointToWindow(origin);
+      region.bounds.x = origin.x;
+      region.bounds.y = origin.y;
+      window_regions.push_back(region);
+    }
   }
 
   if (overlay_controls_) {
@@ -465,7 +609,7 @@ void ViewsWindow::TakeFocus(bool next) {
     return;
   }
 
-  if (chrome_toolbar_type_ == CEF_CTT_NORMAL) {
+  if (chrome_toolbar_type_ == CEF_CTT_NORMAL && toolbar_) {
     toolbar_->RequestFocus();
   } else if (location_bar_) {
     // Give focus to the location bar.
@@ -531,7 +675,77 @@ void ViewsWindow::SetTitlebarHeight(const std::optional<float>& height) {
 }
 
 void ViewsWindow::UpdateDraggableRegions() {
-  SetDraggableRegions(last_regions_);
+  // Re-apply both content and tab bar regions (view geometry may have moved).
+  ApplyDraggableRegions();
+}
+
+void ViewsWindow::PushToTabbar(const std::string& js) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!tabbar_view_) {
+    return;
+  }
+  CefRefPtr<CefBrowser> browser = tabbar_view_->GetBrowser();
+  if (!browser) {
+    return;
+  }
+  CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+  if (!frame) {
+    return;
+  }
+  frame->ExecuteJavaScript(js, frame->GetURL(), 0);
+}
+
+void ViewsWindow::SetTabbarHeight(int height_dip) {
+  CEF_REQUIRE_UI_THREAD();
+  // Clamp to a sane range so a bad report can't collapse or explode the strip.
+  if (height_dip < kHtmlTabbarRowHeight) {
+    height_dip = kHtmlTabbarRowHeight;
+  } else if (height_dip > 400) {
+    height_dip = 400;
+  }
+  if (height_dip == tabbar_height_dip_) {
+    return;
+  }
+  tabbar_height_dip_ = height_dip;
+
+  // Persist as first-frame guidance for the next launch of this window style.
+  SaveTabbarHeightGuidance(use_alloy_style_, height_dip);
+
+  // The strip's preferred size now differs; relayout so the content browser
+  // resizes to match.
+  if (tabbar_view_) {
+    tabbar_view_->InvalidateLayout();
+  }
+  if (window_) {
+    window_->Layout();
+  }
+}
+
+void ViewsWindow::ExecuteTabbarCommand(const std::string& action,
+                                       const std::string& url) {
+  CEF_REQUIRE_UI_THREAD();
+  CefRefPtr<CefBrowser> browser =
+      browser_view_ ? browser_view_->GetBrowser() : nullptr;
+  if (!browser) {
+    return;
+  }
+  if (action == "back") {
+    browser->GoBack();
+  } else if (action == "forward") {
+    browser->GoForward();
+  } else if (action == "reload") {
+    browser->Reload();
+  } else if (action == "reload_nocache") {
+    browser->ReloadIgnoreCache();
+  } else if (action == "stop") {
+    browser->StopLoad();
+  } else if (action == "navigate") {
+    if (!url.empty()) {
+      if (CefRefPtr<CefFrame> frame = browser->GetMainFrame()) {
+        frame->LoadURL(url);
+      }
+    }
+  }
 }
 
 CefRefPtr<CefBrowserViewDelegate> ViewsWindow::GetDelegateForPopupBrowserView(
@@ -684,13 +898,14 @@ void ViewsWindow::OnMenuButtonPressed(
     CefRefPtr<CefMenuButtonPressedLock> button_pressed_lock) {
   CEF_REQUIRE_UI_THREAD();
 
-  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_);
+  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_ ||
+         with_html_tabbar_);
   DCHECK_EQ(ID_MENU_BUTTON, menu_button->GetID());
 
   const auto button_bounds = menu_button->GetBoundsInScreen();
 
   auto point = screen_point;
-  if (with_overlay_controls_) {
+  if (with_overlay_controls_ || with_html_tabbar_) {
     // Align the menu correctly under the button.
     if (CefIsRTL()) {
       point.x += button_bounds.width - 4;
@@ -715,15 +930,17 @@ void ViewsWindow::OnMenuButtonPressed(
   }
 
   menu_button->ShowMenu(button_menu_model_, point,
-                        with_overlay_controls_ ? CEF_MENU_ANCHOR_TOPLEFT
-                                               : CEF_MENU_ANCHOR_TOPRIGHT);
+                        (with_overlay_controls_ || with_html_tabbar_)
+                            ? CEF_MENU_ANCHOR_TOPLEFT
+                            : CEF_MENU_ANCHOR_TOPRIGHT);
 }
 
 void ViewsWindow::ExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
                                  int command_id,
                                  cef_event_flags_t event_flags) {
   CEF_REQUIRE_UI_THREAD();
-  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_);
+  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_ ||
+         with_html_tabbar_);
 
   if (command_id == ID_QUIT) {
     delegate_->OnExit();
@@ -912,6 +1129,10 @@ void ViewsWindow::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   delegate_->OnViewsWindowDestroyed(this);
 
   browser_view_ = nullptr;
+  if (tabbar_client_) {
+    tabbar_client_->SetTabbarOwnerWindow(nullptr);
+    tabbar_client_ = nullptr;
+  }
   tabbar_view_ = nullptr;
   button_menu_model_ = nullptr;
   if (menu_bar_) {
@@ -1172,15 +1393,21 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
     }
 
     if (!overlay_controls_ && with_html_tabbar_ && !with_standard_buttons_) {
-      // Frameless HTML tab bar window: float native window buttons
-      // (min/max/close) over the top-right of the tab strip row (issue 2). The
-      // menu entry and address bar are provided by the Chrome toolbar / HTML
-      // tab bar, so no menu or location bar overlay is created here.
+      // Frameless HTML tab bar window: float the native controls (hamburger
+      // menu + min/max/close) over the top-right of the tab strip row (issue
+      // 2), matching the Windows custom titlebar layout. The address bar is
+      // provided by the HTML tab bar, so no location bar overlay is created.
+      if (!button_menu_model_) {
+        // OnWindowCreated only builds the menu model for with_controls_ /
+        // overlay modes; build it here so the hamburger menu has content.
+        CreateMenuModel();
+      }
       overlay_controls_ = new ViewsOverlayControls(
           /*with_window_buttons=*/true, use_bottom_controls_);
-      overlay_controls_->Initialize(window_, /*menu_button=*/nullptr,
+      overlay_controls_->Initialize(window_, CreateMenuButton(),
                                     /*location_bar=*/nullptr,
-                                    /*is_chrome_toolbar=*/false);
+                                    /*is_chrome_toolbar=*/false,
+                                    /*menu_in_panel=*/true);
     }
 
     if (with_overlay_browser_) {
@@ -1199,19 +1426,49 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
     if (with_html_tabbar_ && !tabbar_view_) {
       // Dock a fixed height HTML tab bar strip at the top of the content box.
       // A separate client instance is required by the cefclient architecture;
-      // DefaultClientHandler joins the same browser query/callback system.
-      CefRefPtr<CefClient> tabbar_client =
-          new DefaultClientHandler(use_alloy_style_);
+      // DefaultClientHandler joins the same browser query/callback system and
+      // (see default_client_handler) forwards page draggable regions back to
+      // this window when a tab bar owner is set below.
+      // The tab bar is a docked helper BrowserView, not the main view of a
+      // Chrome window. A Chrome-runtime-style docked BrowserView cannot render
+      // standalone and shows a white screen, so it MUST use Alloy style
+      // regardless of the window style (same as the overlay browser above).
+      tabbar_client_ = new DefaultClientHandler(/*use_alloy_style=*/true);
+      tabbar_client_->SetTabbarOwnerWindow(this);
+      // Seed the pinned height from the last reported value for this style so
+      // the first frame lays out close to the final size (§6.5).
+      tabbar_height_dip_ = LoadTabbarHeightGuidance(use_alloy_style_);
+      // nav=1 shows the HTML navigation/address row (Alloy-style, where the
+      // page owns the toolbar); nav=0 hides it (Chrome-style, where Chrome
+      // draws its own toolbar). See §6.5 / §8 of TABBAR_DESIGN.md.
       const std::string tabbar_url =
-          std::string(custom_scheme::kCustomSchemeName) + "://tabbar/";
+          std::string(custom_scheme::kCustomSchemeName) + "://tabbar/" +
+          (use_alloy_style_ ? "?nav=1" : "?nav=0");
       CefBrowserSettings tabbar_settings;
       tabbar_view_ = CefBrowserView::CreateBrowserView(
-          tabbar_client, tabbar_url, tabbar_settings, /*extra_info=*/nullptr,
-          /*request_context=*/nullptr, new TabbarViewDelegate());
+          tabbar_client_, tabbar_url, tabbar_settings, /*extra_info=*/nullptr,
+          /*request_context=*/nullptr,
+          new TabbarViewDelegate(this, /*use_alloy_style=*/true));
       tabbar_view_->SetID(ID_TABBAR_VIEW);
       // Insert above the content BrowserView (which is the only existing child
       // in the no-controls path, or below the controls otherwise).
       window_->AddChildViewAt(tabbar_view_, 0);
+
+      // Chrome-style tab bar windows have with_controls_ == false, so
+      // AddControls() (which normally installs the browser's own Chrome toolbar
+      // as the address bar) never runs, leaving the window without an address
+      // bar. Dock the Chrome toolbar (CEF_CTT_NORMAL) here, just below the tab
+      // strip (index 1) and above the content BrowserView. Alloy-style windows
+      // resolve to CEF_CTT_NONE (the HTML tab bar owns the address row) so this
+      // is skipped. A Views-hosted browser is forced TYPE_POPUP and may return
+      // a null Chrome toolbar; guard against it (unlike AddControls' DCHECK) so
+      // we degrade gracefully instead of crashing.
+      if (chrome_toolbar_type_ == CEF_CTT_NORMAL && !toolbar_) {
+        toolbar_ = browser_view_->GetChromeToolbar();
+        if (toolbar_) {
+          window_->AddChildViewAt(toolbar_, 1);
+        }
+      }
       window_->Layout();
     }
   } else {
@@ -1221,6 +1478,7 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
       overlay_controls_->Destroy();
       overlay_controls_ = nullptr;
       location_bar_ = nullptr;
+      toolbar_ = nullptr;
     } else if (toolbar_) {
       toolbar_ = nullptr;
       location_bar_ = nullptr;
@@ -1238,6 +1496,12 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
 
     if (tabbar_view_) {
       // Remove the tab bar strip before the content BrowserView is removed.
+      if (tabbar_client_) {
+        // Drop the back-pointer so a late OnDraggableRegionsChanged cannot
+        // reach a torn-down window.
+        tabbar_client_->SetTabbarOwnerWindow(nullptr);
+        tabbar_client_ = nullptr;
+      }
       window_->RemoveChildView(tabbar_view_);
       tabbar_view_ = nullptr;
     }
@@ -1284,6 +1548,8 @@ void ViewsWindow::MenuBarExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
   ExecuteCommand(menu_model, command_id, event_flags);
 }
 
+ViewsWindow::~ViewsWindow() = default;
+
 ViewsWindow::ViewsWindow(WindowType type,
                          Delegate* delegate,
                          CefRefPtr<CefBrowserView> browser_view,
@@ -1304,16 +1570,27 @@ ViewsWindow::ViewsWindow(WindowType type,
 
   const bool is_normal_type = type_ == WindowType::NORMAL;
 
-  with_controls_ = is_normal_type && delegate_->WithControls();
-
   // Gated HTML tab bar strip (docked at the top of the content box). Computed
-  // early because it feeds the frameless decision below.
+  // first because it feeds the controls / frameless / toolbar decisions below.
   with_html_tabbar_ = is_normal_type;
+
+  // The legacy demo toolbar + location bar (AddControls: back/forward/reload/
+  // stop buttons + a bare CefTextfield / Chrome toolbar) is superseded by the
+  // HTML tab bar (stage 5): Alloy-style windows get their address/nav row from
+  // the HTML tab bar, Chrome-style windows get the browser's own Chrome
+  // toolbar. So the demo controls are disabled whenever the tab bar is active.
+  // Non-tab-bar windows (DevTools / dialog / etc.) are unaffected.
+  with_controls_ =
+      is_normal_type && delegate_->WithControls() && !with_html_tabbar_;
 
   const bool hide_frame = command_line->HasSwitch(switches::kHideFrame);
   const bool show_overlays = is_normal_type && hide_frame && !with_controls_ &&
                              !command_line->HasSwitch(switches::kHideOverlays);
-  const bool hide_toolbar = !show_overlays && !with_controls_;
+  // Keep the browser's native Chrome toolbar for Chrome-style tab bar windows
+  // (that is their address bar); Alloy-style resolves to CEF_CTT_NONE anyway
+  // (the HTML owns the toolbar). Non-tab-bar windows keep original behavior.
+  const bool hide_toolbar =
+      !with_html_tabbar_ && !show_overlays && !with_controls_;
   const bool show_window_buttons =
       command_line->HasSwitch(switches::kShowWindowButtons);
   accepts_first_mouse_ = command_line->HasSwitch(switches::kAcceptsFirstMouse);
@@ -1325,14 +1602,23 @@ ViewsWindow::ViewsWindow(WindowType type,
   // over the top-right of the tab strip (see OnWindowChanged).
   frameless_ = (hide_frame || with_html_tabbar_) && is_normal_type;
 
-  // With an overlay that mimics window controls.
-  with_overlay_controls_ = show_overlays;
+  // With an overlay that mimics window controls. Never for HTML tab bar
+  // windows: they float their own native window-button overlay (no location
+  // bar) in OnWindowChanged; the location-bar overlay here would duplicate the
+  // HTML address row.
+  with_overlay_controls_ = show_overlays && !with_html_tabbar_;
 
 #if defined(OS_WIN)
   // Custom titlebar: frameless + hide-top-menu + Chrome toolbar on Windows.
+  // Disabled when the HTML tab bar is active: that mode provides a single set
+  // of window controls via the cross-platform overlay (see OnWindowChanged),
+  // so a separate Windows titlebar would duplicate the title/menu/min/max/close
+  // row. TODO(stage 5): remove the custom titlebar code path entirely once the
+  // HTML tab bar owns the title bar area.
   with_custom_titlebar_ =
       is_normal_type && hide_frame &&
-      command_line->HasSwitch(switches::kHideTopMenu) && with_controls_;
+      command_line->HasSwitch(switches::kHideTopMenu) && with_controls_ &&
+      !with_html_tabbar_;
 #endif
 
   // If window has frame or flag passed explicitly

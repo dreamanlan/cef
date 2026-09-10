@@ -106,9 +106,10 @@ std::string BuildBuiltinTabbarPage() {
   html,body{margin:0;padding:0;height:100%;overflow:hidden;
     font-family:'Segoe UI',Arial,sans-serif;font-size:13px;
     background:#dee1e6;color:#3c4043;user-select:none;}
-  .tabbar{display:flex;align-items:flex-end;height:100%;box-sizing:border-box;
+  .root{display:flex;flex-direction:column;box-sizing:border-box;}
+  .tabrow{display:flex;align-items:flex-end;height:34px;box-sizing:border-box;
     -webkit-app-region:drag;padding:0 140px 0 8px;}
-  .tabbar.mac{padding:0 8px 0 92px;}
+  .tabrow.mac{padding:0 8px 0 92px;}
   .tabs{display:flex;align-items:flex-end;height:100%;overflow:hidden;
     flex:0 1 auto;}
   .tab{-webkit-app-region:no-drag;display:flex;align-items:center;
@@ -125,20 +126,51 @@ std::string BuildBuiltinTabbarPage() {
     text-align:center;margin:0 4px;border-radius:50%;cursor:pointer;
     font-size:18px;flex:none;}
   .newtab:hover{background:#c8ccd0;}
+  .navrow{display:flex;align-items:center;height:42px;box-sizing:border-box;
+    -webkit-app-region:no-drag;padding:0 8px;background:#fff;flex:none;}
+  .navrow.hidden{display:none;}
+  .navbtn{width:28px;height:28px;margin-right:2px;padding:0;border:none;
+    background:transparent;border-radius:4px;cursor:pointer;color:#5f6368;
+    font-size:16px;line-height:28px;text-align:center;flex:none;}
+  .navbtn:hover{background:#e8eaed;}
+  .navbtn:disabled{color:#c0c3c7;cursor:default;background:transparent;}
+  #stop{display:none;}
+  .urlbar{flex:1;height:28px;margin-left:6px;box-sizing:border-box;
+    border:1px solid #cfd3d7;border-radius:14px;padding:0 14px;outline:none;
+    font-size:13px;color:#3c4043;background:#f1f3f4;}
+  .urlbar:focus{background:#fff;border-color:#4a90e2;}
 </style>
 </head>
 <body>
-<div class="tabbar" id="tabbar">
-  <div class="tabs" id="tabs"></div>
-  <div class="newtab" id="newtab" title="New tab">+</div>
+<div class="root">
+  <div class="tabrow" id="tabrow">
+    <div class="tabs" id="tabs"></div>
+    <div class="newtab" id="newtab" title="New tab">+</div>
+  </div>
+  <div class="navrow" id="navrow">
+    <button class="navbtn" id="back" title="Back" disabled>&#8592;</button>
+    <button class="navbtn" id="forward" title="Forward" disabled>&#8594;</button>
+    <button class="navbtn" id="reload" title="Reload">&#8635;</button>
+    <button class="navbtn" id="stop" title="Stop">&#215;</button>
+    <input class="urlbar" id="urlbar" type="text" spellcheck="false"
+      placeholder="Search or enter address">
+  </div>
 </div>
 <script>
 (function(){
   var tabs=[];
   var nextId=1;
   var activeId=0;
+  // Navigation row visibility follows the ?nav flag set by C++ at creation:
+  // nav=0 (Chrome-style, Chrome draws its own toolbar) hides it; otherwise
+  // (Alloy-style) the HTML owns the address/nav row.
+  var navOn=!/[?&]nav=0(&|$)/.test(location.search);
+  if(!navOn){
+    var nr=document.getElementById('navrow');
+    if(nr){nr.classList.add('hidden');}
+  }
   if(/Mac/i.test(navigator.platform)){
-    document.getElementById('tabbar').classList.add('mac');
+    document.getElementById('tabrow').classList.add('mac');
   }
   function send(action,extra){
     if(!window.cefQuery){return;}
@@ -147,6 +179,21 @@ std::string BuildBuiltinTabbarPage() {
     window.cefQuery({request:JSON.stringify(msg),
       onSuccess:function(){},onFailure:function(){}});
   }
+  // Report the strip's intrinsic content height to C++ so the docked view can
+  // resize to match (the view height is pinned by C++, so we measure .root,
+  // whose rows are fixed-height, giving the true desired height). See §6.5/§8.
+  var lastH=0;
+  function reportHeight(){
+    var root=document.querySelector('.root');
+    if(!root){return;}
+    var h=Math.ceil(root.getBoundingClientRect().height);
+    if(h>0&&h!==lastH){lastH=h;send('resize',{height:h});}
+  }
+  if(window.ResizeObserver){
+    try{new ResizeObserver(reportHeight).observe(document.querySelector('.root'));}
+    catch(e){}
+  }
+  window.addEventListener('load',reportHeight);
   function render(){
     var c=document.getElementById('tabs');
     c.innerHTML='';
@@ -197,6 +244,34 @@ std::string BuildBuiltinTabbarPage() {
       if(sid){selectTab(sid);send('selecttab',{id:sid});}
     }
   });
+  // Navigation toolbar wiring. Each control reports through cefQuery; the C++
+  // side (tabbar message handler, added in a later stage) drives the actual
+  // content browser and pushes state back via window.__tabbarApi.
+  var urlbar=document.getElementById('urlbar');
+  function navigate(u){
+    u=(u||'').trim();
+    if(!u){return;}
+    send('navigate',{url:u});
+  }
+  document.getElementById('back').addEventListener('click',function(){
+    send('back');
+  });
+  document.getElementById('forward').addEventListener('click',function(){
+    send('forward');
+  });
+  document.getElementById('reload').addEventListener('click',function(){
+    send('reload');
+  });
+  document.getElementById('stop').addEventListener('click',function(){
+    send('stop');
+  });
+  urlbar.addEventListener('keydown',function(e){
+    if(e.key==='Enter'||e.keyCode===13){navigate(urlbar.value);}
+  });
+  function setEnabled(id,enabled){
+    var b=document.getElementById(id);
+    if(b){b.disabled=!enabled;}
+  }
   // Reverse channel: C++ pushes state updates for the active tab here.
   window.__tabbarApi={
     setActiveTitle:function(title){
@@ -207,17 +282,40 @@ std::string BuildBuiltinTabbarPage() {
       var t=tabs.find(function(x){return x.id===activeId;});
       if(t){t.url=url;}
     },
+    onAddressChanged:function(url){
+      if(url!==undefined&&url!==null){
+        if(document.activeElement!==urlbar){urlbar.value=url;}
+        this.setActiveUrl(url);
+      }
+    },
+    onLoadingStateChanged:function(s){
+      try{
+        var st=(typeof s==='string')?JSON.parse(s):s;
+        setEnabled('back',!!st.canGoBack);
+        setEnabled('forward',!!st.canGoForward);
+        var reload=document.getElementById('reload');
+        var stop=document.getElementById('stop');
+        if(reload&&stop){
+          if(st.isLoading){reload.style.display='none';stop.style.display='';}
+          else{reload.style.display='';stop.style.display='none';}
+        }
+      }catch(e){}
+    },
     setState:function(json){
       try{
         var s=(typeof json==='string')?JSON.parse(json):json;
         if(s.title!==undefined){this.setActiveTitle(s.title);}
-        if(s.url!==undefined){this.setActiveUrl(s.url);}
+        if(s.url!==undefined){this.onAddressChanged(s.url);}
+        if(s.isLoading!==undefined||s.canGoBack!==undefined||
+           s.canGoForward!==undefined){this.onLoadingStateChanged(s);}
       }catch(e){}
     },
     reset:function(){tabs=[];nextId=1;activeId=0;render();}
   };
   // Seed an initial tab representing the content browser already shown.
   addTab('New Tab',true);
+  // Report the initial height immediately (ResizeObserver may fire later).
+  reportHeight();
 })();
 </script>
 </body>

@@ -89,21 +89,6 @@ MainContextImpl::MainContextImpl(CefRefPtr<CefCommandLine> command_line,
   // Whether Alloy style will be used.
   use_alloy_style_ = command_line_->HasSwitch(switches::kUseAlloyStyle);
 
-  // Whether to use Chrome style hosted in cefclient's own native (non-Views)
-  // window (RootWindowWin/Gtk/Mac creates the OS window and parents the browser
-  // into it via SetAsChild). This is NOT the Chrome UI tabstrip window: a real
-  // Chrome tabstrip window is created internally by the Chrome UI and is not
-  // programmatically controllable via the public CEF API; a Chrome-style browser
-  // hosted in a client-created window is a single (POPUP-style) browser without a
-  // tabstrip. Same window host as --use-native (which only differs in style).
-  // See task item "--use-chrome-window".
-  const bool use_chrome_window =
-      command_line_->HasSwitch(switches::kUseChromeWindow);
-  if (use_chrome_window) {
-    use_views_ = false;
-    use_alloy_style_ = false;
-  }
-
   if (use_windowless_rendering_ && !use_alloy_style_) {
     LOG(WARNING) << "Windowless rendering requires Alloy style.";
     use_alloy_style_ = true;
@@ -120,6 +105,14 @@ MainContextImpl::MainContextImpl(CefRefPtr<CefCommandLine> command_line,
     use_alloy_style_ = true;
   }
 #endif
+
+  // Use a Chrome-managed tabstrip window by default unless another style
+  // is selected. Preserve required Alloy fallbacks for OSR and native Mac parents.
+  use_chrome_style_window_ = command_line_->HasSwitch(switches::kUseChromeStyleWindow);
+  const bool use_chrome_window = UseChromeWindowGlobal();
+  if (use_chrome_window) {
+    use_views_ = false;
+  }
 
   if (!use_views_ && !use_chrome_native_parent && !use_chrome_window &&
       !use_windowless_rendering_) {
@@ -212,7 +205,7 @@ bool MainContextImpl::UseCefPopup() {
 }
 
 bool MainContextImpl::UseChromeWindowGlobal() {
-  return command_line_->HasSwitch(switches::kUseChromeWindow);
+  return !use_windowless_rendering_ && !use_alloy_style_ && !use_chrome_style_window_;
 }
 
 void MainContextImpl::PopulateSettings(CefSettings* settings) {

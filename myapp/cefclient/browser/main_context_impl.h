@@ -79,6 +79,7 @@ class MainContextImpl : public MainContext {
   int windowless_frame_rate_ = 0;
   bool use_views_;
   bool use_alloy_style_;
+  bool use_chrome_style_window_;
 
   std::unique_ptr<RootWindowManager> root_window_manager_;
 

@@ -9,6 +9,7 @@
 #include <optional>
 
 #include "include/cef_display_handler.h"
+#include "include/cef_drag_handler.h"
 #include "myapp/cefclient/browser/base_client_handler.h"
 #if !defined(OS_LINUX)
 #include "myapp/cefclient/hostclr/js_dialog_handler.h"
@@ -16,10 +17,13 @@
 
 namespace client {
 
+class ViewsWindow;
+
 // Default client handler for unmanaged browser windows. Used with Chrome
 // style only.
 class DefaultClientHandler : public BaseClientHandler,
                              public CefDisplayHandler,
+                             public CefDragHandler,
                              public CefPermissionHandler {
  public:
   // If |use_alloy_style| is nullopt the global default will be used.
@@ -39,6 +43,7 @@ class DefaultClientHandler : public BaseClientHandler,
   // chrome-UI-created (unmanaged) windows forward the same C# / DSL callbacks
   // that ClientHandler exposes on managed windows.
   CefRefPtr<CefDisplayHandler> GetDisplayHandler() override { return this; }
+  CefRefPtr<CefDragHandler> GetDragHandler() override { return this; }
   CefRefPtr<CefPermissionHandler> GetPermissionHandler() override {
     return this;
   }
@@ -47,6 +52,16 @@ class DefaultClientHandler : public BaseClientHandler,
     return managed_js_dialog_handler_;
   }
 #endif
+
+  // Tab bar draggable-region routing. When this handler drives an HTML tab bar
+  // strip, its owning window is set here so page draggable regions
+  // (-webkit-app-region) reported via OnDraggableRegionsChanged are forwarded
+  // to that window to move the frameless top-level window. Other windows
+  // (chrome-style / overlay / popup) leave it null, in which case the callback
+  // is a harmless no-op (they have a real OS title bar; app-region does not
+  // apply to native frames). Weak pointer; cleared by the window on teardown.
+  void SetTabbarOwnerWindow(ViewsWindow* window) { tabbar_owner_ = window; }
+  ViewsWindow* GetTabbarOwnerWindow() const { return tabbar_owner_; }
 
  protected:
   bool OnBeforePopup(
@@ -74,6 +89,13 @@ class DefaultClientHandler : public BaseClientHandler,
                         const CefString& message,
                         const CefString& source,
                         int line) override;
+
+  // CefDragHandler methods. Forward page draggable regions to the owning tab
+  // bar window (see SetTabbarOwnerWindow); no-op when no owner is set.
+  void OnDraggableRegionsChanged(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefFrame> frame,
+      const std::vector<CefDraggableRegion>& regions) override;
 
   // CefPermissionHandler methods
   bool OnRequestMediaAccessPermission(
@@ -116,6 +138,9 @@ class DefaultClientHandler : public BaseClientHandler,
 #endif
 
   const bool use_alloy_style_;
+
+  // Owning tab bar window for draggable-region forwarding (weak, may be null).
+  ViewsWindow* tabbar_owner_ = nullptr;
 
   IMPLEMENT_REFCOUNTING(DefaultClientHandler);
 };

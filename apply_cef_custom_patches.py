@@ -9,7 +9,7 @@
 #      because the generation tools rewrite added=next into a concrete,
 #      environment-determined API version number.
 #   2. Every *.patch file under myapp/patch/: static unified diffs that do not
-#      introduce any CEF API (e.g. the --use-chrome-window window.open->tab
+#      introduce any CEF API (e.g. the use-chrome-window window.open->tab
 #      merge, the response-header override plumbing in the .cc files). These
 #      are applied with `git apply` and are idempotent: if a patch already
 #      reverse-applies cleanly it is considered applied and skipped.

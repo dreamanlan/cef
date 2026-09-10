@@ -22,17 +22,20 @@ constexpr int kLocationBarPadding = 100;
 // White with 80% opacity.
 constexpr auto kBackgroundColor = CefColorSetARGB(255 * .80, 255, 255, 255);
 
-std::string GetLabel(ViewsOverlayControls::Command command, bool maximized) {
+// Window control glyphs, matching the Windows custom titlebar buttons
+// (see views_window.cc CreateTitleBar): U+2212 minus, U+25A1 white square,
+// U+2750 restore, U+00D7 multiplication sign.
+CefString GetLabel(ViewsOverlayControls::Command command, bool maximized) {
   switch (command) {
     case ViewsOverlayControls::Command::kMinimize:
-      return "-";
+      return CefString(u"\u2212");
     case ViewsOverlayControls::Command::kMaximize:
-      return maximized ? "O" : "o";
+      return maximized ? CefString(u"\u2750") : CefString(u"\u25A1");
     case ViewsOverlayControls::Command::kClose:
-      return "X";
+      return CefString(u"\u00D7");
   }
   NOTREACHED();
-  return std::string();
+  return CefString();
 }
 
 std::array<ViewsOverlayControls::Command, 3> GetButtons() {
@@ -76,7 +79,8 @@ ViewsOverlayControls::ViewsOverlayControls(bool with_window_buttons,
 void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
                                       CefRefPtr<CefMenuButton> menu_button,
                                       CefRefPtr<CefView> location_bar,
-                                      bool is_chrome_toolbar) {
+                                      bool is_chrome_toolbar,
+                                      bool menu_in_panel) {
   DCHECK(!window_);
 
   // |menu_button| and |location_bar| are both optional. The frameless HTML tab
@@ -105,6 +109,15 @@ void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
     panel_layout_settings.horizontal = true;
     panel_->SetToBoxLayout(panel_layout_settings);
 
+    // When requested, dock the menu button as the first (leftmost) child of the
+    // panel so the group reads [menu][min][max][close], matching the Windows
+    // custom titlebar layout.
+    if (menu_in_panel && menu_button) {
+      menu_button->SetBackgroundColor(kBackgroundColor);
+      panel_->AddChildView(menu_button);
+      has_panel_menu_ = true;
+    }
+
     for (auto button : GetButtons()) {
       panel_->AddChildView(CreateButton(button));
     }
@@ -115,8 +128,9 @@ void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
     panel_controller_->SetVisible(true);
   }
 
-  // Menu button (optional).
-  if (menu_button) {
+  // Menu button (optional). Only docked as a separate overlay when it is not
+  // already part of the window control button panel above.
+  if (menu_button && !menu_in_panel) {
     menu_button->SetBackgroundColor(kBackgroundColor);
     menu_controller_ = window_->AddOverlayView(
         menu_button, GetMenuDockingMode(use_bottom_controls_),
@@ -263,7 +277,7 @@ void ViewsOverlayControls::MaybeUpdateMaximizeButton() {
   }
   window_maximized_ = !window_maximized_;
 
-  auto max_button = panel_->GetChildViewAt(1);
+  auto max_button = panel_->GetChildViewAt(has_panel_menu_ ? 2 : 1);
   auto command = static_cast<Command>(max_button->GetID());
   DCHECK(command == Command::kMaximize);
   max_button->AsButton()->AsLabelButton()->SetText(

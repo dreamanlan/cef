@@ -32,6 +32,8 @@
 
 namespace client {
 
+class DefaultClientHandler;
+
 // Implements a CefWindow that hosts a single CefBrowserView and optional
 // Views-hosted controls. All methods must be called on the browser process UI
 // thread.
@@ -120,6 +122,19 @@ class ViewsWindow : public CefBrowserViewDelegate,
   void SetAlwaysOnTop(bool on_top);
   void SetLoadingState(bool isLoading, bool canGoBack, bool canGoForward);
   void SetDraggableRegions(const std::vector<CefDraggableRegion>& regions);
+
+  // HTML tab bar bridge (see TABBAR_DESIGN.md §6.5/§8). All UI-thread only.
+  // Current pinned strip height (DIP), read by the tab bar view delegate.
+  int GetTabbarHeightDip() const { return tabbar_height_dip_; }
+  // Apply a height reported by the tab bar HTML (relayouts + persists it as
+  // the next-launch first-frame guidance for this window style).
+  void SetTabbarHeight(int height_dip);
+  // Draggable regions reported by the tab bar HTML (tab strip drag area).
+  void SetTabbarDraggableRegions(
+      const std::vector<CefDraggableRegion>& regions);
+  // Route a tab bar command to the content browser (back/forward/reload/stop/
+  // navigate). |url| is only used by "navigate".
+  void ExecuteTabbarCommand(const std::string& action, const std::string& url);
   bool OnSetFocus(cef_focus_source_t source);
   void TakeFocus(bool next);
   void OnBeforeContextMenu(CefRefPtr<CefMenuModel> model);
@@ -233,6 +248,11 @@ class ViewsWindow : public CefBrowserViewDelegate,
               CefRefPtr<CefBrowserView> browser_view,
               CefRefPtr<CefCommandLine> command_line);
 
+  // Out-of-line destructor so the CefRefPtr<DefaultClientHandler> member is
+  // destroyed in the .cc (where DefaultClientHandler is a complete type),
+  // instead of being instantiated here against a forward declaration.
+  ~ViewsWindow() override;
+
   void SetBrowserView(CefRefPtr<CefBrowserView> browser_view);
 
   // Create controls.
@@ -247,6 +267,14 @@ class ViewsWindow : public CefBrowserViewDelegate,
 
   // Add other controls to the Window.
   void AddControls();
+
+  // Merge content + tab bar draggable regions (each converted from its own
+  // view's coordinates) and push the result to the window.
+  void ApplyDraggableRegions();
+
+  // Execute |js| on the tab bar HTML main frame (no-op if the strip is absent
+  // or its browser is not ready). Used to push content state to the tab bar.
+  void PushToTabbar(const std::string& js);
 
   // Add keyboard accelerators to the Window.
   void AddAccelerators();
@@ -314,6 +342,15 @@ class ViewsWindow : public CefBrowserViewDelegate,
   // loads the custom scheme tab bar page; the content browser fills the rest.
   bool with_html_tabbar_ = false;
   CefRefPtr<CefBrowserView> tabbar_view_;
+  // The tab bar strip's client handler; holds a back-pointer to this window
+  // for draggable-region forwarding. Cleared on teardown to avoid dangling.
+  CefRefPtr<DefaultClientHandler> tabbar_client_;
+  // Current pinned strip height (DIP). Seeded from persisted per-style
+  // guidance, then updated by HTML height reports.
+  int tabbar_height_dip_ = 34;
+  // Last draggable regions reported by the tab bar HTML (in tab bar view
+  // coordinates); merged with content_regions_ when applied to the window.
+  std::vector<CefDraggableRegion> tabbar_regions_;
 
   std::optional<float> default_titlebar_height_;
   std::optional<float> override_titlebar_height_;
@@ -328,7 +365,7 @@ class ViewsWindow : public CefBrowserViewDelegate,
   bool can_go_back_ = false;
   bool can_go_forward_ = false;
 
-  std::vector<CefDraggableRegion> last_regions_;
+  std::vector<CefDraggableRegion> content_regions_;
 
   IMPLEMENT_REFCOUNTING(ViewsWindow);
 };

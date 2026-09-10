@@ -4,8 +4,10 @@
 
 #include "myapp/cefclient/browser/default_client_handler.h"
 
+#include "include/wrapper/cef_helpers.h"
 #include "myapp/cefclient/browser/main_context.h"
 #include "myapp/cefclient/browser/root_window_manager.h"
+#include "myapp/cefclient/browser/views_window.h"
 #include "myapp/cefclient/hostclr/HostCLR.h"
 #include "myapp/cefclient/hostclr/auth_credentials.h"
 
@@ -53,7 +55,7 @@ bool DefaultClientHandler::OnBeforePopup(
     return false;
   }
 
-  // --use-chrome-window: the initial window is a Chrome self-created native
+  // In the default mode, the initial window is a Chrome self-created native
   // (tabstrip) window (see RootWindowManager::CreateChromeWindow). Popups /
   // window.open must replicate that recipe instead of falling into the native
   // RootWindow popup path, which would host the Chrome browser inside a bare
@@ -95,8 +97,8 @@ void DefaultClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {
   // Close all popups that have this browser as the opener.
   //
   // This opener-close -> cascade-close-children behavior is only appropriate
-  // for dependent popups (e.g. `--use-default-popup`). Under
-  // `--use-chrome-window`, window.open produces a full Chrome-managed
+  // for dependent popups (e.g. `--use-default-popup`). In the default
+  // Chrome window mode, window.open produces a full Chrome-managed
   // tab/window that the user can drag out into its own top-level window; just
   // like real Chrome, closing the opener must NOT force-close those. Doing so
   // also mis-fires because the opener->child ownership map is not updated when
@@ -146,6 +148,20 @@ bool DefaultClientHandler::OnConsoleMessage(CefRefPtr<CefBrowser> browser,
   }
 
   return false;
+}
+
+void DefaultClientHandler::OnDraggableRegionsChanged(
+    CefRefPtr<CefBrowser> browser,
+    CefRefPtr<CefFrame> frame,
+    const std::vector<CefDraggableRegion>& regions) {
+  CEF_REQUIRE_UI_THREAD();
+  // Only meaningful for the HTML tab bar strip: forward the page's
+  // -webkit-app-region regions to the owning window so the frameless
+  // top-level window can be dragged by the tab strip. No owner (chrome-style /
+  // overlay / popup) -> harmless no-op.
+  if (tabbar_owner_) {
+    tabbar_owner_->SetTabbarDraggableRegions(regions);
+  }
 }
 
 bool DefaultClientHandler::OnRequestMediaAccessPermission(
