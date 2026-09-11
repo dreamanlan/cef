@@ -61,7 +61,6 @@ class RootWindowViews : public RootWindow,
   bool WithWindowlessRendering() const override { return false; }
 
   // ViewsWindow::Delegate methods:
-  bool WithControls() override;
   bool InitiallyHidden() override;
   CefRefPtr<CefWindow> GetParentWindow() override;
   CefRect GetInitialBounds() override;

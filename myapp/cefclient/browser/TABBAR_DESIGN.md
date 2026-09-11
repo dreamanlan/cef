@@ -34,7 +34,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 
 ### 2.2 约束
 - frameless 对 Views 的 NORMAL 窗口默认启用，包括归为 NORMAL 的普通 window.open 弹窗；不能笼统声称所有 popup 都排除。DEVTOOLS / DIALOG 及非 Views 路径不启用 HTML tabbar。
-- HTML tabbar 窗口已通过门控禁用 demo 地址栏 / 工具栏、location-bar overlay 和 Windows 旧自定义标题栏；相关源码尚未物理删除。Alloy 使用 HTML 导航栏，Chrome 内容模式保留获取 Chrome 工具栏的路径。
+- HTML tabbar 窗口已通过门控禁用 demo 地址栏 / 工具栏、location-bar overlay 和 Windows 旧自定义标题栏；相关源码已于 2026-09-11 物理删除（见 §9 阶段5 注）。Alloy 使用 HTML 导航栏，Chrome 内容模式保留获取 Chrome 工具栏的路径。
 - native 系统按钮/菜单必须完美覆盖在 HTML 之上（不采用 HTML 非矩形渲染方案）。
 - 窗口缩放、页面内容变化时，tabbar 不得消失或错位。
 - 保持零新增编译警告/错误基线。构建由用户执行。
@@ -77,7 +77,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 
 ### 4.2 alloy-style（关键结论：无产品级工具栏）
 - `CalculateChromeToolbarType`：`if (use_alloy_style || toolbar_type=="none" || hide_toolbar) return CEF_CTT_NONE;`（`views_window.cc:145`）→ alloy 直接判定无 chrome toolbar，`GetChromeToolbar()` 拿不到产品级实现。
-- 旧 demo 路径仍保留 `CreateLocationBar` / `AddControls` 等实现，但 HTML tabbar 窗口已禁用该路径；当前 Alloy 地址栏 / 导航按钮由内置页的 `#navrow` 提供。
+- 旧 demo 路径（`CreateLocationBar` / `AddControls` 等）已于 2026-09-11 物理删除；当前 Alloy 地址栏 / 导航按钮由内置页的 `#navrow` 提供。
 - **书签栏：完全不存在**（`cefclient_mac.mm` 的 `IDC_SHOW_BOOKMARK_MANAGER` 只是 Mac 应用菜单项转发 chrome command，非书签栏 UI）。
 
 → 因此 alloy 下 [4] 区必须由我们自绘（HTML tabbar 承担），并去掉上述 demo 级 native 地址栏/工具栏。
@@ -183,7 +183,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 | 2 | NORMAL Views 窗口 frameless，系统按钮使用 native overlay；拖动区路由已接通 | 按钮与 HTML 预留区对齐、各平台拖动需实测 |
 | 3 | tabbar 固定 Alloy runtime；内置 HTML 提供页签界面，nav 参数控制导航行 | HTML 页签增删选不是多 browser 管理 |
 | 4 | 复用 DefaultClientHandler 的 owner 指针；cef_query_handler 分流导航 / resize；__tabbarApi 反向推送；两源拖动区合并、工作目录高度缓存 | 当前仍是单内容 browser 路由；不新建专用 handler 类 |
-| 5 | Alloy 使用 HTML 导航栏；Chrome 保留可获取的 Chrome toolbar；demo UI / 旧 Windows 标题栏在 tabbar 窗口门控失活 | 源码未物理删除；书签功能、工具栏状态持久化仍后置 |
+| 5 | Alloy 使用 HTML 导航栏；Chrome 保留可获取的 Chrome toolbar；demo UI / 旧 Windows 标题栏在 tabbar 窗口门控失活 | 源码已于 2026-09-11 物理删除（demo 工具栏/地址栏、Win 自定义标题栏、location-bar overlay、menu_bar_、CefTextfieldDelegate 等；汉堡菜单/上下文菜单/命令 ID/views_menu_bar 文件/switch 定义保留）；书签功能、工具栏状态持久化仍后置 |
 
 原推进顺序为 0 → 1 → 2 → 3 → 4 → 5。frameless 与系统按钮同阶段落地，避免中间态窗口无法操作。真正多 tab 见 `MULTITAB_WINDOW_DESIGN.md`，M1-M5 尚未开始。
 
@@ -221,7 +221,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 | `IsFrameless` | `views_window.cc:422-426` |
 | 拖拽区（Win 自定义标题栏） | `views_window.cc:391-447` |
 | `CalculateChromeToolbarType` | `views_window.cc:145` |
-| `CreateLocationBar` / `OnKeyEvent` | `views_window.cc:1405-1419` / `:737` |
+| `CreateLocationBar` / `OnKeyEvent` | 已随 2026-09-11 旧 UI 清理删除（历史：`views_window.cc:1405-1419` / `:737`） |
 | `AddOverlayView` 用法 | `views_overlay_controls.cc:109/118/129` |
 | overlay 拖拽区 | `views_overlay_controls.cc:181` |
 | message router（renderer/browser） | `client_renderer.cc:209` / `base_client_handler.cc:124` |

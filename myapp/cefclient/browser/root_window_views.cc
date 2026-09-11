@@ -206,11 +206,6 @@ ClientWindowHandle RootWindowViews::GetWindowHandle() const {
 #endif
 }
 
-bool RootWindowViews::WithControls() {
-  DCHECK(initialized_);
-  return config_->with_controls;
-}
-
 bool RootWindowViews::InitiallyHidden() {
   CEF_REQUIRE_UI_THREAD();
 #if defined(OS_MAC)

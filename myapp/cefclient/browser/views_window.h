@@ -16,17 +16,13 @@
 #include "include/views/cef_browser_view.h"
 #include "include/views/cef_browser_view_delegate.h"
 #include "include/views/cef_button_delegate.h"
-#include "include/views/cef_label_button.h"
 #include "include/views/cef_menu_button.h"
 #include "include/views/cef_menu_button_delegate.h"
 #include "include/views/cef_overlay_controller.h"
-#include "include/views/cef_textfield.h"
-#include "include/views/cef_textfield_delegate.h"
 #include "include/views/cef_window.h"
 #include "include/views/cef_window_delegate.h"
 #include "myapp/cefclient/browser/image_cache.h"
 #include "myapp/cefclient/browser/root_window.h"
-#include "myapp/cefclient/browser/views_menu_bar.h"
 #include "myapp/cefclient/browser/views_overlay_browser.h"
 #include "myapp/cefclient/browser/views_overlay_controls.h"
 
@@ -40,9 +36,7 @@ class DefaultClientHandler;
 class ViewsWindow : public CefBrowserViewDelegate,
                     public CefMenuButtonDelegate,
                     public CefMenuModelDelegate,
-                    public CefTextfieldDelegate,
-                    public CefWindowDelegate,
-                    public ViewsMenuBar::Delegate {
+                    public CefWindowDelegate {
  public:
   // Delegate methods will be called on the browser process UI thread.
   class Delegate {
@@ -50,9 +44,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
     // Returns true if the window should use Alloy style, otherwise Chrome
     // style.
     virtual bool UseAlloyStyle() const = 0;
-
-    // Return true if the window should show controls.
-    virtual bool WithControls() = 0;
 
     // Return true if the window should be created initially hidden.
     virtual bool InitiallyHidden() = 0;
@@ -184,10 +175,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
                       int command_id,
                       cef_event_flags_t event_flags) override;
 
-  // CefTextfieldDelegate methods:
-  bool OnKeyEvent(CefRefPtr<CefTextfield> textfield,
-                  const CefKeyEvent& event) override;
-
   // CefWindowDelegate methods:
 #if defined(OS_LINUX)
   virtual bool GetLinuxWindowProperties(
@@ -217,8 +204,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
   bool CanMinimize(CefRefPtr<CefWindow> window) override;
   bool CanClose(CefRefPtr<CefWindow> window) override;
   bool OnAccelerator(CefRefPtr<CefWindow> window, int command_id) override;
-  bool OnKeyEvent(CefRefPtr<CefWindow> window,
-                  const CefKeyEvent& event) override;
   void OnWindowFullscreenTransition(CefRefPtr<CefWindow> window,
                                     bool is_completed) override;
   void OnThemeColorsChanged(CefRefPtr<CefWindow> window,
@@ -228,16 +213,10 @@ class ViewsWindow : public CefBrowserViewDelegate,
   // CefViewDelegate methods:
   CefSize GetPreferredSize(CefRefPtr<CefView> view) override;
   CefSize GetMinimumSize(CefRefPtr<CefView> view) override;
-  void OnFocus(CefRefPtr<CefView> view) override;
   void OnWindowChanged(CefRefPtr<CefView> view, bool added) override;
   void OnLayoutChanged(CefRefPtr<CefView> view,
                        const CefRect& new_bounds) override;
   void OnThemeChanged(CefRefPtr<CefView> view) override;
-
-  // ViewsMenuBar::Delegate methods:
-  void MenuBarExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
-                             int command_id,
-                             cef_event_flags_t event_flags) override;
 
  private:
   // |delegate| is guaranteed to outlive this object.
@@ -255,18 +234,9 @@ class ViewsWindow : public CefBrowserViewDelegate,
 
   void SetBrowserView(CefRefPtr<CefBrowserView> browser_view);
 
-  // Create controls.
+  // Create the menu model shown by the hamburger menu button.
   void CreateMenuModel();
-  CefRefPtr<CefLabelButton> CreateBrowseButton(const std::string& label,
-                                               int id);
   CefRefPtr<CefMenuButton> CreateMenuButton();
-  CefRefPtr<CefView> CreateLocationBar();
-
-  // Add the BrowserView to the Window.
-  void AddBrowserView();
-
-  // Add other controls to the Window.
-  void AddControls();
 
   // Merge content + tab bar draggable regions (each converted from its own
   // view's coordinates) and push the result to the window.
@@ -275,18 +245,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
   // Execute |js| on the tab bar HTML main frame (no-op if the strip is absent
   // or its browser is not ready). Used to push content state to the tab bar.
   void PushToTabbar(const std::string& js);
-
-  // Add keyboard accelerators to the Window.
-  void AddAccelerators();
-
-  // Control whether the top menu butons are focusable.
-  void SetMenuFocusable(bool focusable);
-
-  // Update the toolbar button state.
-  void UpdateToolbarButtonState();
-
-  // Show/hide top controls on the Window.
-  void ShowTopControls(bool show);
 
   void NudgeWindow();
 
@@ -300,8 +258,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
   CefRefPtr<CefBrowserView> browser_view_;
   CefRefPtr<CefCommandLine> command_line_;
   bool frameless_;
-  bool with_controls_;
-  bool with_overlay_controls_;
   bool with_standard_buttons_;
   ChromeToolbarType chrome_toolbar_type_;
   bool use_window_modal_dialog_;
@@ -313,22 +269,15 @@ class ViewsWindow : public CefBrowserViewDelegate,
   CefRefPtr<CefWindow> window_;
 
   CefRefPtr<CefMenuModel> button_menu_model_;
-  CefRefPtr<ViewsMenuBar> menu_bar_;
+  // The browser's own Chrome toolbar, docked below the tab bar strip for
+  // Chrome-style NORMAL windows (that is their address bar). Null otherwise.
   CefRefPtr<CefView> toolbar_;
   CefRefPtr<CefMenuButton> menu_button_;
-  CefRefPtr<CefView> location_bar_;
-  bool menu_has_focus_ = false;
-  int last_focused_view_ = false;
   std::optional<CefRect> last_visible_bounds_;
 
   CefSize minimum_window_size_;
 
   CefRefPtr<ViewsOverlayControls> overlay_controls_;
-
-  // Custom titlebar for frameless + Chrome toolbar mode (Windows only).
-  bool with_custom_titlebar_ = false;
-  CefRefPtr<CefPanel> title_bar_;
-  CefRefPtr<CefLabelButton> title_label_;
 
   // Overlay browser view state.
   bool with_overlay_browser_ = false;
@@ -359,11 +308,6 @@ class ViewsWindow : public CefBrowserViewDelegate,
   bool hide_on_close_ = false;
   bool hide_after_fullscreen_exit_ = false;
 #endif
-
-  // Current loading state.
-  bool is_loading_ = false;
-  bool can_go_back_ = false;
-  bool can_go_forward_ = false;
 
   std::vector<CefDraggableRegion> content_regions_;
 

@@ -32,12 +32,10 @@ class ViewsOverlayControls : public CefButtonDelegate, public CefPanelDelegate {
 
   void Initialize(CefRefPtr<CefWindow> window,
                   CefRefPtr<CefMenuButton> menu_button,
-                  CefRefPtr<CefView> location_bar,
-                  bool is_chrome_toolbar,
                   bool menu_in_panel = false);
   void Destroy();
 
-  // Update window control button state and location bar bounds.
+  // Update window control button state.
   void UpdateControls();
 
   // Exclude all regions obscured by overlays.
@@ -66,11 +64,6 @@ class ViewsOverlayControls : public CefButtonDelegate, public CefPanelDelegate {
   // True when the menu button is docked as the first child of |panel_| (in the
   // same group as the window control buttons) instead of as a separate overlay.
   bool has_panel_menu_ = false;
-
-  // Location bar.
-  CefRefPtr<CefView> location_bar_;
-  bool is_chrome_toolbar_;
-  CefRefPtr<CefOverlayController> location_controller_;
 
   // Menu button.
   CefRefPtr<CefOverlayController> menu_controller_;

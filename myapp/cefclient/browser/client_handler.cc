@@ -527,7 +527,13 @@ ClientHandler::ClientHandler(Delegate* delegate,
   mouse_cursor_change_disabled_ =
       command_line->HasSwitch(switches::kMouseCursorChangeDisabled);
   offline_ = command_line->HasSwitch(switches::kOffline);
+  // Filter Chrome menu/toolbar contents by default in Chrome style: the
+  // Views-hosted Chrome browser is forced TYPE_POPUP + trusted_source by CEF,
+  // so items like the bookmark bar / side panel toggles have no effect there
+  // and the HTML tab bar owns the window UI instead. Alloy style has no
+  // Chrome UI to filter. The switch still forces filtering on in Alloy style.
   filter_chrome_commands_ =
+      !use_alloy_style_ ||
       command_line->HasSwitch(switches::kFilterChromeCommands);
 
 #if defined(OS_LINUX)

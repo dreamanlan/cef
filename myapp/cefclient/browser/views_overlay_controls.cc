@@ -4,9 +4,7 @@
 
 #include "myapp/cefclient/browser/views_overlay_controls.h"
 
-#include <algorithm>
 #include <array>
-#include <string>
 
 #include "include/views/cef_box_layout.h"
 #include "include/views/cef_window.h"
@@ -17,7 +15,6 @@ namespace client {
 namespace {
 
 constexpr int kInsets = 4;
-constexpr int kLocationBarPadding = 100;
 
 // White with 80% opacity.
 constexpr auto kBackgroundColor = CefColorSetARGB(255 * .80, 255, 255, 255);
@@ -78,14 +75,12 @@ ViewsOverlayControls::ViewsOverlayControls(bool with_window_buttons,
 
 void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
                                       CefRefPtr<CefMenuButton> menu_button,
-                                      CefRefPtr<CefView> location_bar,
-                                      bool is_chrome_toolbar,
                                       bool menu_in_panel) {
   DCHECK(!window_);
 
-  // |menu_button| and |location_bar| are both optional. The frameless HTML tab
-  // bar mode only needs the window control buttons overlay; the menu entry and
-  // address bar are provided elsewhere (Chrome toolbar / HTML tab bar).
+  // |menu_button| is optional. The frameless HTML tab bar mode only needs the
+  // window control buttons overlay; the menu entry and address bar are
+  // provided elsewhere (Chrome toolbar / HTML tab bar).
 
   window_ = window;
   window_maximized_ = window_->IsMaximized();
@@ -138,17 +133,6 @@ void ViewsOverlayControls::Initialize(CefRefPtr<CefWindow> window,
     menu_controller_->SetInsets(insets);
     menu_controller_->SetVisible(true);
   }
-
-  // Location bar (optional). Will be made visible in UpdateControls().
-  if (location_bar) {
-    location_bar_ = location_bar;
-    is_chrome_toolbar_ = is_chrome_toolbar;
-    // Use a 100% transparent background for the Chrome toolbar.
-    location_bar_->SetBackgroundColor(is_chrome_toolbar_ ? 0
-                                                         : kBackgroundColor);
-    location_controller_ = window_->AddOverlayView(
-        location_bar_, CEF_DOCKING_MODE_CUSTOM, /*can_activate=*/false);
-  }
 }
 
 void ViewsOverlayControls::Destroy() {
@@ -162,51 +146,11 @@ void ViewsOverlayControls::Destroy() {
     menu_controller_->Destroy();
     menu_controller_ = nullptr;
   }
-  location_bar_ = nullptr;
-  if (location_controller_) {
-    location_controller_->Destroy();
-    location_controller_ = nullptr;
-  }
 }
 
 void ViewsOverlayControls::UpdateControls() {
-  // Without a location bar (frameless HTML tab bar mode) there is nothing to
-  // reposition here; the window buttons overlay docks itself automatically.
-  if (!location_bar_ || !location_controller_ || !menu_controller_) {
-    MaybeUpdateMaximizeButton();
-    return;
-  }
-
-  // Update location bar size, position and visibility.
-  const auto window_bounds = window_->GetBounds();
-  auto bounds = window_bounds;
-  bounds.x = kLocationBarPadding;
-  bounds.width -= kLocationBarPadding * 2;
-
-  if (is_chrome_toolbar_) {
-    // Fit the standard Chrome toolbar.
-    const auto preferred_size = location_bar_->GetPreferredSize();
-    bounds.height =
-        std::max(menu_controller_->GetSize().height, preferred_size.height);
-  } else {
-    bounds.height = menu_controller_->GetSize().height;
-  }
-
-  if (use_bottom_controls_) {
-    bounds.y = window_bounds.height - bounds.height - kInsets;
-  } else {
-    bounds.y = kInsets;
-  }
-
-  if (bounds.width < kLocationBarPadding * 2) {
-    // Not enough space.
-    location_controller_->SetVisible(false);
-  } else {
-    location_bar_->SetSize(CefSize(bounds.width, bounds.height));
-    location_controller_->SetBounds(bounds);
-    location_controller_->SetVisible(true);
-  }
-
+  // The window buttons overlay docks itself automatically; only the maximize
+  // button glyph needs a state refresh here.
   MaybeUpdateMaximizeButton();
 }
 
@@ -219,11 +163,6 @@ void ViewsOverlayControls::UpdateDraggableRegions(
 
   if (menu_controller_ && menu_controller_->IsVisible()) {
     window_regions.emplace_back(menu_controller_->GetBounds(),
-                                /*draggable=*/false);
-  }
-
-  if (location_controller_ && location_controller_->IsVisible()) {
-    window_regions.emplace_back(location_controller_->GetBounds(),
                                 /*draggable=*/false);
   }
 }

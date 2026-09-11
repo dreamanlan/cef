@@ -216,18 +216,11 @@ cefclient --no-sandbox --no-proxy-server --disable-features=ServiceWorker --url=
 --hide-chrome-bubbles	隐藏 Chrome 风格的气泡（info bubble）。
 --show-overlay-browser	使用 overlay 浏览器布局（影响工具栏布局计算）。views_window.cc:158
 几个组合效果（来自 views_window.cc:1226:1285）
-code
-Copy
-Insert
-New File
-Save
-Apply
 with_controls_ = is_normal_type && WithControls()    # 默认 true，--hide-controls 关掉
 hide_frame     = --hide-frame && is_normal_type
 show_overlays  = hide_frame && !with_controls_ && !--hide-overlays
 hide_toolbar   = !show_overlays && !with_controls_   # 无控件区时工具栏一并隐藏
-所以典型组合：
-
+典型组合：
 默认：菜单栏 + Chrome 工具栏（NORMAL）全显示
 --hide-controls：菜单、工具栏、overlay 全无
 --hide-frame --hide-top-menu（Windows）：frameless + 自定义 titlebar + Chrome 工具栏

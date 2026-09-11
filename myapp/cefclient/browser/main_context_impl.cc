@@ -8,7 +8,6 @@
 #include <memory>
 
 #include "include/cef_parser.h"
-#include "myapp/cefclient/browser/test_runner.h"
 #include "myapp/cefclient/hostclr/path_utils.h"
 #include "myapp/shared/browser/client_app_browser.h"
 #include "myapp/shared/common/client_switches.h"
@@ -171,9 +170,6 @@ std::string MainContextImpl::GetMainURL(
   std::string main_url = kDefaultUrl;
   if (command_line->HasSwitch(switches::kUrl)) {
     main_url = command_line->GetSwitchValue(switches::kUrl);
-  } else if (use_views_ && command_line->HasSwitch(switches::kHideFrame)) {
-    // Use the draggable regions test as the default URL for frameless windows.
-    main_url = test_runner::GetTestURL("draggable");
   }
   return main_url;
 }

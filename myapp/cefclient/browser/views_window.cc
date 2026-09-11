@@ -20,14 +20,9 @@
 #include "myapp/cefclient/browser/resource.h"
 #include "myapp/cefclient/browser/views_style.h"
 #include "myapp/cefclient/common/custom_scheme_common.h"
+#include "myapp/cefclient/hostclr/HostCLR.h"
 #include "myapp/shared/browser/geometry_util.h"
 #include "myapp/shared/common/client_switches.h"
-
-#if !defined(OS_WIN)
-#define VK_ESCAPE 0x1B
-#define VK_RETURN 0x0D
-#define VK_MENU 0x12  // ALT key.
-#endif
 
 namespace client {
 
@@ -39,34 +34,17 @@ constexpr int kDefaultHeight = 600;
 
 #if defined(OS_MAC)
 constexpr int kTitleBarHeight = 35;
-constexpr int kWindowButtonsWidth = 80;
 #endif
 
 // Control IDs for Views in the top-level Window.
 enum ControlIds {
   ID_WINDOW = 1,
   ID_BROWSER_VIEW,
-  ID_BACK_BUTTON,
-  ID_FORWARD_BUTTON,
-  ID_STOP_BUTTON,
-  ID_RELOAD_BUTTON,
-  ID_URL_TEXTFIELD,
   ID_MENU_BUTTON,
-
-  // Reserved range of top menu button IDs.
-  ID_TOP_MENU_FIRST,
-  ID_TOP_MENU_LAST = ID_TOP_MENU_FIRST + 10,
-
-  // Custom titlebar button IDs (Windows frameless + Chrome toolbar mode).
-  ID_TITLEBAR_MINIMIZE,
-  ID_TITLEBAR_MAXIMIZE,
-  ID_TITLEBAR_CLOSE,
 
   // HTML tab bar view (enabled by default for NORMAL windows).
   ID_TABBAR_VIEW,
 };
-
-typedef std::vector<CefRefPtr<CefLabelButton>> LabelButtons;
 
 // Height model (in DIP) of the HTML tab bar strip for NORMAL windows.
 // The single row constant is the tab strip row height and is the sole source
@@ -178,30 +156,6 @@ class TabbarViewDelegate : public CefBrowserViewDelegate {
   IMPLEMENT_REFCOUNTING(TabbarViewDelegate);
 };
 
-// Make all |buttons| the same size.
-void MakeButtonsSameSize(const LabelButtons& buttons) {
-  CefSize size;
-
-  // Determine the largest button size.
-  for (const auto& button : buttons) {
-    const CefSize& button_size = button->GetPreferredSize();
-    if (size.width < button_size.width) {
-      size.width = button_size.width;
-    }
-    if (size.height < button_size.height) {
-      size.height = button_size.height;
-    }
-  }
-
-  for (const auto& button : buttons) {
-    // Set the button's minimum size.
-    button->SetMinimumSize(size);
-
-    // Re-layout the button and all parent Views.
-    button->InvalidateLayout();
-  }
-}
-
 void AddTestMenuItems(CefRefPtr<CefMenuModel> test_menu) {
   test_menu->AddItem(ID_TESTS_GETSOURCE, "Get Source");
   test_menu->AddItem(ID_TESTS_GETTEXT, "Get Text");
@@ -233,8 +187,7 @@ void AddFileMenuItems(CefRefPtr<CefMenuModel> file_menu) {
 CefBrowserViewDelegate::ChromeToolbarType CalculateChromeToolbarType(
     bool use_alloy_style,
     const std::string& toolbar_type,
-    bool hide_toolbar,
-    bool with_overlay_controls) {
+    bool hide_toolbar) {
   if (use_alloy_style || toolbar_type == "none" || hide_toolbar) {
     return CEF_CTT_NONE;
   }
@@ -243,13 +196,7 @@ CefBrowserViewDelegate::ChromeToolbarType CalculateChromeToolbarType(
     return CEF_CTT_LOCATION;
   }
 
-  return with_overlay_controls ? CEF_CTT_LOCATION : CEF_CTT_NORMAL;
-}
-
-void SetViewEnabled(CefRefPtr<CefWindow> window, int id, bool enable) {
-  if (auto view = window->GetViewForID(id)) {
-    view->SetEnabled(enable);
-  }
+  return CEF_CTT_NORMAL;
 }
 
 }  // namespace
@@ -399,12 +346,6 @@ void ViewsWindow::SetAddress(const std::string& url) {
     return;
   }
 
-  // |location_bar_| may instead be a Chrome toolbar.
-  // CefTextfield::SetText rejects empty text with a DCHECK in debug builds.
-  if (location_bar_ && location_bar_->AsTextfield() && !url.empty()) {
-    location_bar_->AsTextfield()->SetText(url);
-  }
-
   // Push the address to the HTML tab bar's own address row (Alloy-style).
   PushToTabbar(
       "window.__tabbarApi&&__tabbarApi.onAddressChanged&&"
@@ -417,12 +358,6 @@ void ViewsWindow::SetTitle(const std::string& title) {
   if (window_) {
     window_->SetTitle(title);
   }
-#if defined(OS_WIN)
-  // CefLabelButton::SetText rejects empty text with a DCHECK in debug builds.
-  if (title_label_ && !title.empty()) {
-    title_label_->SetText(title);
-  }
-#endif
   // Push the document title to the HTML tab bar (active tab label).
   PushToTabbar(
       "window.__tabbarApi&&__tabbarApi.setActiveTitle&&"
@@ -439,12 +374,6 @@ void ViewsWindow::SetFavicon(CefRefPtr<CefImage> image) {
   if (window_) {
     window_->SetWindowIcon(image);
   }
-#if defined(OS_WIN)
-  if (title_label_) {
-    title_label_->SetImage(CEF_BUTTON_STATE_NORMAL, image);
-    title_label_->SetImage(CEF_BUTTON_STATE_DISABLED, image);
-  }
-#endif
 }
 
 void ViewsWindow::SetFullscreen(bool fullscreen) {
@@ -477,29 +406,14 @@ void ViewsWindow::SetLoadingState(bool isLoading,
                                   bool canGoForward) {
   CEF_REQUIRE_UI_THREAD();
 
-  is_loading_ = isLoading;
-  can_go_back_ = canGoBack;
-  can_go_forward_ = canGoForward;
-
   // Push loading / navigation state to the HTML tab bar (reload/stop button,
-  // back/forward enablement). Done before the early return below so the tab
-  // bar stays in sync regardless of the Chrome-toolbar short-circuit.
+  // back/forward enablement).
   PushToTabbar(
       "window.__tabbarApi&&__tabbarApi.onLoadingStateChanged&&"
       "__tabbarApi.onLoadingStateChanged({isLoading:" +
       std::string(isLoading ? "true" : "false") +
       ",canGoBack:" + std::string(canGoBack ? "true" : "false") +
       ",canGoForward:" + std::string(canGoForward ? "true" : "false") + "});");
-
-  if (!window_ || chrome_toolbar_type_ == CEF_CTT_NORMAL) {
-    return;
-  }
-
-  // |toolbar_| may be nullptr for the initial notification after CefBrowser
-  // creation, in which case the initial state will be appled in AddControls.
-  if (with_controls_ && toolbar_) {
-    UpdateToolbarButtonState();
-  }
 }
 
 void ViewsWindow::SetDraggableRegions(
@@ -556,32 +470,6 @@ void ViewsWindow::ApplyDraggableRegions() {
     overlay_controls_->UpdateDraggableRegions(window_regions);
   }
 
-#if defined(OS_WIN)
-  if (with_custom_titlebar_ && title_bar_) {
-    // Make the titlebar draggable, excluding the button area on the right.
-    const CefRect tb_bounds = title_bar_->GetBoundsInScreen();
-    CefPoint tb_origin(tb_bounds.x, tb_bounds.y);
-    window_->ConvertPointFromScreen(tb_origin);
-
-    // Draggable: full titlebar row.
-    CefDraggableRegion drag_region;
-    drag_region.bounds = CefRect(tb_origin.x, tb_origin.y,
-                                 tb_bounds.width, tb_bounds.height);
-    drag_region.draggable = true;
-    window_regions.push_back(drag_region);
-
-    // Non-draggable: right portion where buttons live (menu + min + max + close).
-    // Approximate: last 4 buttons each ~32px wide = 128px.
-    constexpr int kButtonAreaWidth = 128;
-    CefDraggableRegion no_drag_region;
-    no_drag_region.bounds =
-        CefRect(tb_origin.x + tb_bounds.width - kButtonAreaWidth,
-                tb_origin.y, kButtonAreaWidth, tb_bounds.height);
-    no_drag_region.draggable = false;
-    window_regions.push_back(no_drag_region);
-  }
-#endif
-
   if (overlay_browser_) {
     // Exclude all regions obscured by overlays.
     overlay_browser_->UpdateDraggableRegions(window_regions);
@@ -610,10 +498,9 @@ void ViewsWindow::TakeFocus(bool next) {
   }
 
   if (chrome_toolbar_type_ == CEF_CTT_NORMAL && toolbar_) {
+    // Give focus to the docked Chrome toolbar (the address bar for
+    // Chrome-style tab bar windows).
     toolbar_->RequestFocus();
-  } else if (location_bar_) {
-    // Give focus to the location bar.
-    location_bar_->RequestFocus();
   }
 }
 
@@ -836,60 +723,10 @@ cef_runtime_style_t ViewsWindow::GetBrowserRuntimeStyle() {
 }
 
 void ViewsWindow::OnButtonPressed(CefRefPtr<CefButton> button) {
-  CEF_REQUIRE_UI_THREAD();
-  DCHECK(with_controls_ || with_custom_titlebar_);
-
-  if (!browser_view_) {
-    return;
-  }
-
-#if defined(OS_WIN)
-  // Handle custom titlebar window control buttons.
-  if (with_custom_titlebar_ && window_) {
-    switch (button->GetID()) {
-      case ID_TITLEBAR_MINIMIZE:
-        window_->Minimize();
-        return;
-      case ID_TITLEBAR_MAXIMIZE:
-        if (window_->IsMaximized()) {
-          window_->Restore();
-        } else {
-          window_->Maximize();
-        }
-        return;
-      case ID_TITLEBAR_CLOSE:
-        Close(false);
-        return;
-      default:
-        break;
-    }
-  }
-#endif
-
-  CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
-  if (!browser) {
-    return;
-  }
-
-  switch (button->GetID()) {
-    case ID_BACK_BUTTON:
-      browser->GoBack();
-      break;
-    case ID_FORWARD_BUTTON:
-      browser->GoForward();
-      break;
-    case ID_STOP_BUTTON:
-      browser->StopLoad();
-      break;
-    case ID_RELOAD_BUTTON:
-      browser->Reload();
-      break;
-    case ID_MENU_BUTTON:
-      break;
-    default:
-      NOTREACHED();
-      break;
-  }
+  // Nothing to do: no label buttons are delegated to this window any more
+  // (the demo toolbar and the legacy Windows titlebar buttons are gone); the
+  // hamburger menu button uses OnMenuButtonPressed instead. This override
+  // only exists because CefButtonDelegate declares it pure virtual.
 }
 
 void ViewsWindow::OnMenuButtonPressed(
@@ -898,14 +735,13 @@ void ViewsWindow::OnMenuButtonPressed(
     CefRefPtr<CefMenuButtonPressedLock> button_pressed_lock) {
   CEF_REQUIRE_UI_THREAD();
 
-  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_ ||
-         with_html_tabbar_);
+  DCHECK(with_html_tabbar_);
   DCHECK_EQ(ID_MENU_BUTTON, menu_button->GetID());
 
   const auto button_bounds = menu_button->GetBoundsInScreen();
 
   auto point = screen_point;
-  if (with_overlay_controls_ || with_html_tabbar_) {
+  if (with_html_tabbar_) {
     // Align the menu correctly under the button.
     if (CefIsRTL()) {
       point.x += button_bounds.width - 4;
@@ -929,18 +765,14 @@ void ViewsWindow::OnMenuButtonPressed(
     }
   }
 
-  menu_button->ShowMenu(button_menu_model_, point,
-                        (with_overlay_controls_ || with_html_tabbar_)
-                            ? CEF_MENU_ANCHOR_TOPLEFT
-                            : CEF_MENU_ANCHOR_TOPRIGHT);
+  menu_button->ShowMenu(button_menu_model_, point, CEF_MENU_ANCHOR_TOPLEFT);
 }
 
 void ViewsWindow::ExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
                                  int command_id,
                                  cef_event_flags_t event_flags) {
   CEF_REQUIRE_UI_THREAD();
-  DCHECK(with_controls_ || with_overlay_controls_ || with_custom_titlebar_ ||
-         with_html_tabbar_);
+  DCHECK(with_html_tabbar_);
 
   if (command_id == ID_QUIT) {
     delegate_->OnExit();
@@ -949,29 +781,6 @@ void ViewsWindow::ExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
   } else {
     NOTREACHED();
   }
-}
-
-bool ViewsWindow::OnKeyEvent(CefRefPtr<CefTextfield> textfield,
-                             const CefKeyEvent& event) {
-  CEF_REQUIRE_UI_THREAD();
-  DCHECK_EQ(ID_URL_TEXTFIELD, textfield->GetID());
-
-  // Trigger when the return key is pressed.
-  if (window_ && browser_view_ && event.type == KEYEVENT_RAWKEYDOWN &&
-      event.windows_key_code == VK_RETURN) {
-    CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
-    if (browser) {
-      const CefString& url = textfield->GetText();
-      if (!url.empty()) {
-        browser->GetMainFrame()->LoadURL(url);
-      }
-    }
-
-    // We handled the event.
-    return true;
-  }
-
-  return false;
 }
 
 void ViewsWindow::OnWindowFullscreenTransition(CefRefPtr<CefWindow> window,
@@ -986,11 +795,6 @@ void ViewsWindow::OnWindowFullscreenTransition(CefRefPtr<CefWindow> window,
   DCHECK(is_completed);
   const bool should_change = true;
 #endif
-
-  // Hide the top controls while in fullscreen mode.
-  if (should_change && with_controls_) {
-    ShowTopControls(!window->IsFullscreen());
-  }
 
   // With Alloy style we need to explicitly exit browser fullscreen when
   // exiting window fullscreen. Chrome style handles this internally.
@@ -1068,24 +872,7 @@ void ViewsWindow::OnWindowCreated(CefRefPtr<CefWindow> window) {
     }
   }
 
-  if (with_controls_ || with_overlay_controls_) {
-    // Create the MenuModel that will be displayed via the menu button.
-    CreateMenuModel();
-  }
-
-  if (with_controls_) {
-    // Add the BrowserView to the Window. Other controls will be added after the
-    // BrowserView is added.
-    AddBrowserView();
-
-    // Add keyboard accelerators to the Window.
-    AddAccelerators();
-
-    // Hide the top controls while in full-screen mode.
-    if (delegate_->GetInitialShowState() == CEF_SHOW_STATE_FULLSCREEN) {
-      ShowTopControls(false);
-    }
-  } else if (with_html_tabbar_) {
+  if (with_html_tabbar_) {
     // Gated shell: use a vertical box layout so the HTML tab bar strip can be
     // docked above the content BrowserView. The tab bar BrowserView itself is
     // created and inserted in OnWindowChanged (after the content view is added).
@@ -1093,7 +880,7 @@ void ViewsWindow::OnWindowCreated(CefRefPtr<CefWindow> window) {
     settings.horizontal = false;
     // Stretch children to the full window width; otherwise the tab bar strip
     // (preferred width 0) collapses to zero width and disappears on resize /
-    // content relayout (issue 1). See AddBrowserView() for details.
+    // content relayout (issue 1).
     settings.cross_axis_alignment = CEF_AXIS_ALIGNMENT_STRETCH;
     CefRefPtr<CefBoxLayout> box_layout = window_->SetToBoxLayout(settings);
     window_->AddChildView(browser_view_);
@@ -1135,15 +922,7 @@ void ViewsWindow::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   }
   tabbar_view_ = nullptr;
   button_menu_model_ = nullptr;
-  if (menu_bar_) {
-    menu_bar_->Reset();
-    menu_bar_ = nullptr;
-  }
   menu_button_ = nullptr;
-#if defined(OS_WIN)
-  title_bar_ = nullptr;
-  title_label_ = nullptr;
-#endif
   window_ = nullptr;
 }
 
@@ -1163,22 +942,6 @@ void ViewsWindow::OnWindowBoundsChanged(CefRefPtr<CefWindow> window,
     // Track the last visible bounds for window restore purposes.
     last_visible_bounds_ = new_bounds;
   }
-
-#if defined(OS_WIN)
-  // Re-apply draggable regions when window size changes so titlebar bounds
-  // are recalculated correctly.
-  if (with_custom_titlebar_) {
-    UpdateDraggableRegions();
-  }
-#endif
-
-#if defined(OS_MAC)
-  if (frameless_ && with_standard_buttons_ && toolbar_) {
-    auto insets = toolbar_->GetInsets();
-    insets.left = window->IsFullscreen() ? 0 : kWindowButtonsWidth;
-    toolbar_->SetInsets(insets);
-  }
-#endif
 }
 
 bool ViewsWindow::CanClose(CefRefPtr<CefWindow> window) {
@@ -1295,37 +1058,6 @@ bool ViewsWindow::OnAccelerator(CefRefPtr<CefWindow> window, int command_id) {
   return false;
 }
 
-bool ViewsWindow::OnKeyEvent(CefRefPtr<CefWindow> window,
-                             const CefKeyEvent& event) {
-  CEF_REQUIRE_UI_THREAD();
-
-  if (!window_ || !with_controls_) {
-    return false;
-  }
-
-  if (event.type == KEYEVENT_RAWKEYDOWN && event.windows_key_code == VK_MENU) {
-    // ALT key is pressed.
-    int last_focused_view = last_focused_view_;
-    bool menu_had_focus = menu_has_focus_;
-
-    // Toggle menu button focusable.
-    SetMenuFocusable(!menu_has_focus_);
-
-    if (menu_had_focus && last_focused_view != 0) {
-      // Restore focus to the view that was previously focused.
-      window_->GetViewForID(last_focused_view)->RequestFocus();
-    }
-
-    return true;
-  }
-
-  if (menu_has_focus_ && menu_bar_) {
-    return menu_bar_->OnKeyEvent(event);
-  }
-
-  return false;
-}
-
 CefSize ViewsWindow::GetPreferredSize(CefRefPtr<CefView> view) {
   CEF_REQUIRE_UI_THREAD();
 
@@ -1348,29 +1080,6 @@ CefSize ViewsWindow::GetMinimumSize(CefRefPtr<CefView> view) {
   return CefSize();
 }
 
-void ViewsWindow::OnFocus(CefRefPtr<CefView> view) {
-  CEF_REQUIRE_UI_THREAD();
-
-  const int view_id = view->GetID();
-
-  // Keep track of the non-menu view that was last focused.
-  if (last_focused_view_ != view_id &&
-      (!menu_bar_ || !menu_bar_->HasMenuId(view_id))) {
-    last_focused_view_ = view_id;
-  }
-
-  // When focus leaves the menu buttons make them unfocusable.
-  if (menu_has_focus_) {
-    if (menu_bar_) {
-      if (!menu_bar_->HasMenuId(view_id)) {
-        SetMenuFocusable(false);
-      }
-    } else if (view_id != ID_MENU_BUTTON) {
-      SetMenuFocusable(false);
-    }
-  }
-}
-
 void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
   const int view_id = view->GetID();
   if (view_id != ID_BROWSER_VIEW) {
@@ -1378,35 +1087,18 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
   }
 
   if (added) {
-    if (with_controls_) {
-      AddControls();
-    }
-
-    if (with_overlay_controls_) {
-      // Add window buttons if we don't have standard ones
-      const bool with_window_buttons = !with_standard_buttons_;
-      overlay_controls_ =
-          new ViewsOverlayControls(with_window_buttons, use_bottom_controls_);
-      overlay_controls_->Initialize(window_, CreateMenuButton(),
-                                    CreateLocationBar(),
-                                    chrome_toolbar_type_ != CEF_CTT_NONE);
-    }
-
-    if (!overlay_controls_ && with_html_tabbar_ && !with_standard_buttons_) {
+    if (with_html_tabbar_ && !with_standard_buttons_) {
       // Frameless HTML tab bar window: float the native controls (hamburger
       // menu + min/max/close) over the top-right of the tab strip row (issue
       // 2), matching the Windows custom titlebar layout. The address bar is
       // provided by the HTML tab bar, so no location bar overlay is created.
       if (!button_menu_model_) {
-        // OnWindowCreated only builds the menu model for with_controls_ /
-        // overlay modes; build it here so the hamburger menu has content.
+        // Build the menu model here so the hamburger menu has content.
         CreateMenuModel();
       }
       overlay_controls_ = new ViewsOverlayControls(
           /*with_window_buttons=*/true, use_bottom_controls_);
       overlay_controls_->Initialize(window_, CreateMenuButton(),
-                                    /*location_bar=*/nullptr,
-                                    /*is_chrome_toolbar=*/false,
                                     /*menu_in_panel=*/true);
     }
 
@@ -1454,22 +1146,67 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
       // in the no-controls path, or below the controls otherwise).
       window_->AddChildViewAt(tabbar_view_, 0);
 
-      // Chrome-style tab bar windows have with_controls_ == false, so
-      // AddControls() (which normally installs the browser's own Chrome toolbar
-      // as the address bar) never runs, leaving the window without an address
-      // bar. Dock the Chrome toolbar (CEF_CTT_NORMAL) here, just below the tab
-      // strip (index 1) and above the content BrowserView. Alloy-style windows
-      // resolve to CEF_CTT_NONE (the HTML tab bar owns the address row) so this
-      // is skipped. A Views-hosted browser is forced TYPE_POPUP and may return
-      // a null Chrome toolbar; guard against it (unlike AddControls' DCHECK) so
-      // we degrade gracefully instead of crashing.
-      if (chrome_toolbar_type_ == CEF_CTT_NORMAL && !toolbar_) {
+      // Chrome-style tab bar windows use the browser's own Chrome toolbar as
+      // their address bar: dock it just below the tab strip (index 1) and above
+      // the content BrowserView. Alloy-style windows resolve to CEF_CTT_NONE
+      // (the HTML tab bar owns the address row) so this is skipped. A
+      // Views-hosted browser is forced TYPE_POPUP and may return a null Chrome
+      // toolbar; guard against it so we degrade gracefully instead of crashing.
+      // Diagnostics for the chrome toolbar dock path ([tabbar] log lines
+      // in debug.log). Low volume: a handful of lines per NORMAL window plus
+      // a process-wide capped count from OnLayoutChanged.
+      // The CEF_CTT_LOCATION case exists because TYPE_POPUP browsers do not
+      // support the kFeatureToolbar window feature (only kFeatureLocationBar);
+      // --show-chrome-toolbar=location selects that variant.
+      printf_log(LOG_SEVERITY_INFO,
+                 "[tabbar] dock check: chrome_toolbar_type_=%d "
+                 "use_alloy_style_=%d child_count=%d",
+                 static_cast<int>(chrome_toolbar_type_),
+                 use_alloy_style_ ? 1 : 0,
+                 static_cast<int>(window_->GetChildViewCount()));
+      if ((chrome_toolbar_type_ == CEF_CTT_NORMAL ||
+           chrome_toolbar_type_ == CEF_CTT_LOCATION) &&
+          !toolbar_) {
         toolbar_ = browser_view_->GetChromeToolbar();
+        printf_log(LOG_SEVERITY_INFO, "[tabbar] GetChromeToolbar=%s",
+                   toolbar_ ? "non-null" : "null");
         if (toolbar_) {
+          const CefSize tb_pref = toolbar_->GetPreferredSize();
+          printf_log(LOG_SEVERITY_INFO,
+                     "[tabbar] toolbar pref size=%dx%d visible=%d",
+                     tb_pref.width, tb_pref.height,
+                     toolbar_->IsVisible() ? 1 : 0);
+          // CEF forces TYPE_POPUP + trusted_source=true for Views-hosted
+          // Chrome browsers (chrome_browser_host_impl.cc: "Don't show title
+          // bar or address"), which makes BrowserView::IsToolbarVisible()
+          // false and leaves the toolbar hidden at creation. This window's
+          // layout owns the toolbar as its address bar, so re-show it
+          // explicitly (it is reparented out of the BrowserView below and
+          // is no longer managed by Chrome's own visibility logic).
+          toolbar_->SetVisible(true);
           window_->AddChildViewAt(toolbar_, 1);
+          CefRefPtr<CefView> tb_parent = toolbar_->GetParentView();
+          printf_log(LOG_SEVERITY_INFO,
+                     "[tabbar] after dock: visible=%d parent_id=%d "
+                     "child_count=%d",
+                     toolbar_->IsVisible() ? 1 : 0,
+                     tb_parent ? tb_parent->GetID() : -2,
+                     static_cast<int>(window_->GetChildViewCount()));
         }
       }
       window_->Layout();
+      for (int i = 0; i < static_cast<int>(window_->GetChildViewCount());
+           ++i) {
+        CefRefPtr<CefView> child = window_->GetChildViewAt(i);
+        if (!child) {
+          continue;
+        }
+        const CefRect cb = child->GetBounds();
+        printf_log(LOG_SEVERITY_INFO,
+                   "[tabbar] child[%d] id=%d visible=%d bounds=%d,%d %dx%d",
+                   i, child->GetID(), child->IsVisible() ? 1 : 0, cb.x, cb.y,
+                   cb.width, cb.height);
+      }
     }
   } else {
     // Remove any controls that may include the Chrome toolbar before removing
@@ -1477,18 +1214,10 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
     if (overlay_controls_) {
       overlay_controls_->Destroy();
       overlay_controls_ = nullptr;
-      location_bar_ = nullptr;
       toolbar_ = nullptr;
     } else if (toolbar_) {
       toolbar_ = nullptr;
-      location_bar_ = nullptr;
     }
-#if defined(OS_WIN)
-    if (title_bar_) {
-      title_bar_ = nullptr;
-      title_label_ = nullptr;
-    }
-#endif
     if (overlay_browser_) {
       overlay_browser_->Destroy();
       overlay_browser_ = nullptr;
@@ -1515,6 +1244,18 @@ void ViewsWindow::OnLayoutChanged(CefRefPtr<CefView> view,
     return;
   }
 
+  // Track the toolbar's final bounds across the first few layout passes
+  // (e.g. after window Show). Process-wide capped at 6 lines to avoid noise.
+  static int layout_dbg_count = 0;
+  if (layout_dbg_count < 6 && toolbar_) {
+    ++layout_dbg_count;
+    const CefRect tb = toolbar_->GetBounds();
+    printf_log(LOG_SEVERITY_INFO,
+               "[tabbar] layout#%d: toolbar=%d,%d %dx%d visible=%d",
+               layout_dbg_count, tb.x, tb.y, tb.width, tb.height,
+               toolbar_->IsVisible() ? 1 : 0);
+  }
+
   if (overlay_controls_) {
     overlay_controls_->UpdateControls();
   }
@@ -1529,23 +1270,6 @@ void ViewsWindow::OnLayoutChanged(CefRefPtr<CefView> view,
 void ViewsWindow::OnThemeChanged(CefRefPtr<CefView> view) {
   // Apply colors when the theme changes.
   views_style::OnThemeChanged(view);
-
-#if defined(OS_WIN)
-  // Also apply theme to custom titlebar children when the titlebar panel
-  // itself changes theme.
-  if (with_custom_titlebar_ && title_bar_ &&
-      view->GetID() == title_bar_->GetID()) {
-    for (size_t i = 0; i < title_bar_->GetChildViewCount(); ++i) {
-      views_style::OnThemeChanged(title_bar_->GetChildViewAt(i));
-    }
-  }
-#endif
-}
-
-void ViewsWindow::MenuBarExecuteCommand(CefRefPtr<CefMenuModel> menu_model,
-                                        int command_id,
-                                        cef_event_flags_t event_flags) {
-  ExecuteCommand(menu_model, command_id, event_flags);
 }
 
 ViewsWindow::~ViewsWindow() = default;
@@ -1570,56 +1294,24 @@ ViewsWindow::ViewsWindow(WindowType type,
 
   const bool is_normal_type = type_ == WindowType::NORMAL;
 
-  // Gated HTML tab bar strip (docked at the top of the content box). Computed
-  // first because it feeds the controls / frameless / toolbar decisions below.
+  // HTML tab bar strip (docked at the top of the content box) for all NORMAL
+  // windows. Computed first because it feeds the frameless decision below.
   with_html_tabbar_ = is_normal_type;
 
-  // The legacy demo toolbar + location bar (AddControls: back/forward/reload/
-  // stop buttons + a bare CefTextfield / Chrome toolbar) is superseded by the
-  // HTML tab bar (stage 5): Alloy-style windows get their address/nav row from
-  // the HTML tab bar, Chrome-style windows get the browser's own Chrome
-  // toolbar. So the demo controls are disabled whenever the tab bar is active.
-  // Non-tab-bar windows (DevTools / dialog / etc.) are unaffected.
-  with_controls_ =
-      is_normal_type && delegate_->WithControls() && !with_html_tabbar_;
-
-  const bool hide_frame = command_line->HasSwitch(switches::kHideFrame);
-  const bool show_overlays = is_normal_type && hide_frame && !with_controls_ &&
-                             !command_line->HasSwitch(switches::kHideOverlays);
   // Keep the browser's native Chrome toolbar for Chrome-style tab bar windows
   // (that is their address bar); Alloy-style resolves to CEF_CTT_NONE anyway
   // (the HTML owns the toolbar). Non-tab-bar windows keep original behavior.
-  const bool hide_toolbar =
-      !with_html_tabbar_ && !show_overlays && !with_controls_;
+  const bool hide_toolbar = !with_html_tabbar_;
   const bool show_window_buttons =
       command_line->HasSwitch(switches::kShowWindowButtons);
   accepts_first_mouse_ = command_line->HasSwitch(switches::kAcceptsFirstMouse);
 
-  // Without a window frame. Only apply to normal windows, so that DevTools
-  // and dialog windows always have a frame for dragging. HTML tab bar windows
-  // are frameless by default so the tab strip can occupy the title bar area
-  // (issue 2); native window buttons are then provided as an overlay floating
-  // over the top-right of the tab strip (see OnWindowChanged).
-  frameless_ = (hide_frame || with_html_tabbar_) && is_normal_type;
-
-  // With an overlay that mimics window controls. Never for HTML tab bar
-  // windows: they float their own native window-button overlay (no location
-  // bar) in OnWindowChanged; the location-bar overlay here would duplicate the
-  // HTML address row.
-  with_overlay_controls_ = show_overlays && !with_html_tabbar_;
-
-#if defined(OS_WIN)
-  // Custom titlebar: frameless + hide-top-menu + Chrome toolbar on Windows.
-  // Disabled when the HTML tab bar is active: that mode provides a single set
-  // of window controls via the cross-platform overlay (see OnWindowChanged),
-  // so a separate Windows titlebar would duplicate the title/menu/min/max/close
-  // row. TODO(stage 5): remove the custom titlebar code path entirely once the
-  // HTML tab bar owns the title bar area.
-  with_custom_titlebar_ =
-      is_normal_type && hide_frame &&
-      command_line->HasSwitch(switches::kHideTopMenu) && with_controls_ &&
-      !with_html_tabbar_;
-#endif
+  // Without a window frame. Only NORMAL windows host the HTML tab bar and are
+  // frameless so the tab strip can occupy the title bar area (issue 2);
+  // native window buttons are provided as an overlay floating over the
+  // top-right of the tab strip (see OnWindowChanged). DevTools and dialog
+  // windows always keep a frame for dragging.
+  frameless_ = with_html_tabbar_;
 
   // If window has frame or flag passed explicitly
   with_standard_buttons_ = !frameless_ || show_window_buttons;
@@ -1635,18 +1327,10 @@ ViewsWindow::ViewsWindow(WindowType type,
 
   const std::string& toolbar_type =
       command_line->GetSwitchValue(switches::kShowChromeToolbar);
-  chrome_toolbar_type_ = CalculateChromeToolbarType(
-      use_alloy_style_, toolbar_type, hide_toolbar, with_overlay_controls_);
+  chrome_toolbar_type_ = CalculateChromeToolbarType(use_alloy_style_,
+                                                    toolbar_type, hide_toolbar);
 
   use_bottom_controls_ = command_line->HasSwitch(switches::kUseBottomControls);
-
-#if !defined(OS_MAC)
-  // On Mac we don't show a top menu on the window. The options are available in
-  // the app menu instead.
-  if (!command_line->HasSwitch(switches::kHideTopMenu)) {
-    menu_bar_ = new ViewsMenuBar(this, ID_TOP_MENU_FIRST, use_bottom_controls_);
-  }
-#endif
 
   use_window_modal_dialog_ =
       command_line->HasSwitch(switches::kUseWindowModalDialog);
@@ -1673,25 +1357,6 @@ void ViewsWindow::CreateMenuModel() {
   AddTestMenuItems(button_menu_model_);
   button_menu_model_->AddSeparator();
   AddFileMenuItems(button_menu_model_);
-
-  if (menu_bar_) {
-    // Add the menus to the top menu bar.
-    AddFileMenuItems(menu_bar_->CreateMenuModel("&File", nullptr));
-    AddTestMenuItems(menu_bar_->CreateMenuModel("&Tests", nullptr));
-  }
-}
-
-CefRefPtr<CefLabelButton> ViewsWindow::CreateBrowseButton(
-    const std::string& label,
-    int id) {
-  CefRefPtr<CefLabelButton> button =
-      CefLabelButton::CreateLabelButton(this, label);
-  button->SetID(id);
-  button->SetInkDropEnabled(true);
-  button->SetEnabled(false);    // Disabled by default.
-  button->SetFocusable(false);  // Don't give focus to the button.
-
-  return button;
 }
 
 CefRefPtr<CefMenuButton> ViewsWindow::CreateMenuButton() {
@@ -1706,271 +1371,6 @@ CefRefPtr<CefMenuButton> ViewsWindow::CreateMenuButton() {
   // Override the default minimum size.
   menu_button_->SetMinimumSize(CefSize(0, 0));
   return menu_button_;
-}
-
-CefRefPtr<CefView> ViewsWindow::CreateLocationBar() {
-  DCHECK(!location_bar_);
-  if (chrome_toolbar_type_ == CEF_CTT_LOCATION) {
-    // Chrome will provide a minimal location bar.
-    location_bar_ = browser_view_->GetChromeToolbar();
-    DCHECK(location_bar_);
-  }
-  if (!location_bar_) {
-    // Create the URL textfield.
-    CefRefPtr<CefTextfield> url_textfield = CefTextfield::CreateTextfield(this);
-    url_textfield->SetID(ID_URL_TEXTFIELD);
-    location_bar_ = url_textfield;
-  }
-  return location_bar_;
-}
-
-void ViewsWindow::AddBrowserView() {
-  // Use a vertical box layout for |window|.
-  CefBoxLayoutSettings window_layout_settings;
-  window_layout_settings.horizontal = false;
-  window_layout_settings.between_child_spacing = 2;
-  // Stretch children across the full window width. CefBoxLayoutSettings is
-  // zero-initialized, so cross_axis_alignment defaults to START, which pins
-  // each child to its preferred cross-axis size. The HTML tab bar strip
-  // reports a preferred width of 0, so under START it would collapse to zero
-  // width and disappear on resize / content relayout (issue 1). STRETCH matches
-  // Chromium's own views::BoxLayout default and makes every top row (menu bar,
-  // toolbar, tab bar) span the full width.
-  window_layout_settings.cross_axis_alignment = CEF_AXIS_ALIGNMENT_STRETCH;
-  CefRefPtr<CefBoxLayout> window_layout =
-      window_->SetToBoxLayout(window_layout_settings);
-
-  window_->AddChildView(browser_view_);
-
-  // Allow |browser_view_| to grow and fill any remaining space.
-  window_layout->SetFlexForView(browser_view_, 1);
-
-  // Remaining setup will be performed in OnWindowChanged after the BrowserView
-  // is added to the CefWindow. This is necessary because Chrome toolbars are
-  // only available after the BrowserView is added.
-}
-
-void ViewsWindow::AddControls() {
-  // Build the remainder of the UI now that the BrowserView has been added to
-  // the CefWindow. This is a requirement to use Chrome toolbars.
-
-  CefRefPtr<CefPanel> menu_panel;
-  if (menu_bar_) {
-    menu_panel = menu_bar_->GetMenuPanel();
-  }
-
-  LabelButtons browse_buttons;
-
-  if (chrome_toolbar_type_ == CEF_CTT_NORMAL) {
-    // Chrome will provide a normal toolbar with location, menu, etc.
-    toolbar_ = browser_view_->GetChromeToolbar();
-    DCHECK(toolbar_);
-  }
-
-  if (!toolbar_) {
-    // Create the browse buttons.
-    browse_buttons.push_back(CreateBrowseButton("Back", ID_BACK_BUTTON));
-    browse_buttons.push_back(CreateBrowseButton("Forward", ID_FORWARD_BUTTON));
-    browse_buttons.push_back(CreateBrowseButton("Reload", ID_RELOAD_BUTTON));
-    browse_buttons.push_back(CreateBrowseButton("Stop", ID_STOP_BUTTON));
-
-    CreateLocationBar();
-    CreateMenuButton();
-
-    // Create the toolbar panel.
-    CefRefPtr<CefPanel> panel = CefPanel::CreatePanel(this);
-
-    // Use a horizontal box layout for |panel|.
-    CefBoxLayoutSettings panel_layout_settings;
-    panel_layout_settings.horizontal = true;
-    CefRefPtr<CefBoxLayout> panel_layout =
-        panel->SetToBoxLayout(panel_layout_settings);
-
-    // Add the buttons and URL textfield to |panel|.
-    for (auto& browse_button : browse_buttons) {
-      panel->AddChildView(browse_button);
-    }
-    panel->AddChildView(location_bar_);
-    panel->AddChildView(menu_button_);
-
-    // Allow |location| to grow and fill any remaining space.
-    panel_layout->SetFlexForView(location_bar_, 1);
-
-    toolbar_ = panel;
-  }
-
-#if defined(OS_MAC)
-  if (frameless_ && with_standard_buttons_) {
-    auto insets = toolbar_->GetInsets();
-    insets.left = kWindowButtonsWidth;
-    toolbar_->SetInsets(insets);
-  }
-#endif
-
-  if (use_bottom_controls_) {
-    // Add the panel at the bottom of |window|.
-    window_->AddChildView(toolbar_);
-    if (menu_panel) {
-      window_->AddChildView(menu_panel);
-    }
-  } else {
-    // Add the panel at the top of |window|.
-    int index = 0;
-    if (menu_panel) {
-      window_->AddChildViewAt(menu_panel, index++);
-    }
-#if defined(OS_WIN)
-    if (with_custom_titlebar_) {
-      // Build the custom titlebar panel above the Chrome toolbar.
-      title_bar_ = CefPanel::CreatePanel(this);
-
-      CefBoxLayoutSettings tb_layout_settings;
-      tb_layout_settings.horizontal = true;
-      CefRefPtr<CefBoxLayout> tb_layout =
-          title_bar_->SetToBoxLayout(tb_layout_settings);
-
-      // Title label (left-aligned, grows to fill space).
-      title_label_ = CefLabelButton::CreateLabelButton(this, CefString());
-      title_label_->SetEnabled(false);
-      title_label_->SetFocusable(false);
-      title_label_->SetInkDropEnabled(false);
-      title_bar_->AddChildView(title_label_);
-      tb_layout->SetFlexForView(title_label_, 1);
-
-      // Hamburger menu button.
-      CefRefPtr<CefMenuButton> tb_menu = CreateMenuButton();
-      tb_menu->SetTooltipText("Main menu");
-      title_bar_->AddChildView(tb_menu);
-
-      // Minimize button.
-      CefRefPtr<CefLabelButton> btn_min =
-          CefLabelButton::CreateLabelButton(this, u"\u2212");
-      btn_min->SetID(ID_TITLEBAR_MINIMIZE);
-      btn_min->SetFocusable(false);
-      btn_min->SetInkDropEnabled(true);
-      btn_min->SetTooltipText("Minimize");
-      title_bar_->AddChildView(btn_min);
-
-      // Maximize button.
-      CefRefPtr<CefLabelButton> btn_max =
-          CefLabelButton::CreateLabelButton(this, u"\u25A1");
-      btn_max->SetID(ID_TITLEBAR_MAXIMIZE);
-      btn_max->SetFocusable(false);
-      btn_max->SetInkDropEnabled(true);
-      btn_max->SetTooltipText("Maximize");
-      title_bar_->AddChildView(btn_max);
-
-      // Close button.
-      CefRefPtr<CefLabelButton> btn_close =
-          CefLabelButton::CreateLabelButton(this, u"\u00D7");
-      btn_close->SetID(ID_TITLEBAR_CLOSE);
-      btn_close->SetFocusable(false);
-      btn_close->SetInkDropEnabled(true);
-      btn_close->SetTooltipText("Close");
-      title_bar_->AddChildView(btn_close);
-
-      // Apply theme colors to titlebar buttons.
-      views_style::OnThemeChanged(title_label_);
-      views_style::OnThemeChanged(tb_menu);
-      views_style::OnThemeChanged(btn_min);
-      views_style::OnThemeChanged(btn_max);
-      views_style::OnThemeChanged(btn_close);
-
-      window_->AddChildViewAt(title_bar_, index++);
-    }
-#endif
-    window_->AddChildViewAt(toolbar_, index);
-  }
-
-  // Lay out |window| so we can get the default button sizes.
-  window_->Layout();
-
-  int min_width = 200;
-  if (!browse_buttons.empty()) {
-    // Make all browse buttons the same size.
-    MakeButtonsSameSize(browse_buttons);
-
-    // Lay out |window| again with the new button sizes.
-    window_->Layout();
-
-    const int buttons_number = static_cast<int>(browse_buttons.size());
-
-    // Minimum window width is the size of all buttons plus some extra.
-    min_width = browse_buttons[0]->GetBounds().width * buttons_number +
-                menu_button_->GetBounds().width + 100;
-  }
-
-  // Minimum window height is the hight of the toolbar plus some extra.
-  int min_height = toolbar_->GetBounds().height + 100;
-  if (menu_panel) {
-    min_height += menu_panel->GetBounds().height;
-  }
-
-  minimum_window_size_ = CefSize(min_width, min_height);
-
-  // Apply the state that we may have missed when SetLoadingState was called
-  // initially.
-  UpdateToolbarButtonState();
-
-#if defined(OS_WIN)
-  // Initialize titlebar draggable region now that layout is complete.
-  if (with_custom_titlebar_) {
-    SetDraggableRegions({});
-  }
-#endif
-}
-
-void ViewsWindow::AddAccelerators() {
-  // Specify the accelerators to handle. OnAccelerator will be called when the
-  // accelerator is triggered.
-  window_->SetAccelerator(ID_QUIT, 'X', /*shift_pressed=*/false,
-                          /*ctrl_pressed=*/false, /*alt_pressed=*/true,
-                          /*high_priority=*/true);
-}
-
-void ViewsWindow::SetMenuFocusable(bool focusable) {
-  if (!window_ || !with_controls_) {
-    return;
-  }
-
-  if (menu_bar_) {
-    menu_bar_->SetMenuFocusable(focusable);
-  } else if (menu_button_) {
-    menu_button_->SetFocusable(focusable);
-
-    if (focusable) {
-      // Give focus to menu button.
-      menu_button_->RequestFocus();
-    }
-  }
-
-  menu_has_focus_ = focusable;
-}
-
-void ViewsWindow::UpdateToolbarButtonState() {
-  SetViewEnabled(window_, ID_BACK_BUTTON, can_go_back_);
-  SetViewEnabled(window_, ID_FORWARD_BUTTON, can_go_forward_);
-  SetViewEnabled(window_, ID_RELOAD_BUTTON, !is_loading_);
-  SetViewEnabled(window_, ID_STOP_BUTTON, is_loading_);
-}
-
-void ViewsWindow::ShowTopControls(bool show) {
-  if (!window_ || !with_controls_) {
-    return;
-  }
-
-  // Change the visibility of the toolbar.
-  if (toolbar_->IsVisible() != show) {
-    toolbar_->SetVisible(show);
-    toolbar_->InvalidateLayout();
-  }
-
-#if defined(OS_WIN)
-  if (title_bar_ && title_bar_->IsVisible() != show) {
-    title_bar_->SetVisible(show);
-    title_bar_->InvalidateLayout();
-  }
-#endif
 }
 
 #if !defined(OS_MAC)
