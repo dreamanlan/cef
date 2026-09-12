@@ -1147,11 +1147,20 @@ void ClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 bool ClientHandler::DoClose(CefRefPtr<CefBrowser> browser) {
   CEF_REQUIRE_UI_THREAD();
 
+  const bool close_handled =
+      use_views_ && use_alloy_style_ && delegate_ &&
+      delegate_->OnBrowserCloseApproved(browser);
+  printf_log(LOG_SEVERITY_WARNING,
+            "[tabs] DoClose: browser=%d handled=%d use_views=%d alloy=%d "
+            "delegate=%d",
+            browser->GetIdentifier(), close_handled ? 1 : 0,
+            use_views_ ? 1 : 0, use_alloy_style_ ? 1 : 0,
+            delegate_ ? 1 : 0);
   NotifyBrowserClosing(browser);
 
-  // Allow the close. For windowed browsers this will result in the OS close
-  // event being sent.
-  return false;
+  // Preserve the standard host-window close unless the delegate takes over.
+  // The delegate must complete a handled close after this callback returns.
+  return close_handled;
 }
 
 void ClientHandler::OnBeforeClose(CefRefPtr<CefBrowser> browser) {

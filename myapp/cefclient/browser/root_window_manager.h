@@ -148,6 +148,9 @@ class RootWindowManager : public RootWindow::Delegate {
   void OnExit(RootWindow* root_window) override;
   void OnRootWindowDestroyed(RootWindow* root_window) override;
   void OnRootWindowActivated(RootWindow* root_window) override;
+  scoped_refptr<RootWindow> CreateDetachedWindow(
+      const std::shared_ptr<Tab>& tab,
+      const CefRect& bounds) override;
 
   // |callback| may be nullptr. Must be called on the main thread.
   CefRefPtr<CefRequestContext> CreateRequestContext(

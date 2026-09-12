@@ -20,6 +20,9 @@ struct NativeCallbackEntry {
     cef_thread_id_t thread_id = TID_UI;
     // Zero means the entry never expires.
     std::chrono::steady_clock::time_point deadline;
+    // Persistent entries survive a completion with ok=true (the handle stays
+    // valid for further completions) and never expire on their own.
+    bool persistent = false;
 };
 
 // Trampoline for CefPostTask. A free function is used (instead of a lambda) to
@@ -66,9 +69,10 @@ bool TakeEntry(int64_t handle, NativeCallbackEntry* out_entry) {
 }
 
 // Runs the closure on the thread it was registered for. The entry is already
-// removed from the map at this point, so the map lock is not held here: the
-// closure calls into CEF (CefJSDialogCallback::Continue, CefCallback::Continue)
-// and must never run while holding our mutex.
+// out of the map at this point (persistent entries were copied and stay in the
+// map), so the map lock is not held here: the closure calls into CEF
+// (CefJSDialogCallback::Continue, CefCallback::Continue) and must never run
+// while holding our mutex.
 void RunEntry(NativeCallbackEntry entry,
               bool ok,
               const std::string& data,
@@ -113,6 +117,29 @@ int64_t RegisterNativeCallback(int browser_id,
     return handle;
 }
 
+int64_t RegisterPersistentNativeCallback(int browser_id,
+                                         cef_thread_id_t thread_id,
+                                         NativeCallbackFn fn) {
+    if (!fn) {
+        return 0;
+    }
+    NativeCallbackEntry entry;
+    entry.fn = std::move(fn);
+    entry.browser_id = browser_id;
+    entry.thread_id = thread_id;
+    entry.persistent = true;
+    // No deadline: a persistent entry never expires on its own. Cleanup relies
+    // on a completion with ok=false, DiscardNativeCallback or
+    // CancelBrowserCallbacks (see the header for the intended use cases).
+
+    const int64_t handle = GetNextHandle().fetch_add(1);
+    {
+        std::lock_guard<std::mutex> lock(GetCallbackMutex());
+        GetCallbackMap()[handle] = std::move(entry);
+    }
+    return handle;
+}
+
 void DiscardNativeCallback(int64_t handle) {
     NativeCallbackEntry entry;
     // Destroy the closure (and the CefRefPtr it captured) outside the lock.
@@ -126,11 +153,27 @@ bool CompleteNativeCallback(int64_t handle,
                             const std::string& data,
                             int code) {
     NativeCallbackEntry entry;
-    if (!TakeEntry(handle, &entry)) {
-        printf_log(LOG_SEVERITY_INFO,
-                   "[native] native callback %lld already completed or unknown",
-                   static_cast<long long>(handle));
-        return false;
+    {
+        std::lock_guard<std::mutex> lock(GetCallbackMutex());
+        auto& m = GetCallbackMap();
+        auto it = m.find(handle);
+        if (it == m.end()) {
+            printf_log(LOG_SEVERITY_INFO,
+                       "[native] native callback %lld already completed or unknown",
+                       static_cast<long long>(handle));
+            return false;
+        }
+        if (it->second.persistent && ok) {
+            // A persistent entry survives a successful completion: copy it (the
+            // original stays in the map) so the same handle can be completed
+            // again later.
+            entry = it->second;
+        } else {
+            // Final completion (ok=false, or any completion of a one-shot
+            // entry): take the entry out of the map.
+            entry = std::move(it->second);
+            m.erase(it);
+        }
     }
     RunEntry(std::move(entry), ok, data, code);
     return true;

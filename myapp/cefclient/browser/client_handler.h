@@ -25,6 +25,7 @@
 namespace client {
 
 class ClientDownloadImageCallback;
+class RootWindowViews;
 
 // Client handler abstract base class. Provides common functionality shared by
 // all concrete client handler implementations.
@@ -45,6 +46,10 @@ class ClientHandler : public BaseClientHandler,
     // Returns true if the window should use Views. Safe to call on any thread.
     virtual bool UseViews() const = 0;
 
+    // Returns the owning Views root window, if any. Called on the UI thread.
+    // Tab delegates resolve their owner without requiring a delegate downcast.
+    virtual RootWindowViews* GetViewsRootWindow() { return nullptr; }
+
     // Returns true if the window should use Alloy style. Safe to call on any
     // thread.
     virtual bool UseAlloyStyle() const = 0;
@@ -54,6 +59,14 @@ class ClientHandler : public BaseClientHandler,
 
     // Called when the browser is closing.
     virtual void OnBrowserClosing(CefRefPtr<CefBrowser> browser) = 0;
+
+    // Called on the UI thread from DoClose() for Alloy Views browsers.
+    // Return true only when taking responsibility for completing this close.
+    // Defer view teardown until after DoClose() returns. The default preserves
+    // the standard host-window close behavior.
+    virtual bool OnBrowserCloseApproved(CefRefPtr<CefBrowser> browser) {
+      return false;
+    }
 
     // Called when the browser has been closed.
     virtual void OnBrowserClosed(CefRefPtr<CefBrowser> browser) = 0;

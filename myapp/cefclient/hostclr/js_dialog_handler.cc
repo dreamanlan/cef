@@ -105,6 +105,10 @@ bool ClientJSDialogHandler::OnBeforeUnloadDialog(
   // Note: callback semantics are inverted compared to a plain confirm:
   // Continue(true) leaves/reloads the page, Continue(false) stays.
   // CEF provides no suppress flag here, hence the null argument.
+  printf_log(LOG_SEVERITY_WARNING,
+            "[tabs] beforeunload dialog: browser=%d managed_hook=%d",
+            browser ? browser->GetIdentifier() : 0,
+            on_js_dialog_fptr ? 1 : 0);
   return HandleDialog(browser, JS_DIALOG_BEFORE_UNLOAD, CefString(),
                       message_text, CefString(), callback, nullptr);
 }

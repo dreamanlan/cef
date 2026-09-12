@@ -1,6 +1,6 @@
 # WebAgent HTML Tabbar 设计文档
 
-> 状态：基本单 tab UI 已实现（用户确认）；真正的多 tab 尚未开始。下文区分当前源码、历史问题与后续目标；不代表各平台均已验收。
+> 状态：基本单 tab UI 已实现（用户确认）；真正多 tab 已由 `MULTITAB_WINDOW_DESIGN.md` 立项并实现（M1-M5，2026-09-14）。下文区分当前源码、历史问题与后续目标；不代表各平台均已验收。
 > 启用方式：**默认启用**（已移除 `--use-html-tabbar` 开关），对 Views 普通顶层窗口生效
 > 模式选择：`--use-chrome-window` 已删除。`UseChromeWindowGlobal()` 当前返回 `!use_windowless_rendering_ && !use_alloy_style_ && !use_chrome_style_window_`，命中时默认使用 Chrome 自建 tabstrip 窗口，不创建本方案的 ViewsWindow。HTML tabbar 仅在实际进入 Views 路径且 `type_ == WindowType::NORMAL` 时启用；`--use-alloy-style` / `--use-chrome-style-window` 会排除默认 Chrome 自建模式，OSR 及平台 native 限制仍须遵守。
 > 文档目的：把 tabbar 从「需求 → 设计 → 实现」完整梳理，作为后续实现与查阅的唯一依据。
@@ -185,7 +185,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 | 4 | 复用 DefaultClientHandler 的 owner 指针；cef_query_handler 分流导航 / resize；__tabbarApi 反向推送；两源拖动区合并、工作目录高度缓存 | 当前仍是单内容 browser 路由；不新建专用 handler 类 |
 | 5 | Alloy 使用 HTML 导航栏；Chrome 保留可获取的 Chrome toolbar；demo UI / 旧 Windows 标题栏在 tabbar 窗口门控失活 | 源码已于 2026-09-11 物理删除（demo 工具栏/地址栏、Win 自定义标题栏、location-bar overlay、menu_bar_、CefTextfieldDelegate 等；汉堡菜单/上下文菜单/命令 ID/views_menu_bar 文件/switch 定义保留）；书签功能、工具栏状态持久化仍后置 |
 
-原推进顺序为 0 → 1 → 2 → 3 → 4 → 5。frameless 与系统按钮同阶段落地，避免中间态窗口无法操作。真正多 tab 见 `MULTITAB_WINDOW_DESIGN.md`，M1-M5 尚未开始。
+原推进顺序为 0 → 1 → 2 → 3 → 4 → 5。frameless 与系统按钮同阶段落地，避免中间态窗口无法操作。真正多 tab 见 `MULTITAB_WINDOW_DESIGN.md`（M1-M5 已全部实现，2026-09-14）。
 
 ---
 
@@ -206,7 +206,7 @@ WebAgent 需要一个「带 tabbar 的浏览器窗口」，用于承载多个 we
 - **overlay 与 HTML padding**：按钮区宽度及 docking 位置需与 HTML 留白匹配，特别是导航行高度变化时。
 - **高度单位**：当前将 CSS px 总高取整后直接作为 DIP，未做缩放换算；页面 zoom / 系统 DPI 组合需验证。
 - **高度与查询路由**：实现以 §6.5 / §8 为准：工作目录的两个 txt 缓存、owner 指针寻址、lastH 去重。不是 cachePath JSON、RootWindowManager 反查或 requestAnimationFrame 防抖。
-- **多 tab**：当前页签 id 仅属于 HTML 界面，不是 C++ Tab 注册表标识；真正多 browser 管理及迁移属于第二份文档的后续工作。
+- **多 tab**：已由第二份文档实现（每 tab 独立 CefBrowser + browser_id 寻址；本文档时期的"HTML 页签 id"历史表述已被取代）。
 - **构建与验收**：构建由用户执行；本次文档同步不声称零新增警告或全平台通过。
 
 ---

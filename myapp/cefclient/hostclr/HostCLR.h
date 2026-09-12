@@ -38,7 +38,19 @@ typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_completed_fn)(voi
 // Returns true to take the query over asynchronously: the managed side must
 // later call complete_native_callback(handle, ok, response, error_code), where
 // ok=true sends Success(response) and ok=false sends Failure(error_code, response).
+// Persistent queries (window.cefQuery with persistent:true) keep the handle
+// valid across ok=true completions: each one pushes Success(response) to the
+// page again (broadcast/subscription pattern) and there is no timeout.
+// ok=false sends Failure, which per CEF rules cancels a persistent query.
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_cef_query_fn)(void* browser, void* frame, int64_t query_id, const char* request, bool persistent, int64_t handle, int& out_result);
+// Pure notification (browser process, UI thread): a query that managed code
+// had taken over was canceled from elsewhere - JavaScript
+// window.cefQueryCancel, or the query context going away (navigation, renderer
+// termination, browser close). |handle| is the parked native callback handle
+// that has just been discarded; managed code should drop its state for it (a
+// later complete_native_callback on the dead handle is a no-op). No return
+// value.
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_cef_query_canceled_fn)(void* browser, void* frame, int64_t query_id, int64_t handle);
 // Custom scheme request routed to managed code (browser process, UI thread).
 // |handle| is a native async callback handle. |html_code| is a caller-owned
 // buffer of |html_size| bytes (capacity in, produced length out). Tri-state
@@ -218,6 +230,7 @@ extern on_browser_finalize_fn on_browser_finalize_fptr;
 extern on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr;
 extern on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr;
 extern on_browser_cef_query_fn on_browser_cef_query_fptr;
+extern on_browser_cef_query_canceled_fn on_browser_cef_query_canceled_fptr;
 extern on_custom_scheme_fn on_custom_scheme_fptr;
 extern on_renderer_init_fn on_renderer_init_fptr;
 extern on_renderer_finalize_fn on_renderer_finalize_fptr;

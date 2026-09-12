@@ -90,7 +90,7 @@ std::string GetUrlHost(const std::string& url) {
 
 // Built-in HTML tab bar served for <scheme>://tabbar/ when managed code does
 // not take over the request. It is a self-contained functional skeleton: it
-// renders a tab strip, supports new/close/select entirely on the front end,
+// renders a tab strip whose membership and activation are owned by native code,
 // keeps draggable regions (-webkit-app-region) so the frameless window can be
 // moved, reserves space on the button side for the native window-control
 // overlay, and reports every command through window.cefQuery
@@ -118,6 +118,7 @@ std::string BuildBuiltinTabbarPage() {
     white-space:nowrap;overflow:hidden;}
   .tab.active{background:#fff;}
   .tab .title{flex:1;overflow:hidden;text-overflow:ellipsis;}
+  .tab .favicon{width:16px;height:16px;margin-right:6px;flex:none;}
   .tab .close{-webkit-app-region:no-drag;margin-left:6px;width:16px;height:16px;
     line-height:16px;text-align:center;border-radius:50%;cursor:pointer;
     flex:none;}
@@ -159,8 +160,14 @@ std::string BuildBuiltinTabbarPage() {
 <script>
 (function(){
   var tabs=[];
-  var nextId=1;
+  var nativeSynced=false;
+  var readyAttempts=0;
   var activeId=0;
+  // Multi-tab permission is independent of navigation row visibility.
+  var multiTab=/[?&]multitab=1(&|$)/.test(location.search);
+  if(!multiTab){
+    document.getElementById('newtab').style.display='none';
+  }
   // Navigation row visibility follows the ?nav flag set by C++ at creation:
   // nav=0 (Chrome-style, Chrome draws its own toolbar) hides it; otherwise
   // (Alloy-style) the HTML owns the address/nav row.
@@ -169,15 +176,34 @@ std::string BuildBuiltinTabbarPage() {
     var nr=document.getElementById('navrow');
     if(nr){nr.classList.add('hidden');}
   }
-  if(/Mac/i.test(navigator.platform)){
+  var isMac=/Mac/i.test(navigator.platform);
+  var isLinux=/Linux/i.test(navigator.platform);
+  if(isMac){
     document.getElementById('tabrow').classList.add('mac');
   }
+  // Linux JS-fed drag loop state: no native capture exists, but the implicit
+  // X pointer grab keeps delivering mousemove to this page (even outside the
+  // window) while the button is held, so the page signals each frame and the
+  // native cursor position is queried C++-side (no DPI math crosses IPC).
+  var winDrag=false;
+  var lastDragFeed=0;
   function send(action,extra){
+    if(!multiTab&&(action==='newtab'||action==='closetab'||action==='reordertab')){return;}
     if(!window.cefQuery){return;}
     var msg={channel:'tabbar',action:action};
     if(extra){for(var k in extra){msg[k]=extra[k];}}
     window.cefQuery({request:JSON.stringify(msg),
-      onSuccess:function(){},onFailure:function(){}});
+      onSuccess:function(){},
+      onFailure:function(code,message){
+        console.warn('Tab bar request failed:',action,code,message);
+        if(action==='ready'&&!nativeSynced&&readyAttempts<20){
+          setTimeout(requestSnapshot,250);
+        }
+      }});
+  }
+  function requestSnapshot(){
+    ++readyAttempts;
+    send('ready');
   }
   // Report the strip's intrinsic content height to C++ so the docked view can
   // resize to match (the view height is pinned by C++, so we measure .root,
@@ -201,52 +227,205 @@ std::string BuildBuiltinTabbarPage() {
       var el=document.createElement('div');
       el.className='tab'+(t.id===activeId?' active':'');
       el.setAttribute('data-id',t.id);
+      if(t.favicon){
+        var fv=document.createElement('img');
+        fv.className='favicon';
+        fv.src=t.favicon;
+        fv.alt='';
+        el.appendChild(fv);
+      }
       var ti=document.createElement('span');
       ti.className='title';
-      ti.textContent=t.title||'New Tab';
+      ti.textContent=(t.loading?'Loading: ':'')+(t.title||'New Tab');
+      el.title=t.url||t.title||'New Tab';
       el.appendChild(ti);
       var cl=document.createElement('span');
       cl.className='close';
       cl.textContent='\u00d7';
       cl.setAttribute('data-close',t.id);
+      if(!multiTab){cl.style.display='none';}
       el.appendChild(cl);
       c.appendChild(el);
     });
   }
-  function addTab(title,activate){
-    var id=nextId++;
-    tabs.push({id:id,title:title||'New Tab',url:''});
-    if(activate!==false){activeId=id;}
-    render();
-    return id;
+  // Mouse-driven tab drag: horizontal drag reorders (optimistically, with the
+  // native order confirmed via the next snapshot), vertical drag detaches the
+  // tab into a new window, and a single-tab strip drags the whole window so it
+  // can be merged into another tab bar on drop (M4a).
+  var dragInfo=null;
+  var suppressClick=false;
+  var dropIndicator=null;
+  var lastDropBefore=-1;
+  var strip=document.getElementById('tabs');
+  function tabAt(node){
+    var el=node;
+    while(el&&el!==strip&&!(el.getAttribute&&el.getAttribute('data-id'))){
+      el=el.parentNode;
+    }
+    return (el&&el!==strip&&el.getAttribute)?el:null;
   }
-  function closeTab(id){
-    var i=tabs.findIndex(function(t){return t.id===id;});
-    if(i<0){return;}
-    tabs.splice(i,1);
-    if(activeId===id){activeId=tabs.length?tabs[Math.max(0,i-1)].id:0;}
+  function inCloseBtn(node){
+    var el=node;
+    while(el&&el!==strip){
+      if(el.className==='close'){return true;}
+      el=el.parentNode;
+    }
+    return false;
+  }
+  // Move |id| locally so the strip follows the pointer during the drag. The
+  // insertion slot is computed against the tab midpoints, not the element
+  // under the release point: tabs are wide and pointer-anchored feedback is
+  // what makes reordering usable.
+  function applyLocalReorder(id,x){
+    var from=-1;
+    for(var i=0;i<tabs.length;i++){if(tabs[i].id===id){from=i;break;}}
+    if(from<0){return;}
+    var to=tabs.length;
+    var els=strip.children;
+    for(var j=0;j<els.length;j++){
+      var r=els[j].getBoundingClientRect();
+      if(x<r.left+r.width/2){to=j;break;}
+    }
+    if(to>from){to--;}
+    if(to===from){return;}
+    tabs.splice(to,0,tabs.splice(from,1)[0]);
     render();
   }
-  function selectTab(id){activeId=id;render();}
+  strip.addEventListener('mousedown',function(e){
+    if(!multiTab||e.button!==0||inCloseBtn(e.target)){return;}
+    var el=tabAt(e.target);
+    if(!el){return;}
+    var id=parseInt(el.getAttribute('data-id'),10)||0;
+    if(id){dragInfo={id:id,x:e.clientX,y:e.clientY,detached:false,moved:false};}
+    e.preventDefault();
+  });
+  // Middle-click closes the tab (Chrome parity).
+  strip.addEventListener('auxclick',function(e){
+    if(e.button!==1||!multiTab){return;}
+    var el=tabAt(e.target);
+    if(!el){return;}
+    var id=parseInt(el.getAttribute('data-id'),10)||0;
+    if(id){send('closetab',{id:id});}
+  });
+  // Whole-window drag from the strip's blank area (M4b). Only multitab
+  // windows route through the JS gesture: their controller accepts the
+  // dragwindow request. Chrome-style and non-multitab windows keep the
+  // native drag region (RequestWindowDrag rejects them, and removing the
+  // region would leave them undraggable). macOS keeps the native region
+  // everywhere (double-click to zoom stays native there).
+  var rowDrag=null;
+  if(!isMac&&multiTab){
+    var tabrow=document.getElementById('tabrow');
+    tabrow.style.webkitAppRegion='no-drag';
+    tabrow.addEventListener('mousedown',function(e){
+      if(!multiTab||e.button!==0){return;}
+      if(tabAt(e.target)||e.target.id==='newtab'||inCloseBtn(e.target)){return;}
+      rowDrag={x:e.clientX,y:e.clientY,sent:false};
+    });
+    // Compensate the double-click affordance lost with the drag region.
+    tabrow.addEventListener('dblclick',function(e){
+      if(!multiTab){return;}
+      if(tabAt(e.target)||e.target.id==='newtab'||inCloseBtn(e.target)){return;}
+      send('togglemaximize');
+    });
+  }
+  document.addEventListener('mousemove',function(e){
+    if(!e.buttons){rowDrag=null;return;}
+    if(!rowDrag||rowDrag.sent){return;}
+    if(Math.abs(e.clientX-rowDrag.x)>=10||Math.abs(e.clientY-rowDrag.y)>=10){
+      rowDrag.sent=true;
+      // Blank-area window move: never merges (Chrome parity) — only tab
+      // gestures may merge into another window's tab bar.
+      send('dragwindow',{merge:0});
+      if(isLinux){winDrag=true;}
+    }
+  });
+  document.addEventListener('mouseup',function(e){
+    if(rowDrag){rowDrag=null;}
+  });
+  // Linux drag-loop feeding: each throttled move signals one native cursor
+  // query + window move; release ends the session (merge on hover); Escape
+  // cancels it.
+  document.addEventListener('mousemove',function(e){
+    if(!winDrag||!e.buttons){return;}
+    var now=Date.now();
+    if(now-lastDragFeed<16){return;}
+    lastDragFeed=now;
+    send('windowdragmove');
+  });
+  document.addEventListener('mouseup',function(e){
+    if(winDrag){winDrag=false;send('windowdragend');}
+  });
+  document.addEventListener('keydown',function(e){
+    if(winDrag&&(e.key==='Escape'||e.keyCode===27)){
+      winDrag=false;
+      send('windowdragend',{cancel:1});
+    }
+  });
+  document.addEventListener('mousemove',function(e){
+    if(!e.buttons){dragInfo=null;return;}
+    if(!dragInfo||dragInfo.detached){return;}
+    var dx=e.clientX-dragInfo.x,dy=e.clientY-dragInfo.y;
+    if(tabs.length>1&&Math.abs(dy)>=24){
+      dragInfo.detached=true;
+      send('detachtab',{id:dragInfo.id});
+      // Linux: the torn-off window's drag loop is fed from this page, since
+      // the gesture's implicit X grab stays here after the detach.
+      if(isLinux){winDrag=true;}
+      return;
+    }
+    if(tabs.length===1&&(Math.abs(dx)>=10||Math.abs(dy)>=10)){
+      // Hand the gesture to the native drag session: the window follows the
+      // cursor and can merge into another tab bar on drop.
+      dragInfo.detached=true;
+      send('dragwindow');
+      if(isLinux){winDrag=true;}
+      return;
+    }
+    if(tabs.length>1&&Math.abs(dx)>=10){
+      dragInfo.moved=true;
+      applyLocalReorder(dragInfo.id,e.clientX);
+    }
+  });
+  document.addEventListener('mouseup',function(e){
+    if(!dragInfo){return;}
+    var d=dragInfo;dragInfo=null;
+    if(d.detached){return;}
+    if(d.moved){
+      suppressClick=true;
+      var beforeId=0;
+      for(var i=0;i<tabs.length;i++){
+        if(tabs[i].id===d.id){
+          beforeId=(i+1<tabs.length)?tabs[i+1].id:0;
+          break;
+        }
+      }
+      send('reordertab',{id:d.id,beforeId:beforeId});
+    }
+  });
+
+  // Requests never change local membership or activation optimistically.
   document.getElementById('newtab').addEventListener('click',function(){
-    var id=addTab('New Tab',true);send('newtab',{id:id});
+    if(!multiTab){return;}
+    send('newtab');
   });
   document.getElementById('tabs').addEventListener('click',function(e){
+    if(suppressClick){suppressClick=false;return;}
     var closeId=e.target.getAttribute&&e.target.getAttribute('data-close');
-    if(closeId){var cid=parseInt(closeId,10);closeTab(cid);
-      send('closetab',{id:cid});return;}
+    if(closeId&&!multiTab){return;}
+    if(closeId){
+      send('closetab',{id:parseInt(closeId,10)});return;}
     var el=e.target;
     while(el&&el!==this&&!(el.getAttribute&&el.getAttribute('data-id'))){
       el=el.parentNode;
     }
     if(el&&el.getAttribute){
       var sid=parseInt(el.getAttribute('data-id'),10);
-      if(sid){selectTab(sid);send('selecttab',{id:sid});}
+      if(sid&&multiTab){send('selecttab',{id:sid});}
     }
   });
-  // Navigation toolbar wiring. Each control reports through cefQuery; the C++
-  // side (tabbar message handler, added in a later stage) drives the actual
-  // content browser and pushes state back via window.__tabbarApi.
+  // Navigation controls request native operations. State arrives through
+  // window.__tabbarApi after native browser callbacks.
   var urlbar=document.getElementById('urlbar');
   function navigate(u){
     u=(u||'').trim();
@@ -274,21 +453,44 @@ std::string BuildBuiltinTabbarPage() {
   }
   // Reverse channel: C++ pushes state updates for the active tab here.
   window.__tabbarApi={
+    onTabsChanged:function(items,selectedId){
+      if(!Array.isArray(items)){return;}
+      var previousId=activeId;
+      nativeSynced=true;
+      tabs=items.filter(function(t){
+        return t&&Number.isInteger(t.id)&&t.id>0;
+      });
+      var selected=tabs.find(function(t){return t.id===selectedId;});
+      activeId=selected?selected.id:0;
+      render();
+      if(previousId!==activeId||document.activeElement!==urlbar){
+        urlbar.value=selected?(selected.url||''):'';
+      }
+      this.onLoadingStateChanged({
+        isLoading:!!(selected&&selected.loading),
+        canGoBack:!!(selected&&selected.canGoBack),
+        canGoForward:!!(selected&&selected.canGoForward)
+      },true);
+    },
     setActiveTitle:function(title){
+      if(nativeSynced){return;}
       var t=tabs.find(function(x){return x.id===activeId;});
       if(t){t.title=title;render();}
     },
     setActiveUrl:function(url){
+      if(nativeSynced){return;}
       var t=tabs.find(function(x){return x.id===activeId;});
       if(t){t.url=url;}
     },
     onAddressChanged:function(url){
+      if(nativeSynced){return;}
       if(url!==undefined&&url!==null){
         if(document.activeElement!==urlbar){urlbar.value=url;}
         this.setActiveUrl(url);
       }
     },
-    onLoadingStateChanged:function(s){
+    onLoadingStateChanged:function(s,fromSnapshot){
+      if(nativeSynced&&!fromSnapshot){return;}
       try{
         var st=(typeof s==='string')?JSON.parse(s):s;
         setEnabled('back',!!st.canGoBack);
@@ -310,10 +512,56 @@ std::string BuildBuiltinTabbarPage() {
            s.canGoForward!==undefined){this.onLoadingStateChanged(s);}
       }catch(e){}
     },
-    reset:function(){tabs=[];nextId=1;activeId=0;render();}
+    // Merged-window drop indicator (M4a): C++ pushes hover state with a
+    // strip-normalized cursor position while a TabDragController session is
+    // active. The page owns the layout, so it resolves the insertion slot,
+    // draws the indicator and reports the slot back via "drophover".
+    onDropHover:function(active,relativeX){
+      if(dropIndicator&&dropIndicator.parentNode){
+        dropIndicator.parentNode.removeChild(dropIndicator);
+      }
+      dropIndicator=null;
+      if(!active){lastDropBefore=-1;return;}
+      var row=document.getElementById('tabrow');
+      if(!row){return;}
+      var r=strip.getBoundingClientRect();
+      // relativeX is normalized over the tab bar view's width (= this page's
+      // viewport), not the #tabs element: the strip is inset by the row
+      // padding and may be clipped when overflowing, so re-basing it on the
+      // element would skew the insertion slot left by roughly half the
+      // insets (observed: cursor on tab 2 showed the slot before tab 1).
+      var px=(+relativeX||0)*window.innerWidth;
+      var els=strip.children;
+      var beforeId=0;
+      var indX=r.right;
+      for(var j=0;j<els.length;j++){
+        var tr=els[j].getBoundingClientRect();
+        if(px<tr.left+tr.width/2){
+          beforeId=parseInt(els[j].getAttribute('data-id'),10)||0;
+          indX=tr.left;
+          break;
+        }
+      }
+      row.style.position='relative';
+      var ind=document.createElement('div');
+      ind.style.cssText='position:absolute;top:2px;bottom:2px;width:2px;'+
+        'background:#4a90e2;border-radius:1px;z-index:9;';
+      ind.style.left=(indX-1)+'px';
+      row.appendChild(ind);
+      dropIndicator=ind;
+      if(lastDropBefore!==beforeId){
+        lastDropBefore=beforeId;
+        send('drophover',{beforeId:beforeId});
+      }
+    },
+    reset:function(){
+      requestSnapshot();
+    }
   };
-  // Seed an initial tab representing the content browser already shown.
-  addTab('New Tab',true);
+  // Install the reverse API before requesting the authoritative initial list.
+  render();
+  requestSnapshot();
+  window.addEventListener('load',requestSnapshot);
   // Report the initial height immediately (ResizeObserver may fire later).
   reportHeight();
 })();

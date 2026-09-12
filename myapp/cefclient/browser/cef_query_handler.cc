@@ -16,6 +16,7 @@
 #include "include/base/cef_logging.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/cef_parser.h"
+#include "include/cef_task.h"
 #include "myapp/cefclient/browser/main_context.h"
 #include "myapp/cefclient/browser/default_client_handler.h"
 #include "myapp/cefclient/browser/root_window.h"
@@ -231,6 +232,12 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
                 "[CefQueryHandler] query %lld canceled, discarding handle %lld",
                 query_id, handle);
       DiscardNativeCallback(handle);
+      // Pure notification so managed code can drop its state for the dead
+      // handle (e.g. stop a subscription feed); it must not try to complete it.
+      if (on_browser_cef_query_canceled_fptr) {
+        on_browser_cef_query_canceled_fptr(browser.get(), frame.get(),
+                                           query_id, handle);
+      }
     }
   }
 
@@ -336,39 +343,53 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       // answered asynchronously. Callback methods may be invoked on any browser
       // process thread, but the handler itself runs on the main thread, so keep
       // the completion there for consistency.
+      // A persistent query keeps its Callback across Success calls (CEF runs
+      // the page's onSuccess once per push), so it gets a persistent registry
+      // entry without timeout; ok=false (Failure) cancels it per CEF rules. A
+      // non-persistent query is one-shot and expires after kCefQueryTimeoutMs.
       const int browser_id = browser.get() ? browser->GetIdentifier() : 0;
-      const int64_t handle = RegisterNativeCallback(
-          browser_id, TID_UI,
-          [callback, query_id](bool ok, const std::string& response,
-                               int error_code) {
-            // Forget the query first: after Success/Failure the Callback is
-            // spent and OnQueryCanceled will not arrive for it.
+      const auto park = [callback, query_id, persistent](
+                            bool ok, const std::string& response,
+                            int error_code) {
+        if (!callback) {
+          UntrackPendingQuery(query_id);
+          return;
+        }
+        if (ok) {
+          callback->Success(CefString(response));
+          // Success spends a one-shot Callback; a persistent query stays
+          // registered, so keep it tracked for a later OnQueryCanceled and for
+          // further complete_native_callback pushes.
+          if (!persistent) {
             UntrackPendingQuery(query_id);
-            if (!callback) {
-              return;
-            }
-            if (ok) {
-              callback->Success(CefString(response));
-            } else {
-              // A registry timeout or a browser-close cancel arrives with an
-              // empty payload; give the page something diagnosable.
-              callback->Failure(error_code,
-                                response.empty()
-                                    ? CefString("ERROR: query canceled or timed out")
-                                    : CefString(response));
-            }
-          },
-          kCefQueryTimeoutMs);
+          }
+          return;
+        }
+        // Failure cancels the query in both modes. A registry timeout or a
+        // browser-close cancel arrives with an empty payload; give the page
+        // something diagnosable.
+        UntrackPendingQuery(query_id);
+        callback->Failure(error_code,
+                          response.empty()
+                              ? CefString("ERROR: query canceled or timed out")
+                              : CefString(response));
+      };
+      const int64_t handle =
+          persistent
+              ? RegisterPersistentNativeCallback(browser_id, TID_UI, park)
+              : RegisterNativeCallback(browser_id, TID_UI, park,
+                                       kCefQueryTimeoutMs);
       TrackPendingQuery(query_id, handle);
 
       int out_result = 0;
       if (on_browser_cef_query_fptr(browser.get(), frame.get(), query_id,
                                     request.ToString().c_str(), persistent,
                                     handle, out_result)) {
-        // Taken over: managed code owns the query and must complete |handle|.
+        // Taken over: managed code owns the query and must complete |handle|
+        // (persistent queries: ok=true pushes may repeat, ok=false cancels).
         // Safety nets when it never does: OnQueryCanceled discards the entry on
-        // navigation / renderer termination / window.cefQueryCancel, the
-        // registry expires it after kCefQueryTimeoutMs, and
+        // navigation / renderer termination / window.cefQueryCancel, a
+        // non-persistent entry expires after kCefQueryTimeoutMs, and
         // BaseClientHandler::OnBeforeClose cancels everything the browser owns.
         return;
       }
@@ -431,6 +452,13 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
   static void HandleTabbarQuery(CefRefPtr<CefBrowser> browser,
                                 CefRefPtr<CefDictionaryValue> request_dict,
                                 CefRefPtr<Callback> callback) {
+    // The tab bar owner and all Views operations belong to the UI thread.
+    if (!CefCurrentlyOn(TID_UI)) {
+      CefPostTask(TID_UI, base::BindOnce(&Handler::HandleTabbarQuery,
+                                       browser, request_dict, callback));
+      return;
+    }
+
     ViewsWindow* window = nullptr;
     if (browser && browser->GetHost()) {
       CefRefPtr<DefaultClientHandler> handler =
@@ -450,6 +478,13 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       action = request_dict->GetString("action").ToString();
     }
 
+    if ((action == "newtab" || action == "closetab" ||
+         action == "detachtab") &&
+        !window->SupportsMultipleTabs()) {
+      callback->Failure(-1, "ERROR: tab creation and removal are disabled");
+      return;
+    }
+
     if (action == "resize") {
       int height = 0;
       if (request_dict->HasKey("height")) {
@@ -467,6 +502,15 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       return;
     }
 
+    if (action == "ready") {
+      if (window->RequestTabSnapshot()) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: tab snapshot request was not accepted");
+      }
+      return;
+    }
+
     if (action == "back" || action == "forward" || action == "reload" ||
         action == "reload_nocache" || action == "stop" ||
         action == "navigate") {
@@ -480,10 +524,133 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       return;
     }
 
-    // newtab / closetab / selecttab: the window currently hosts a single
-    // content browser, so acknowledge without switching (multi-browser tab
-    // management is a future enhancement). The HTML still manages tab UI.
-    callback->Success("OK");
+    if (action == "newtab") {
+      std::string url;
+      if (request_dict->HasKey("url") &&
+          request_dict->GetType("url") == VTYPE_STRING) {
+        url = request_dict->GetString("url").ToString();
+      }
+      if (window->RequestNewTab(url)) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: new tab request was not accepted");
+      }
+      return;
+    }
+
+    if (action == "reordertab") {
+      if (request_dict->GetType("id") != VTYPE_INT ||
+          request_dict->GetInt("id") <= 0 ||
+          request_dict->GetType("beforeId") != VTYPE_INT ||
+          request_dict->GetInt("beforeId") < 0) {
+        callback->Failure(-1, "ERROR: native id and beforeId are required");
+        return;
+      }
+      if (window->RequestTabReorder(request_dict->GetInt("id"),
+                                   request_dict->GetInt("beforeId"))) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: tab reorder was not accepted");
+      }
+      return;
+    }
+
+    if (action == "detachtab") {
+      if (request_dict->GetType("id") != VTYPE_INT ||
+          request_dict->GetInt("id") <= 0) {
+        callback->Failure(-1, "ERROR: a native content browser id is required");
+        return;
+      }
+      if (window->RequestTabDetach(request_dict->GetInt("id"))) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: tab detach was not accepted");
+      }
+      return;
+    }
+
+    if (action == "dragwindow") {
+      // Begin the shell drag. |merge| carries the gesture semantics: tab
+      // drags (default) may merge into another tab bar, blank-area window
+      // moves may not (Chrome parity, M4b).
+      bool allow_merge = true;
+      if (request_dict->HasKey("merge")) {
+        const cef_value_type_t t = request_dict->GetType("merge");
+        if (t == VTYPE_BOOL) {
+          allow_merge = request_dict->GetBool("merge");
+        } else if (t == VTYPE_INT) {
+          allow_merge = request_dict->GetInt("merge") != 0;
+        }
+      }
+      if (window->RequestWindowDrag(allow_merge)) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: window drag was not accepted");
+      }
+      return;
+    }
+
+    if (action == "togglemaximize") {
+      // Strip double-click affordance for the JS-driven whole-window drag
+      // (M4b, Windows).
+      window->ToggleMaximize();
+      callback->Success("OK");
+      return;
+    }
+
+    if (action == "windowdragmove" || action == "windowdragend") {
+      // Linux JS-fed drag loop: the page keeps receiving mousemove during the
+      // implicit X pointer grab and signals each frame / the release.
+      if (action == "windowdragmove") {
+        window->NotifyTabDragMove();
+      } else {
+        bool cancel = false;
+        if (request_dict->HasKey("cancel")) {
+          const cef_value_type_t t = request_dict->GetType("cancel");
+          if (t == VTYPE_BOOL) {
+            cancel = request_dict->GetBool("cancel");
+          } else if (t == VTYPE_INT) {
+            cancel = request_dict->GetInt("cancel") != 0;
+          }
+        }
+        window->NotifyTabDragEnd(cancel);
+      }
+      callback->Success("OK");
+      return;
+    }
+
+    if (action == "drophover") {
+      // Insertion slot reported by the hovered tab bar during a drag session.
+      int before_id = 0;
+      if (request_dict->HasKey("beforeId")) {
+        const cef_value_type_t t = request_dict->GetType("beforeId");
+        if (t == VTYPE_INT) {
+          before_id = request_dict->GetInt("beforeId");
+        } else if (t == VTYPE_DOUBLE) {
+          before_id = static_cast<int>(request_dict->GetDouble("beforeId") +
+                                       0.5);
+        }
+      }
+      window->ReportTabDropHover(browser, before_id > 0 ? before_id : 0);
+      callback->Success("OK");
+      return;
+    }
+
+    if (action == "closetab" || action == "selecttab") {
+      if (request_dict->GetType("id") != VTYPE_INT ||
+          request_dict->GetInt("id") <= 0) {
+        callback->Failure(-1, "ERROR: a native content browser id is required");
+        return;
+      }
+      if (window->RequestTabCommand(action, request_dict->GetInt("id"))) {
+        callback->Success("OK");
+      } else {
+        callback->Failure(-1, "ERROR: tab command was not accepted");
+      }
+      return;
+    }
+
+    callback->Failure(-1, "ERROR: unknown tab bar action");
   }
 
   static void HandleShowFileDialog(CefRefPtr<CefBrowser> browser,

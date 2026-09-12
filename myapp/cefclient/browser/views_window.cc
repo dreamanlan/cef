@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <set>
 
 #include "include/base/cef_build.h"
 #include "include/base/cef_callback.h"
@@ -18,6 +19,7 @@
 #include "myapp/cefclient/browser/default_client_handler.h"
 #include "myapp/cefclient/browser/main_context.h"
 #include "myapp/cefclient/browser/resource.h"
+#include "myapp/cefclient/browser/tab_drag_controller.h"
 #include "myapp/cefclient/browser/views_style.h"
 #include "myapp/cefclient/common/custom_scheme_common.h"
 #include "myapp/cefclient/hostclr/HostCLR.h"
@@ -199,6 +201,190 @@ CefBrowserViewDelegate::ChromeToolbarType CalculateChromeToolbarType(
   return CEF_CTT_NORMAL;
 }
 
+// Per-tab delegate for a content BrowserView (see MULTITAB_WINDOW_DESIGN.md,
+// M3). A BrowserView's delegate cannot be replaced after creation, so the view
+// holds this small forwarding object instead of the ViewsWindow itself, and
+// |owner_| is re-pointed when the tab moves to another window. All methods run
+// on the browser process UI thread and become no-ops once the owner is gone.
+class ContentBrowserViewDelegate;
+
+// Live content view delegates in this process. Only ever touched on the UI
+// thread, like LiveViewsWindows() just below, so no extra locking is
+// needed. Used to recognise this class without RTTI.
+// Leaked on purpose: no exit-time destructor is allowed, and the set must
+// outlive every delegate instance anyway.
+std::set<ContentBrowserViewDelegate*>& LiveContentDelegates() {
+  static auto* const instance = new std::set<ContentBrowserViewDelegate*>();
+  return *instance;
+}
+
+// Live Alloy-style Views windows in this process. Only ever touched on the
+// browser process UI thread, together with the ViewsWindow constructor and
+// destructor, so no extra locking is needed. Used to recognise the window that
+// owns a browser view's delegate while a tab moves between windows (M3).
+// Leaked on purpose: no exit-time destructor is allowed, and the set must
+// outlive every ViewsWindow instance anyway.
+std::set<ViewsWindow*>& LiveViewsWindows() {
+  static auto* const instance = new std::set<ViewsWindow*>();
+  return *instance;
+}
+
+class ContentBrowserViewDelegate : public CefBrowserViewDelegate {
+ public:
+  explicit ContentBrowserViewDelegate(ViewsWindow* owner) : owner_(owner) {
+    LiveContentDelegates().insert(this);
+  }
+
+  ContentBrowserViewDelegate(const ContentBrowserViewDelegate&) = delete;
+  ContentBrowserViewDelegate& operator=(const ContentBrowserViewDelegate&) =
+      delete;
+
+  ViewsWindow* owner() const { return owner_; }
+  void set_owner(ViewsWindow* owner) { owner_ = owner; }
+
+  // CefBrowserViewDelegate methods:
+  void OnBrowserDestroyed(CefRefPtr<CefBrowserView> browser_view,
+                          CefRefPtr<CefBrowser> browser) override {
+    if (owner_) {
+      owner_->OnBrowserDestroyed(browser_view, browser);
+    }
+  }
+
+  CefRefPtr<CefBrowserViewDelegate> GetDelegateForPopupBrowserView(
+      CefRefPtr<CefBrowserView> browser_view,
+      const CefBrowserSettings& settings,
+      CefRefPtr<CefClient> client,
+      bool is_devtools) override {
+    if (owner_) {
+      return owner_->GetDelegateForPopupBrowserView(browser_view, settings,
+                                                    client, is_devtools);
+    }
+    return nullptr;
+  }
+
+  bool OnPopupBrowserViewCreated(CefRefPtr<CefBrowserView> browser_view,
+                                 CefRefPtr<CefBrowserView> popup_browser_view,
+                                 bool is_devtools) override {
+    if (owner_) {
+      return owner_->OnPopupBrowserViewCreated(browser_view, popup_browser_view,
+                                               is_devtools);
+    }
+    return false;
+  }
+
+  ChromeToolbarType GetChromeToolbarType(
+      CefRefPtr<CefBrowserView> browser_view) override {
+    if (owner_) {
+      return owner_->GetChromeToolbarType(browser_view);
+    }
+    return CEF_CTT_NONE;
+  }
+
+  bool UseFramelessWindowForPictureInPicture(
+      CefRefPtr<CefBrowserView> browser_view) override {
+    if (owner_) {
+      return owner_->UseFramelessWindowForPictureInPicture(browser_view);
+    }
+    return false;
+  }
+
+#if CEF_API_ADDED(13601)
+  bool AllowMoveForPictureInPicture(
+      CefRefPtr<CefBrowserView> browser_view) override {
+    if (owner_) {
+      return owner_->AllowMoveForPictureInPicture(browser_view);
+    }
+    return false;
+  }
+#endif
+
+#if CEF_API_ADDED(14400)
+  bool AllowPictureInPictureWithoutUserActivation(
+      CefRefPtr<CefBrowserView> browser_view) override {
+    if (owner_) {
+      return owner_->AllowPictureInPictureWithoutUserActivation(browser_view);
+    }
+    return false;
+  }
+#endif
+
+  cef_runtime_style_t GetBrowserRuntimeStyle() override {
+    if (owner_) {
+      return owner_->GetBrowserRuntimeStyle();
+    }
+    return CEF_RUNTIME_STYLE_DEFAULT;
+  }
+
+  // CefViewDelegate methods:
+  CefSize GetPreferredSize(CefRefPtr<CefView> view) override {
+    if (owner_) {
+      return owner_->GetPreferredSize(view);
+    }
+    return CefSize();
+  }
+
+  CefSize GetMinimumSize(CefRefPtr<CefView> view) override {
+    if (owner_) {
+      return owner_->GetMinimumSize(view);
+    }
+    return CefSize();
+  }
+
+  void OnWindowChanged(CefRefPtr<CefView> view, bool added) override {
+    if (owner_) {
+      owner_->OnWindowChanged(view, added);
+    }
+  }
+
+  void OnLayoutChanged(CefRefPtr<CefView> view,
+                       const CefRect& new_bounds) override {
+    if (owner_) {
+      owner_->OnLayoutChanged(view, new_bounds);
+    }
+  }
+
+  void OnThemeChanged(CefRefPtr<CefView> view) override {
+    if (owner_) {
+      owner_->OnThemeChanged(view);
+    }
+  }
+
+ private:
+  ~ContentBrowserViewDelegate() override {
+    LiveContentDelegates().erase(this);
+  }
+
+  // Weak, may be nullptr after the owning window is destroyed.
+  ViewsWindow* owner_;
+
+  IMPLEMENT_REFCOUNTING(ContentBrowserViewDelegate);
+};
+
+// Returns the live content view delegate identified by |delegate|, or nullptr
+// when |delegate| is not one of them (for example a popup ViewsWindow).
+// Takes the base CefViewDelegate pointer returned by CefView::GetDelegate().
+ContentBrowserViewDelegate* GetContentDelegate(CefViewDelegate* delegate) {
+  if (!delegate) {
+    return nullptr;
+  }
+  for (auto* content_delegate : LiveContentDelegates()) {
+    if (static_cast<CefViewDelegate*>(content_delegate) == delegate) {
+      return content_delegate;
+    }
+  }
+  return nullptr;
+}
+
+// Detach every content view still pointing at |owner| so later callbacks
+// become no-ops instead of touching a destroyed window.
+void ClearContentDelegateOwners(ViewsWindow* owner) {
+  for (auto* content_delegate : LiveContentDelegates()) {
+    if (content_delegate->owner() == owner) {
+      content_delegate->set_owner(nullptr);
+    }
+  }
+}
+
 }  // namespace
 
 // static
@@ -217,12 +403,14 @@ CefRefPtr<ViewsWindow> ViewsWindow::Create(
   CefRefPtr<ViewsWindow> views_window =
       new ViewsWindow(type, delegate, nullptr, command_line);
 
+  // Preserve creation parameters independently of the optional overlay.
+  views_window->settings_ = settings;
+  views_window->request_context_ = request_context;
+
   // Only create an overlay browser for a primary window.
   if (command_line->HasSwitch(switches::kShowOverlayBrowser)) {
     views_window->with_overlay_browser_ = true;
     views_window->initial_url_ = url;
-    views_window->settings_ = settings;
-    views_window->request_context_ = request_context;
   }
 
   const auto expected_browser_runtime_style = views_window->use_alloy_style_
@@ -234,11 +422,65 @@ CefRefPtr<ViewsWindow> ViewsWindow::Create(
 
   // Create a new BrowserView.
   CefRefPtr<CefBrowserView> browser_view = CefBrowserView::CreateBrowserView(
-      client, url, settings, nullptr, request_context, views_window);
+      client, url, settings, nullptr, request_context,
+      new ContentBrowserViewDelegate(views_window.get()));
   CHECK_EQ(expected_browser_runtime_style, browser_view->GetRuntimeStyle());
 
   // Associate the BrowserView with the ViewsWindow.
   views_window->SetBrowserView(browser_view);
+
+  // Create a new top-level Window. It will show itself after creation.
+  auto window = CefWindow::CreateTopLevelWindow(views_window);
+  CHECK_EQ(expected_window_runtime_style, window->GetRuntimeStyle());
+
+  return views_window;
+}
+
+// static
+CefRefPtr<ViewsWindow> ViewsWindow::CreateForExistingView(
+    WindowType type,
+    Delegate* delegate,
+    CefRefPtr<CefBrowserView> browser_view,
+    const CefBrowserSettings& settings,
+    CefRefPtr<CefRequestContext> request_context,
+    CefRefPtr<CefCommandLine> command_line) {
+  CEF_REQUIRE_UI_THREAD();
+  DCHECK(delegate);
+
+  // The view must be alive, unparented, and wrapped by a live per-tab
+  // content delegate so its callbacks can be re-pointed at the new window.
+  if (!browser_view || !browser_view->IsValid() ||
+      browser_view->GetParentView() ||
+      !GetContentDelegate(browser_view->GetDelegate().get())) {
+    return nullptr;
+  }
+
+  const auto expected_browser_runtime_style = delegate->UseAlloyStyle()
+                                                  ? CEF_RUNTIME_STYLE_ALLOY
+                                                  : CEF_RUNTIME_STYLE_CHROME;
+  if (browser_view->GetRuntimeStyle() != expected_browser_runtime_style) {
+    return nullptr;
+  }
+
+  // Create a new ViewsWindow. The constructor associates the view and
+  // notifies the delegate (initial tab registration).
+  CefRefPtr<ViewsWindow> views_window =
+      new ViewsWindow(type, delegate, browser_view, command_line);
+
+  // Preserve creation parameters for future new tabs in this window.
+  views_window->settings_ = settings;
+  views_window->request_context_ = request_context;
+
+  // Re-point the per-tab view delegate before attaching the view so
+  // callbacks during window creation reach the new window.
+  if (!RepointViewOwner(browser_view, views_window.get())) {
+    DCHECK(false) << "Validated per-tab delegate was not re-pointable";
+    return nullptr;
+  }
+
+  const auto expected_window_runtime_style =
+      views_window->use_alloy_style_window_ ? CEF_RUNTIME_STYLE_ALLOY
+                                            : CEF_RUNTIME_STYLE_CHROME;
 
   // Create a new top-level Window. It will show itself after creation.
   auto window = CefWindow::CreateTopLevelWindow(views_window);
@@ -304,6 +546,11 @@ void ViewsWindow::SetBounds(const CefRect& bounds) {
   }
 }
 
+CefRect ViewsWindow::GetWindowBounds() const {
+  CEF_REQUIRE_UI_THREAD();
+  return window_ ? window_->GetBounds() : CefRect();
+}
+
 void ViewsWindow::SetBrowserSize(const CefSize& size,
                                  bool has_position,
                                  const CefPoint& position) {
@@ -321,16 +568,25 @@ void ViewsWindow::SetBrowserSize(const CefSize& size,
 
 void ViewsWindow::Close(bool force) {
   CEF_REQUIRE_UI_THREAD();
-  if (!browser_view_) {
-    return;
-  }
-
 #if defined(OS_MAC)
   if (hide_on_close_) {
     // Don't hide on close if we actually want to close.
     hide_on_close_ = false;
   }
 #endif
+
+  if (SupportsMultipleTabs() && delegate_->OnCloseRequested(force)) {
+    return;
+  }
+
+  if (!browser_view_) {
+    // A tab container clears the active view before final window teardown.
+    // CanClose() still asks the container whether other tabs remain.
+    if (SupportsMultipleTabs() && window_) {
+      window_->Close();
+    }
+    return;
+  }
 
   CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
   if (browser) {
@@ -435,7 +691,7 @@ void ViewsWindow::SetTabbarDraggableRegions(
 void ViewsWindow::ApplyDraggableRegions() {
   CEF_REQUIRE_UI_THREAD();
 
-  if (!window_) {
+  if (!window_ || window_closing_) {
     return;
   }
 
@@ -608,6 +864,138 @@ void ViewsWindow::SetTabbarHeight(int height_dip) {
   }
 }
 
+bool ViewsWindow::RequestTabSnapshot() {
+  CEF_REQUIRE_UI_THREAD();
+  if (type_ != WindowType::NORMAL || !window_ || window_closing_ ||
+      !window_ui_initialized_) {
+    return false;
+  }
+  return delegate_->OnTabSnapshotRequested();
+}
+
+void ViewsWindow::SetTabSnapshot(const std::string& json) {
+  CEF_REQUIRE_UI_THREAD();
+  if (type_ != WindowType::NORMAL || !window_ || window_closing_) {
+    return;
+  }
+  // Resolve activation on UI, not from a potentially delayed main snapshot.
+  auto browser = browser_view_ ? browser_view_->GetBrowser() : nullptr;
+  const int active_id = browser ? browser->GetIdentifier() : 0;
+  PushToTabbar(
+      "window.__tabbarApi&&__tabbarApi.onTabsChanged&&"
+      "__tabbarApi.onTabsChanged(" + json + "," +
+      std::to_string(active_id) + ");");
+}
+
+bool ViewsWindow::RequestNewTab(const std::string& url) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_) {
+    return false;
+  }
+  return delegate_->OnNewTabRequested(url);
+}
+
+bool ViewsWindow::RequestTabCommand(const std::string& action,
+                                    int browser_id) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_ || browser_id <= 0 ||
+      (action != "closetab" && action != "selecttab")) {
+    return false;
+  }
+  return delegate_->OnTabCommandRequested(action, browser_id);
+}
+
+bool ViewsWindow::RequestTabReorder(int browser_id, int before_id) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_ || browser_id <= 0 || before_id < 0) {
+    return false;
+  }
+  return delegate_->OnTabReorderRequested(browser_id, before_id);
+}
+
+bool ViewsWindow::RequestTabDetach(int browser_id) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_ || browser_id <= 0) {
+    return false;
+  }
+  return delegate_->OnTabDetachRequested(browser_id);
+}
+
+bool ViewsWindow::RequestWindowDrag(bool allow_merge) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_) {
+    printf_log(LOG_SEVERITY_WARNING,
+              "[drag] request rejected: supports=%d window=%d closing=%d "
+              "ui_init=%d",
+              SupportsMultipleTabs() ? 1 : 0, window_ ? 1 : 0,
+              window_closing_ ? 1 : 0, window_ui_initialized_ ? 1 : 0);
+    return false;
+  }
+  return delegate_->OnWindowDragRequested(allow_merge);
+}
+
+void ViewsWindow::ReportTabDropHover(CefRefPtr<CefBrowser> tabbar_browser,
+                                     int before_id) {
+  CEF_REQUIRE_UI_THREAD();
+#if defined(OS_WIN) || defined(OS_MAC) || defined(OS_LINUX)
+  TabDragController::GetInstance().ReportDropHover(tabbar_browser, before_id);
+#endif
+}
+
+CefRefPtr<CefBrowser> ViewsWindow::GetTabbarBrowser() const {
+  CEF_REQUIRE_UI_THREAD();
+  return tabbar_view_ ? tabbar_view_->GetBrowser() : nullptr;
+}
+
+CefRect ViewsWindow::GetTabbarScreenBoundsDip() const {
+  CEF_REQUIRE_UI_THREAD();
+  return tabbar_view_ ? tabbar_view_->GetBoundsInScreen() : CefRect();
+}
+
+CefWindowHandle ViewsWindow::GetTopLevelNativeHandle() const {
+  CEF_REQUIRE_UI_THREAD();
+  return window_ ? window_->GetWindowHandle() : kNullWindowHandle;
+}
+
+void ViewsWindow::NotifyTabDragMove() {
+  CEF_REQUIRE_UI_THREAD();
+#if defined(OS_LINUX)
+  TabDragController::GetInstance().NotifyDragMove();
+#endif
+}
+
+void ViewsWindow::NotifyTabDragEnd(bool cancel) {
+  CEF_REQUIRE_UI_THREAD();
+#if defined(OS_LINUX)
+  TabDragController::GetInstance().NotifyDragEnd(!cancel);
+#endif
+}
+
+void ViewsWindow::ToggleMaximize() {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || window_closing_) {
+    return;
+  }
+  if (window_->IsMaximized()) {
+    window_->Restore();
+  } else {
+    window_->Maximize();
+  }
+}
+
+// static
+std::vector<ViewsWindow*> ViewsWindow::GetLiveWindows() {
+  CEF_REQUIRE_UI_THREAD();
+  return std::vector<ViewsWindow*>(LiveViewsWindows().begin(),
+                                   LiveViewsWindows().end());
+}
+
+
 void ViewsWindow::ExecuteTabbarCommand(const std::string& action,
                                        const std::string& url) {
   CEF_REQUIRE_UI_THREAD();
@@ -656,9 +1044,12 @@ CefRefPtr<CefBrowserViewDelegate> ViewsWindow::GetDelegateForPopupBrowserView(
   DCHECK(popup_delegate != delegate_);
 
   // Create a new ViewsWindow for the popup BrowserView.
-  return new ViewsWindow(
+  CefRefPtr<ViewsWindow> popup_window =
+      new ViewsWindow(
       is_devtools ? WindowType::DEVTOOLS : WindowType::NORMAL, popup_delegate,
       nullptr, command_line_);
+  popup_window->settings_ = settings;
+  return popup_window;
 }
 
 bool ViewsWindow::OnPopupBrowserViewCreated(
@@ -679,6 +1070,12 @@ bool ViewsWindow::OnPopupBrowserViewCreated(
 
   // Should not be the same ViewsWindow as |this|.
   DCHECK(popup_window != this);
+
+  // Preserve the popup's actual request context, not the opener's.
+  if (auto popup_browser = popup_browser_view->GetBrowser()) {
+    popup_window->request_context_ =
+        popup_browser->GetHost()->GetRequestContext();
+  }
 
   // Associate the ViewsWindow with the new popup browser.
   popup_window->SetBrowserView(popup_browser_view);
@@ -799,7 +1196,8 @@ void ViewsWindow::OnWindowFullscreenTransition(CefRefPtr<CefWindow> window,
   // With Alloy style we need to explicitly exit browser fullscreen when
   // exiting window fullscreen. Chrome style handles this internally.
   if (use_alloy_style_ && should_change && !window->IsFullscreen()) {
-    CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
+    CefRefPtr<CefBrowser> browser =
+        browser_view_ ? browser_view_->GetBrowser() : nullptr;
     if (browser && browser->GetHost()->IsFullscreen()) {
       // Will not cause a resize because the fullscreen transition has already
       // begun.
@@ -906,12 +1304,16 @@ void ViewsWindow::OnWindowClosing(CefRefPtr<CefWindow> window) {
   CEF_REQUIRE_UI_THREAD();
   DCHECK(window_);
 
+  DestroyWindowControls();
+
   delegate_->OnViewsWindowClosing(this);
 }
 
 void ViewsWindow::OnWindowDestroyed(CefRefPtr<CefWindow> window) {
   CEF_REQUIRE_UI_THREAD();
   DCHECK(window_);
+
+  DestroyWindowControls();
 
   delegate_->OnViewsWindowDestroyed(this);
 
@@ -947,7 +1349,8 @@ void ViewsWindow::OnWindowBoundsChanged(CefRefPtr<CefWindow> window,
 bool ViewsWindow::CanClose(CefRefPtr<CefWindow> window) {
   CEF_REQUIRE_UI_THREAD();
 
-  CefRefPtr<CefBrowser> browser = browser_view_->GetBrowser();
+  CefRefPtr<CefBrowser> browser =
+      browser_view_ ? browser_view_->GetBrowser() : nullptr;
 
 #if defined(OS_MAC)
   // On MacOS we might hide the window instead of closing it.
@@ -963,6 +1366,11 @@ bool ViewsWindow::CanClose(CefRefPtr<CefWindow> window) {
     return false;
   }
 #endif
+
+  // Do not let the active browser close a shared window behind other tabs.
+  if (SupportsMultipleTabs() && delegate_->OnCloseRequested(false)) {
+    return false;
+  }
 
   // Allow the window to close if the browser says it's OK.
   if (browser) {
@@ -1080,13 +1488,34 @@ CefSize ViewsWindow::GetMinimumSize(CefRefPtr<CefView> view) {
   return CefSize();
 }
 
+void ViewsWindow::DestroyWindowControls() {
+  CEF_REQUIRE_UI_THREAD();
+  // Block reentrant geometry updates before releasing any controls.
+  window_closing_ = true;
+
+  if (tabbar_client_) {
+    tabbar_client_->SetTabbarOwnerWindow(nullptr);
+    tabbar_client_ = nullptr;
+  }
+  if (overlay_controls_) {
+    overlay_controls_->Destroy();
+    overlay_controls_ = nullptr;
+  }
+  if (overlay_browser_) {
+    overlay_browser_->Destroy();
+    overlay_browser_ = nullptr;
+  }
+  toolbar_ = nullptr;
+}
+
 void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
   const int view_id = view->GetID();
   if (view_id != ID_BROWSER_VIEW) {
     return;
   }
 
-  if (added) {
+  if (added && !window_ui_initialized_ && !window_closing_) {
+    window_ui_initialized_ = true;
     if (with_html_tabbar_ && !with_standard_buttons_) {
       // Frameless HTML tab bar window: float the native controls (hamburger
       // menu + min/max/close) over the top-right of the tab strip row (issue
@@ -1112,7 +1541,6 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
 
       overlay_browser_->Initialize(window_, client, initial_url_, settings_,
                                    request_context_);
-      request_context_ = nullptr;
     }
 
     if (with_html_tabbar_ && !tabbar_view_) {
@@ -1135,8 +1563,14 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
       // draws its own toolbar). See §6.5 / §8 of TABBAR_DESIGN.md.
       const std::string tabbar_url =
           std::string(custom_scheme::kCustomSchemeName) + "://tabbar/" +
-          (use_alloy_style_ ? "?nav=1" : "?nav=0");
+          (use_alloy_style_ ? "?nav=1" : "?nav=0") +
+          (SupportsMultipleTabs() ? "&multitab=1" : "&multitab=0");
       CefBrowserSettings tabbar_settings;
+      // Match the strip's background (#dee1e6) so the pre-first-paint area
+      // reads as "loading" instead of a white flash while the renderer's CLR
+      // warms up.
+      tabbar_settings.background_color =
+          CefColorSetARGB(255, 0xde, 0xe1, 0xe6);
       tabbar_view_ = CefBrowserView::CreateBrowserView(
           tabbar_client_, tabbar_url, tabbar_settings, /*extra_info=*/nullptr,
           /*request_context=*/nullptr,
@@ -1164,36 +1598,7 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
                  static_cast<int>(chrome_toolbar_type_),
                  use_alloy_style_ ? 1 : 0,
                  static_cast<int>(window_->GetChildViewCount()));
-      if ((chrome_toolbar_type_ == CEF_CTT_NORMAL ||
-           chrome_toolbar_type_ == CEF_CTT_LOCATION) &&
-          !toolbar_) {
-        toolbar_ = browser_view_->GetChromeToolbar();
-        printf_log(LOG_SEVERITY_INFO, "[tabbar] GetChromeToolbar=%s",
-                   toolbar_ ? "non-null" : "null");
-        if (toolbar_) {
-          const CefSize tb_pref = toolbar_->GetPreferredSize();
-          printf_log(LOG_SEVERITY_INFO,
-                     "[tabbar] toolbar pref size=%dx%d visible=%d",
-                     tb_pref.width, tb_pref.height,
-                     toolbar_->IsVisible() ? 1 : 0);
-          // CEF forces TYPE_POPUP + trusted_source=true for Views-hosted
-          // Chrome browsers (chrome_browser_host_impl.cc: "Don't show title
-          // bar or address"), which makes BrowserView::IsToolbarVisible()
-          // false and leaves the toolbar hidden at creation. This window's
-          // layout owns the toolbar as its address bar, so re-show it
-          // explicitly (it is reparented out of the BrowserView below and
-          // is no longer managed by Chrome's own visibility logic).
-          toolbar_->SetVisible(true);
-          window_->AddChildViewAt(toolbar_, 1);
-          CefRefPtr<CefView> tb_parent = toolbar_->GetParentView();
-          printf_log(LOG_SEVERITY_INFO,
-                     "[tabbar] after dock: visible=%d parent_id=%d "
-                     "child_count=%d",
-                     toolbar_->IsVisible() ? 1 : 0,
-                     tb_parent ? tb_parent->GetID() : -2,
-                     static_cast<int>(window_->GetChildViewCount()));
-        }
-      }
+      UpdateBrowserToolbar();
       window_->Layout();
       for (int i = 0; i < static_cast<int>(window_->GetChildViewCount());
            ++i) {
@@ -1208,37 +1613,61 @@ void ViewsWindow::OnWindowChanged(CefRefPtr<CefView> view, bool added) {
                    cb.width, cb.height);
       }
     }
-  } else {
-    // Remove any controls that may include the Chrome toolbar before removing
-    // the BrowserView.
-    if (overlay_controls_) {
-      overlay_controls_->Destroy();
-      overlay_controls_ = nullptr;
-      toolbar_ = nullptr;
-    } else if (toolbar_) {
-      toolbar_ = nullptr;
-    }
-    if (overlay_browser_) {
-      overlay_browser_->Destroy();
-      overlay_browser_ = nullptr;
-    }
-
-    if (tabbar_view_) {
-      // Remove the tab bar strip before the content BrowserView is removed.
-      if (tabbar_client_) {
-        // Drop the back-pointer so a late OnDraggableRegionsChanged cannot
-        // reach a torn-down window.
-        tabbar_client_->SetTabbarOwnerWindow(nullptr);
-        tabbar_client_ = nullptr;
-      }
-      window_->RemoveChildView(tabbar_view_);
-      tabbar_view_ = nullptr;
-    }
   }
+}
+
+void ViewsWindow::UpdateBrowserToolbar() {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || window_closing_ || !tabbar_view_ ||
+      (chrome_toolbar_type_ != CEF_CTT_NORMAL &&
+       chrome_toolbar_type_ != CEF_CTT_LOCATION)) {
+    return;
+  }
+
+  CefRefPtr<CefView> next_toolbar =
+      browser_view_ ? browser_view_->GetChromeToolbar() : nullptr;
+  if (toolbar_.get() == next_toolbar.get()) {
+    return;
+  }
+
+  // Keep inactive toolbars in the view tree so their native views stay alive.
+  if (toolbar_) {
+    toolbar_->SetVisible(false);
+  }
+  toolbar_ = next_toolbar;
+  printf_log(LOG_SEVERITY_INFO, "[tabbar] GetChromeToolbar=%s",
+             toolbar_ ? "non-null" : "null");
+  if (!toolbar_) {
+    return;
+  }
+
+  const CefSize tb_pref = toolbar_->GetPreferredSize();
+  printf_log(LOG_SEVERITY_INFO,
+             "[tabbar] toolbar pref size=%dx%d visible=%d",
+             tb_pref.width, tb_pref.height,
+             toolbar_->IsVisible() ? 1 : 0);
+  // The window layout explicitly owns visibility for a docked toolbar.
+  toolbar_->SetVisible(true);
+  if (!IsWindowChild(toolbar_)) {
+    window_->AddChildViewAt(toolbar_, 1);
+  }
+  CefRefPtr<CefView> tb_parent = toolbar_->GetParentView();
+  printf_log(LOG_SEVERITY_INFO,
+             "[tabbar] after dock: visible=%d parent_id=%d "
+             "child_count=%d",
+             toolbar_->IsVisible() ? 1 : 0,
+             tb_parent ? tb_parent->GetID() : -2,
+             static_cast<int>(window_->GetChildViewCount()));
 }
 
 void ViewsWindow::OnLayoutChanged(CefRefPtr<CefView> view,
                                   const CefRect& new_bounds) {
+  CEF_REQUIRE_UI_THREAD();
+  // Only the active content view may update window-owned controls.
+  if (!window_ || window_closing_ || view.get() != browser_view_.get()) {
+    return;
+  }
+
   const int view_id = view->GetID();
   if (view_id != ID_BROWSER_VIEW) {
     return;
@@ -1272,7 +1701,47 @@ void ViewsWindow::OnThemeChanged(CefRefPtr<CefView> view) {
   views_style::OnThemeChanged(view);
 }
 
-ViewsWindow::~ViewsWindow() = default;
+// static
+CefRefPtr<ViewsWindow> ViewsWindow::GetHostWindowForView(
+    CefRefPtr<CefBrowserView> browser_view) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser_view || !browser_view->IsValid()) {
+    return nullptr;
+  }
+  auto* delegate = browser_view->GetDelegate().get();
+  if (!delegate) {
+    return nullptr;
+  }
+  if (auto* content_delegate = GetContentDelegate(delegate)) {
+    return content_delegate->owner();
+  }
+  for (auto* window : LiveViewsWindows()) {
+    if (static_cast<CefBrowserViewDelegate*>(window) == delegate) {
+      return window;
+    }
+  }
+  return nullptr;
+}
+
+// static
+bool ViewsWindow::RepointViewOwner(CefRefPtr<CefBrowserView> browser_view,
+                                   ViewsWindow* owner) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!browser_view || !browser_view->IsValid()) {
+    return false;
+  }
+  if (auto* content_delegate =
+          GetContentDelegate(browser_view->GetDelegate().get())) {
+    content_delegate->set_owner(owner);
+    return true;
+  }
+  return false;
+}
+
+ViewsWindow::~ViewsWindow() {
+  ClearContentDelegateOwners(this);
+  LiveViewsWindows().erase(this);
+}
 
 ViewsWindow::ViewsWindow(WindowType type,
                          Delegate* delegate,
@@ -1283,6 +1752,8 @@ ViewsWindow::ViewsWindow(WindowType type,
       use_alloy_style_(delegate->UseAlloyStyle()),
       command_line_(command_line) {
   DCHECK(delegate_);
+
+  LiveViewsWindows().insert(this);
 
   if (browser_view) {
     SetBrowserView(browser_view);
@@ -1340,6 +1811,191 @@ ViewsWindow::ViewsWindow(WindowType type,
       command_line->HasSwitch(switches::kPipNoUserActivationEnabled);
 }
 
+void ViewsWindow::OnBrowserDestroyed(
+    CefRefPtr<CefBrowserView> browser_view,
+    CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+  delegate_->OnBrowserViewDestroyed(browser_view);
+}
+
+CefRefPtr<CefBrowserView> ViewsWindow::CreateTabBrowserView(
+    CefRefPtr<CefClient> client, const CefString& url) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_ || !client) {
+    return nullptr;
+  }
+
+  return CefBrowserView::CreateBrowserView(
+      client, url, settings_, nullptr, request_context_,
+      new ContentBrowserViewDelegate(this));
+}
+
+bool ViewsWindow::AddBrowserView(CefRefPtr<CefBrowserView> browser_view) {
+  CEF_REQUIRE_UI_THREAD();
+  if (!SupportsMultipleTabs() || !window_ || window_closing_ ||
+      !window_ui_initialized_ ||
+      !browser_view || !browser_view->IsValid() ||
+      browser_view.get() == tabbar_view_.get() ||
+       browser_view->GetParentView() ||
+       !GetHostWindowForView(browser_view) ||
+      browser_view->GetRuntimeStyle() !=
+          (use_alloy_style_ ? CEF_RUNTIME_STYLE_ALLOY
+                            : CEF_RUNTIME_STYLE_CHROME)) {
+    return false;
+  }
+
+  // Associate before attachment, without changing the active view or controls.
+  browser_view->SetID(0);
+  browser_view->SetVisible(false);
+  delegate_->OnBrowserViewCreated(browser_view);
+  if (!window_ || window_closing_ || !browser_view->IsValid() ||
+      browser_view->GetParentView()) {
+    delegate_->OnBrowserViewDestroyed(browser_view);
+    return false;
+  }
+
+  window_->AddChildView(browser_view);
+  // Hidden windowed views are not enumerable via GetChildViewAt; verify the
+  // attachment through the parent link instead (a freshly attached view
+  // reports the window's internal container as its parent).
+  if (!browser_view->GetParentView()) {
+    delegate_->OnBrowserViewDestroyed(browser_view);
+    return false;
+  }
+  if (auto layout = window_->GetLayout()) {
+    if (auto box_layout = layout->AsBoxLayout()) {
+      box_layout->SetFlexForView(browser_view, 1);
+    }
+  }
+  window_->Layout();
+  return true;
+}
+
+bool ViewsWindow::IsWindowChild(CefRefPtr<CefView> view) const {
+  CEF_REQUIRE_UI_THREAD();
+  if (!window_ || !view) {
+    return false;
+  }
+  const int count = static_cast<int>(window_->GetChildViewCount());
+  for (int i = 0; i < count; ++i) {
+    if (window_->GetChildViewAt(i).get() == view.get()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool ViewsWindow::RemoveBrowserView(CefRefPtr<CefBrowserView> browser_view,
+                                    bool allow_active_removal) {
+  CEF_REQUIRE_UI_THREAD();
+  const CefRefPtr<CefView> parent =
+      browser_view ? browser_view->GetParentView() : nullptr;
+  // Hidden windowed views are not enumerable via GetChildViewAt, so the
+  // membership check goes through the per-tab delegate wrapper instead of
+  // the parent link: only views created by this window are detachable.
+  const CefRefPtr<ViewsWindow> host_window = GetHostWindowForView(browser_view);
+  if (type_ != WindowType::NORMAL || !window_ || window_closing_ ||
+      !browser_view || !browser_view->IsValid() ||
+      (!allow_active_removal &&
+       browser_view.get() == browser_view_.get()) ||
+      browser_view.get() == tabbar_view_.get() ||
+      host_window.get() != this) {
+    printf_log(LOG_SEVERITY_WARNING,
+              "[tabs] remove view rejected: valid=%d is_active=%d "
+              "is_tabbar=%d host=%d parent_id=%d parent=%p window=%p "
+              "window_closing=%d",
+              (browser_view && browser_view->IsValid()) ? 1 : 0,
+              browser_view.get() == browser_view_.get() ? 1 : 0,
+              browser_view.get() == tabbar_view_.get() ? 1 : 0,
+              host_window.get() == this ? 1 : 0,
+              parent ? parent->GetID() : -1,
+              static_cast<const void*>(parent.get()),
+              static_cast<const void*>(window_.get()),
+              window_closing_ ? 1 : 0);
+    return false;
+  }
+
+  // Keep the toolbar alive while detaching it and its owning content view.
+  CefRefPtr<CefView> removed_toolbar;
+  if (browser_view->GetRuntimeStyle() == CEF_RUNTIME_STYLE_CHROME) {
+    removed_toolbar = browser_view->GetChromeToolbar();
+  }
+  browser_view->SetID(0);
+  browser_view->SetVisible(false);
+  if (removed_toolbar && removed_toolbar->IsValid() &&
+      IsWindowChild(removed_toolbar)) {
+    removed_toolbar->SetVisible(false);
+    if (auto layout = window_->GetLayout()) {
+      if (auto box_layout = layout->AsBoxLayout()) {
+        box_layout->ClearFlexForView(removed_toolbar);
+      }
+    }
+    window_->RemoveChildView(removed_toolbar);
+  }
+  if (auto layout = window_->GetLayout()) {
+    if (auto box_layout = layout->AsBoxLayout()) {
+      box_layout->ClearFlexForView(browser_view);
+    }
+  }
+  window_->RemoveChildView(browser_view);
+  window_->Layout();
+  if (allow_active_removal && browser_view_.get() == browser_view.get()) {
+    // The shell is being emptied (merge): drop the active-view reference so
+    // the default close path (CanClose -> TryCloseBrowser) cannot close the
+    // browser that now lives in another window. Found via runtime log:
+    // the emptied source window killed the just-merged tab.
+    browser_view_ = nullptr;
+  }
+  return !browser_view->GetParentView();
+}
+
+bool ViewsWindow::SetActiveBrowserView(
+    CefRefPtr<CefBrowserView> browser_view,
+    bool request_focus) {
+  CEF_REQUIRE_UI_THREAD();
+  if (type_ != WindowType::NORMAL || !window_ || window_closing_) {
+    return false;
+  }
+  // Only views created by this window are switchable. Hidden windowed views
+  // are not enumerable via GetChildViewAt, so ownership goes through the
+  // per-tab delegate wrapper instead of the parent link.
+  if (browser_view &&
+      (!browser_view->IsValid() ||
+       browser_view.get() == tabbar_view_.get() ||
+       GetHostWindowForView(browser_view).get() != this)) {
+    return false;
+  }
+  if (browser_view_.get() == browser_view.get()) {
+    return true;
+  }
+
+  CefRefPtr<CefBrowserView> previous_view = browser_view_;
+  browser_view_ = browser_view;
+  content_regions_.clear();
+  // Publish the new active view before visibility changes trigger callbacks.
+  if (previous_view) {
+    previous_view->SetID(0);
+    previous_view->SetVisible(false);
+  }
+  if (browser_view_) {
+    browser_view_->SetID(ID_BROWSER_VIEW);
+    browser_view_->SetVisible(true);
+  }
+  UpdateBrowserToolbar();
+  window_->Layout();
+  ApplyDraggableRegions();
+  if (request_focus && browser_view_ && window_->IsVisible()) {
+    RequestBrowserFocus();
+  }
+  return true;
+}
+
+CefRefPtr<CefBrowserView> ViewsWindow::GetActiveBrowserView() const {
+  CEF_REQUIRE_UI_THREAD();
+  return browser_view_;
+}
+
 void ViewsWindow::SetBrowserView(CefRefPtr<CefBrowserView> browser_view) {
   DCHECK(!browser_view_);
   DCHECK(browser_view);
@@ -1347,6 +2003,7 @@ void ViewsWindow::SetBrowserView(CefRefPtr<CefBrowserView> browser_view) {
   DCHECK(!browser_view->IsAttached());
   browser_view_ = browser_view;
   browser_view_->SetID(ID_BROWSER_VIEW);
+  delegate_->OnBrowserViewCreated(browser_view_);
 }
 
 void ViewsWindow::CreateMenuModel() {
@@ -1384,7 +2041,7 @@ void ViewsWindow::MaybeRequestBrowserFocus() {
     // BaseClientHandler has some state that we need to query.
     if (auto handler =
             BaseClientHandler::GetForBrowser(browser_view_->GetBrowser());
-        handler->ShouldRequestFocus()) {
+        handler && handler->ShouldRequestFocus()) {
       RequestBrowserFocus();
     }
   }

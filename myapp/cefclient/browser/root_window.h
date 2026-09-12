@@ -22,6 +22,8 @@
 
 namespace client {
 
+class Tab;
+
 enum class WindowType {
   NORMAL,
 
@@ -126,6 +128,15 @@ class RootWindow
     // Called when the RootWindow has been destroyed.
     virtual void OnRootWindowDestroyed(RootWindow* root_window) = 0;
 
+    // Called on the main thread when a tab is detached from a window and
+    // should be adopted by a new top-level window. Returns nullptr when
+    // detached windows are not supported (MULTITAB_WINDOW_DESIGN.md M3).
+    virtual scoped_refptr<RootWindow> CreateDetachedWindow(
+        const std::shared_ptr<Tab>& tab,
+        const CefRect& bounds) {
+      return nullptr;
+    }
+
     // Called when the RootWindow is activated (becomes the foreground window).
     virtual void OnRootWindowActivated(RootWindow* root_window) = 0;
 
@@ -138,7 +149,9 @@ class RootWindow
   // instead of calling this method directly. |use_views| will be true if the
   // Views framework should be used. |use_alloy_style| will be true if Alloy
   // style should be used.
-  static scoped_refptr<RootWindow> Create(bool use_views, bool use_alloy_style);
+  static scoped_refptr<RootWindow> Create(bool use_views,
+                                        bool use_alloy_style,
+                                        WindowType window_type);
 
   // Returns the RootWindow associated with the specified |browser_id|. Must be
   // called on the main thread.
@@ -218,6 +231,9 @@ class RootWindow
 
   // Returns the browser that this window contains, if any.
   virtual CefRefPtr<CefBrowser> GetBrowser() const = 0;
+
+  // Main-thread lookup, including background browsers in tabbed windows.
+  virtual bool HasBrowser(int browser_id) const;
 
   // Returns the native handle for this window, if any.
   virtual ClientWindowHandle GetWindowHandle() const = 0;

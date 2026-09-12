@@ -4,6 +4,7 @@
 
 #include "myapp/cefclient/browser/root_window.h"
 #include "myapp/cefclient/browser/root_window_views.h"
+#include "myapp/cefclient/browser/tabbed_root_window_views.h"
 
 #if defined(OS_WIN)
 #include "myapp/cefclient/browser/root_window_win.h"
@@ -17,8 +18,13 @@ namespace client {
 
 // static
 scoped_refptr<RootWindow> RootWindow::Create(bool use_views,
-                                             bool use_alloy_style) {
+                                          bool use_alloy_style,
+                                          WindowType window_type) {
   if (use_views) {
+    // Keep dialog and DevTools windows on the existing implementation.
+    if (window_type == WindowType::NORMAL) {
+      return new TabbedRootWindowViews(use_alloy_style);
+    }
     return new RootWindowViews(use_alloy_style);
   }
 

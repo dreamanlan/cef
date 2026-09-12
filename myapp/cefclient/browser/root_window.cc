@@ -30,6 +30,12 @@ scoped_refptr<RootWindow> RootWindow::GetForBrowser(int browser_id) {
       browser_id);
 }
 
+bool RootWindow::HasBrowser(int browser_id) const {
+  REQUIRE_MAIN_THREAD();
+  const auto browser = GetBrowser();
+  return browser && browser->GetIdentifier() == browser_id;
+}
+
 bool RootWindow::IsWindowCreated() const {
   REQUIRE_MAIN_THREAD();
   return window_created_;

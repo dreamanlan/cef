@@ -15,6 +15,8 @@
 
 namespace client {
 
+class Tab;
+
 // Views framework implementation of a top-level window in the browser process.
 // The methods of this class must be called on the main thread unless otherwise
 // indicated.
@@ -75,9 +77,85 @@ class RootWindowViews : public RootWindow,
   void OnTest(int test_id) override;
   void OnExit() override;
 
+  // Preserve the source Tab when routing content lifecycle callbacks.
+  // Defaults retain the single-browser behavior until a container overrides it.
+  virtual void OnTabBrowserCreated(Tab* tab,
+                                   CefRefPtr<CefBrowser> browser) {
+    OnBrowserCreated(browser);
+  }
+  virtual void OnTabBrowserClosing(Tab* tab,
+                                   CefRefPtr<CefBrowser> browser) {
+    OnBrowserClosing(browser);
+  }
+  virtual bool OnTabBrowserCloseApproved(Tab* tab,
+                                         CefRefPtr<CefBrowser> browser) {
+    return OnBrowserCloseApproved(browser);
+  }
+  virtual void OnTabBrowserClosed(Tab* tab,
+                                  CefRefPtr<CefBrowser> browser) {
+    OnBrowserClosed(browser);
+  }
+
+  // Main-thread cached state notification, including inactive content tabs.
+  virtual void OnTabStateChanged(Tab* tab) {}
+
+  // Validate browser identity without retaining the source Tab in a UI task.
+  bool IsActiveTabBrowser(CefRefPtr<CefBrowser> browser) const {
+    CEF_REQUIRE_UI_THREAD();
+    if (!window_ || !browser || !browser->IsValid()) {
+      return false;
+    }
+    auto browser_view = window_->GetActiveBrowserView();
+    CefRefPtr<CefBrowser> active_browser =
+        browser_view ? browser_view->GetBrowser() : nullptr;
+    return active_browser && browser->IsSame(active_browser);
+  }
+  // Check the source view when a queued tab state update reaches the UI thread.
+  bool IsActiveTabBrowserView(CefRefPtr<CefBrowserView> browser_view) const {
+    CEF_REQUIRE_UI_THREAD();
+    return window_ && browser_view &&
+           window_->GetActiveBrowserView() == browser_view;
+  }
+
+  // Access the window shell on the UI thread only. Public for the drag
+  // controller, which resolves the dragged shell's strip geometry
+  // (MULTITAB_WINDOW_DESIGN.md, M4a tear-off anchoring).
+  CefRefPtr<ViewsWindow> GetViewsWindow() const;
+
  protected:
+  // Override to give each content tab its own handler and delegate.
+  virtual CefRefPtr<ClientHandler> CreateContentClientHandler(
+      bool with_controls, const std::string& url);
+
+  // Update the compatibility browser used by window-level callers.
+  void SetActiveBrowser(CefRefPtr<CefBrowser> browser);
+
+  // Seed the initial window bounds (UI thread). Used by detached tab
+  // adoption, which creates its window without the normal Init flow.
+  void SetInitialBounds(const CefRect& bounds) {
+    CEF_REQUIRE_UI_THREAD();
+    initial_bounds_ = bounds;
+  }
+
+  // Complete window-side teardown without a ViewsWindow (aborted detached
+  // tab adoption). Idempotent. Main thread only.
+  void NotifyWindowlessTeardown();
+
+  // Members set during initialization. Safe to access from any thread.
+  // Protected for detached tab adoption (MULTITAB_WINDOW_DESIGN.md M3),
+  // which seeds them outside the normal Init flow.
+  std::unique_ptr<RootWindowConfig> config_;
+  CefRefPtr<ClientHandler> client_handler_;
+  // Only accessed on the browser process UI thread.
+  scoped_refptr<ImageCache> image_cache_;
+
+  // Complete browser-side teardown after all content browsers have closed.
+  // Each content handler must detach its delegate before calling this.
+  void NotifyAllBrowsersClosed();
+
   // ClientHandler::Delegate methods:
   bool UseViews() const override { return true; }
+  RootWindowViews* GetViewsRootWindow() override { return this; }
   bool UseAlloyStyle() const override { return IsAlloyStyle(); }
   void OnBrowserCreated(CefRefPtr<CefBrowser> browser) override;
   void OnBrowserClosing(CefRefPtr<CefBrowser> browser) override;
@@ -113,10 +191,6 @@ class RootWindowViews : public RootWindow,
   void NotifyViewsWindowActivated();
   void NotifyDestroyedIfDone();
 
-  // Members set during initialization. Safe to access from any thread.
-  std::unique_ptr<RootWindowConfig> config_;
-  CefRefPtr<ClientHandler> client_handler_;
-
   // Only accessed on the main thread.
   CefRefPtr<CefBrowser> browser_;
   bool window_destroyed_ = false;
@@ -127,7 +201,6 @@ class RootWindowViews : public RootWindow,
   cef_show_state_t initial_show_state_ = CEF_SHOW_STATE_NORMAL;
   bool position_on_resize_ = false;
   CefRefPtr<ViewsWindow> window_;
-  scoped_refptr<ImageCache> image_cache_;
 };
 
 }  // namespace client

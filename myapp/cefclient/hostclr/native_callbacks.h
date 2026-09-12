@@ -60,6 +60,17 @@ int64_t RegisterNativeCallback(int browser_id,
                               NativeCallbackFn fn,
                               int timeout_ms);
 
+// Same as RegisterNativeCallback, but the entry is persistent: it never times
+// out and survives a completion with ok=true, so the handle stays valid and the
+// closure may run again for later completions. The entry is removed by a
+// completion with ok=false, DiscardNativeCallback or CancelBrowserCallbacks.
+// Use only for CEF callbacks that may legally fire multiple times (for example
+// the Callback of a persistent cefQuery, where Success may be called repeatedly
+// and Failure cancels the query).
+int64_t RegisterPersistentNativeCallback(int browser_id,
+                                         cef_thread_id_t thread_id,
+                                         NativeCallbackFn fn);
+
 // Removes the entry WITHOUT invoking it. Used when managed code declined to
 // take over after the handle was already registered. Idempotent.
 void DiscardNativeCallback(int64_t handle);

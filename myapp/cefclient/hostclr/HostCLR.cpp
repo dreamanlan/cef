@@ -490,6 +490,7 @@ on_browser_finalize_fn on_browser_finalize_fptr = nullptr;
 on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr = nullptr;
 on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr = nullptr;
 on_browser_cef_query_fn on_browser_cef_query_fptr = nullptr;
+on_browser_cef_query_canceled_fn on_browser_cef_query_canceled_fptr = nullptr;
 on_custom_scheme_fn on_custom_scheme_fptr = nullptr;
 on_renderer_init_fn on_renderer_init_fptr = nullptr;
 on_renderer_finalize_fn on_renderer_finalize_fptr = nullptr;
@@ -2537,6 +2538,17 @@ int load_dotnet_method(bool is_debug, int& rc)
     (void**)&on_browser_cef_query_fptr);
     if (rc || !on_browser_cef_query_fptr) {
         printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_cef_query");
+    }
+
+    rc = load_assembly_and_get_function_pointer(
+    dotnet_assembly_path.c_str(),
+    dotnet_class_name,
+    CHAR_T_LITERAL("OnBrowserCefQueryCanceled"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserCefQueryCanceledDelegation, CefDotnetApp"), // Delegate type
+    nullptr,
+    (void**)&on_browser_cef_query_canceled_fptr);
+    if (rc || !on_browser_cef_query_canceled_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_cef_query_canceled");
     }
 
     rc = load_assembly_and_get_function_pointer(

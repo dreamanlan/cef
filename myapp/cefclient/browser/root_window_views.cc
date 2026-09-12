@@ -297,8 +297,10 @@ ViewsWindow::Delegate* RootWindowViews::GetDelegateForPopup(
     return nullptr;
   }
 
-  RootWindowViews* root_window =
-      static_cast<RootWindowViews*>(handler->delegate());
+  // Resolve both window-owned and tab-owned delegates without a downcast.
+  auto* root_window = handler->delegate()
+                          ? handler->delegate()->GetViewsRootWindow()
+                          : nullptr;
 
   // May be nullptr when using the default popup behavior.
   if (root_window) {
@@ -347,9 +349,37 @@ void RootWindowViews::OnBrowserClosed(CefRefPtr<CefBrowser> browser) {
     browser_ = nullptr;
   }
 
-  client_handler_->DetachDelegate();
+  if (client_handler_ && client_handler_->delegate()) {
+    client_handler_->DetachDelegate();
+  }
   client_handler_ = nullptr;
 
+  NotifyAllBrowsersClosed();
+}
+
+void RootWindowViews::SetActiveBrowser(CefRefPtr<CefBrowser> browser) {
+  REQUIRE_MAIN_THREAD();
+  browser_ = browser;
+}
+
+void RootWindowViews::NotifyWindowlessTeardown() {
+  REQUIRE_MAIN_THREAD();
+  if (window_destroyed_) {
+    return;
+  }
+  window_destroyed_ = true;
+  NotifyDestroyedIfDone();
+}
+
+CefRefPtr<ViewsWindow> RootWindowViews::GetViewsWindow() const {
+  CEF_REQUIRE_UI_THREAD();
+  return window_;
+}
+
+void RootWindowViews::NotifyAllBrowsersClosed() {
+  REQUIRE_MAIN_THREAD();
+  browser_ = nullptr;
+  client_handler_ = nullptr;
   browser_destroyed_ = true;
   NotifyDestroyedIfDone();
 }
@@ -389,7 +419,14 @@ void RootWindowViews::OnSetFavicon(CefRefPtr<CefImage> image) {
   }
 
   if (window_) {
-    window_->SetFavicon(image);
+    // A newly activated tab may not have received a favicon yet.
+    if (!image && image_cache_) {
+      image = image_cache_->GetCachedImage("window_icon");
+    }
+    // Never pass a null image to ViewsWindow::SetFavicon().
+    if (image) {
+      window_->SetFavicon(image);
+    }
   }
 }
 
@@ -449,8 +486,7 @@ void RootWindowViews::OnSetLoadingState(bool isLoading,
 
     if (isLoading) {
       // Reset to the default window icon when loading begins.
-      window_->SetFavicon(
-          delegate_->GetImageCache()->GetCachedImage("window_icon"));
+      OnSetFavicon(nullptr);
     }
   }
 }
@@ -497,10 +533,17 @@ void RootWindowViews::OnBeforeContextMenu(CefRefPtr<CefMenuModel> model) {
   }
 }
 
+CefRefPtr<ClientHandler> RootWindowViews::CreateContentClientHandler(
+    bool with_controls, const std::string& url) {
+  return new ClientHandlerStd(this, with_controls, url);
+}
+
 void RootWindowViews::CreateClientHandler(const std::string& url) {
   DCHECK(!client_handler_);
 
-  client_handler_ = new ClientHandlerStd(this, config_->with_controls, url);
+  client_handler_ =
+      CreateContentClientHandler(config_->with_controls, url);
+  DCHECK(client_handler_);
   client_handler_->set_download_favicon_images(true);
 }
 

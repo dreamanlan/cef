@@ -18,6 +18,8 @@
 #include "include/wrapper/cef_helpers.h"
 #include "myapp/cefclient/browser/default_client_handler.h"
 #include "myapp/cefclient/browser/main_context.h"
+#include "myapp/cefclient/browser/tab.h"
+#include "myapp/cefclient/browser/tabbed_root_window_views.h"
 #include "myapp/cefclient/browser/test_runner.h"
 #include "myapp/shared/browser/file_util.h"
 #include "myapp/shared/browser/resource_util.h"
@@ -121,7 +123,8 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindow(
                           config->use_alloy_style, config->with_osr);
 
   scoped_refptr<RootWindow> root_window =
-      RootWindow::Create(config->use_views, config->use_alloy_style);
+      RootWindow::Create(config->use_views, config->use_alloy_style,
+                         config->window_type);
   root_window->Init(this, std::move(config), settings);
 
   // Store a reference to the root window on the main thread.
@@ -152,6 +155,28 @@ void RootWindowManager::CreateChromeWindow(const std::string& url) {
 
   CefBrowserHost::CreateBrowser(window_info, client, url, settings, nullptr,
                                 nullptr);
+}
+
+scoped_refptr<RootWindow> RootWindowManager::CreateDetachedWindow(
+    const std::shared_ptr<Tab>& tab,
+    const CefRect& bounds) {
+  REQUIRE_MAIN_THREAD();
+
+  // The tab's browser must still be alive after the in-flight handoff.
+  if (!tab || !tab->GetBrowser()) {
+    return nullptr;
+  }
+
+  CefBrowserSettings settings;
+  MainContext::Get()->PopulateBrowserSettings(&settings);
+
+  auto* root_window = new TabbedRootWindowViews(tab->UseAlloyStyle());
+  root_window->InitDetached(this, tab, settings, bounds);
+
+  // Store a reference to the root window on the main thread.
+  OnRootWindowCreated(root_window);
+
+  return root_window;
 }
 
 scoped_refptr<RootWindow> RootWindowManager::CreateRootWindowAsPopup(
@@ -192,7 +217,9 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindowAsPopup(
   MainContext::Get()->PopulateBrowserSettings(&settings);
 
   scoped_refptr<RootWindow> root_window =
-      RootWindow::Create(use_views, use_alloy_style);
+      RootWindow::Create(use_views, use_alloy_style,
+                         is_devtools ? WindowType::DEVTOOLS
+                                     : WindowType::NORMAL);
   if (!is_devtools) {
     root_window->SetPopupId(opener_browser_id, popup_id);
   }
@@ -216,8 +243,7 @@ scoped_refptr<RootWindow> RootWindowManager::GetWindowForBrowser(
   REQUIRE_MAIN_THREAD();
 
   for (auto root_window : root_windows_) {
-    CefRefPtr<CefBrowser> browser = root_window->GetBrowser();
-    if (browser.get() && browser->GetIdentifier() == browser_id) {
+    if (root_window->HasBrowser(browser_id)) {
       return root_window;
     }
   }
@@ -450,6 +476,12 @@ void RootWindowManager::OnTest(RootWindow* root_window, int test_id) {
 void RootWindowManager::OnExit(RootWindow* root_window) {
   REQUIRE_MAIN_THREAD();
 
+  // Exit must go through the graceful close chain: a forced close skips
+  // CanClose and therefore never closes the CefBrowsers, leaving the windows
+  // gone but the browser process alive (zombie). The non-forced request is
+  // intercepted by the multi-tab DoClose takeover, which closes every tab of
+  // every window; empty windows then close themselves and MaybeCleanup()
+  // exits the process.
   CloseAllWindows(false);
 }
 

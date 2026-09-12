@@ -139,11 +139,15 @@ void ViewsOverlayControls::Destroy() {
   window_ = nullptr;
   panel_ = nullptr;
   if (panel_controller_) {
-    panel_controller_->Destroy();
+    if (panel_controller_->IsValid()) {
+      panel_controller_->Destroy();
+    }
     panel_controller_ = nullptr;
   }
   if (menu_controller_) {
-    menu_controller_->Destroy();
+    if (menu_controller_->IsValid()) {
+      menu_controller_->Destroy();
+    }
     menu_controller_ = nullptr;
   }
 }
