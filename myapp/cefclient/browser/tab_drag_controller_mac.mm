@@ -45,7 +45,7 @@ bool TabDragController::Start(TabbedRootWindowViews* source_root,
   if (browser->GetHost()->GetWindowHandle()) {
     // CefBrowserHost::GetWindowHandle() returns the NSView* on macOS.
     content_view =
-        reinterpret_cast<NSView*>(browser->GetHost()->GetWindowHandle());
+        (__bridge NSView*)browser->GetHost()->GetWindowHandle();
   }
   NSWindow* window = content_view ? [content_view window] : nil;
   if (!window) {
@@ -99,16 +99,17 @@ bool TabDragController::Start(TabbedRootWindowViews* source_root,
   // tasks. This is the macOS equivalent of the Windows SetCapture drag loop.
   TabDragController* controller = this;
   g_monitor = [NSEvent
-      addLocalMonitorForEventsMatchingMask:(NSLeftMouseDraggedMask |
-                                            NSLeftMouseUpMask |
-                                            NSKeyDownMask)
+      addLocalMonitorForEventsMatchingMask:(NSEventMaskLeftMouseDragged |
+                                            NSEventMaskLeftMouseUp |
+                                            NSEventMaskKeyDown)
                                         handler:^NSEvent*(NSEvent* event) {
                                           if (!controller->is_dragging()) {
                                             return event;
                                           }
                                           const NSEventType type =
                                               [event type];
-                                          if (type == NSLeftMouseDragged) {
+                                          if (type ==
+                                              NSEventTypeLeftMouseDragged) {
                                             const NSPoint loc =
                                                 [NSEvent mouseLocation];
                                             if (g_dragged_window) {
@@ -123,7 +124,7 @@ bool TabDragController::Start(TabbedRootWindowViews* source_root,
                                             // must not keep the gesture.
                                             return nil;
                                           }
-                                          if (type == NSLeftMouseUp) {
+                                          if (type == NSEventTypeLeftMouseUp) {
                                             // End before the event continues,
                                             // then let the mouse-up through
                                             // so the renderer view's tracking
@@ -131,7 +132,7 @@ bool TabDragController::Start(TabbedRootWindowViews* source_root,
                                             controller->End(true);
                                             return event;
                                           }
-                                          if (type == NSKeyDown &&
+                                          if (type == NSEventTypeKeyDown &&
                                               [event keyCode] ==
                                                   kEscapeKeyCode) {
                                             controller->End(false);
@@ -182,7 +183,7 @@ void TabDragController::UpdateDropTarget() {
     }
     NSView* tabbar_view = nil;
     if (browser->GetHost()->GetWindowHandle()) {
-      tabbar_view = reinterpret_cast<NSView*>(
+      tabbar_view = (__bridge NSView*)(
           browser->GetHost()->GetWindowHandle());
     }
     if (!tabbar_view) {
