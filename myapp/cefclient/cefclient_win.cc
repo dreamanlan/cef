@@ -33,7 +33,8 @@ namespace {
 enum SimpleProcessType {
   PROCESS_TYPE_BROWSER = 0,
   PROCESS_TYPE_RENDERER = 1,
-  PROCESS_TYPE_OTHER = 2,
+  PROCESS_TYPE_ZYGOTEPROCESS = 2,
+  PROCESS_TYPE_OTHER = 3,
 };
 
 // Determine process type from raw command line without CEF dependency
