@@ -137,7 +137,7 @@ MainContextImpl::MainContextImpl(CefRefPtr<CefCommandLine> command_line,
 
   // Log the current configuration.
   LOG(WARNING) << "Using " << (use_alloy_style_ ? "Alloy" : (use_chrome_style_window_ ? "Chrome" : "ChromeNative"))
-               << " style; " << (use_views_ ? "Views" : (use_chrome_style_window_ ? "Native" : "Chrome"))
+               << " style; " << (use_views_ ? "Views" : ((use_alloy_style_ || use_chrome_style_window_) ? "Native" : "Chrome"))
                << "-hosted window; "
                << (use_windowless_rendering_ ? "Windowless" : "Windowed")
                << " rendering (not a warning)";
