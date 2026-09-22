@@ -132,7 +132,8 @@ void BaseClientHandler::OnAfterCreated(CefRefPtr<CefBrowser> browser) {
 
   if (track_as_other_browser_) {
     MainContext::Get()->GetRootWindowManager()->OtherBrowserCreated(
-        browser->GetIdentifier(), browser->GetHost()->GetOpenerIdentifier());
+        browser->GetIdentifier(), browser->GetHost()->GetOpenerIdentifier(),
+        browser);
   }
 
   if (on_browser_init_fptr) {

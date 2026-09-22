@@ -134,13 +134,21 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindow(
 }
 
 void RootWindowManager::CreateChromeWindow(const std::string& url) {
+  CreateChromeWindow(url, base::OnceCallback<void(CefRefPtr<CefBrowser>)>());
+}
+
+void RootWindowManager::CreateChromeWindow(
+    const std::string& url,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> created_callback) {
   // Host a Chrome-style browser in a Chrome self-created native window. No
   // parent + Chrome runtime style yields a fully styled Chrome UI (tabstrip)
   // top-level window (mirrors cefsimple's --use-native path). The browser has
   // no client RootWindow; DefaultClientHandler joins the C# browser-query
   // system and is tracked as an "other browser", so termination is driven by
   // the same counter (other_browser_ct_) as default Chrome UI windows.
-  // CefBrowserHost::CreateBrowser may be called on any browser process thread.
+  // CefBrowserHost::CreateBrowser may be called on any browser process thread,
+  // and the browser only exists once Chrome reports it through
+  // OtherBrowserCreated - hence |created_callback| instead of a return value.
   CefBrowserSettings settings;
   MainContext::Get()->PopulateBrowserSettings(&settings);
 
@@ -153,8 +161,73 @@ void RootWindowManager::CreateChromeWindow(const std::string& url) {
   CefRefPtr<CefClient> client =
       new DefaultClientHandler(/*use_alloy_style=*/false, url);
 
+  if (!created_callback.is_null()) {
+    // A pending completion from an earlier call would never run if it is simply
+    // overwritten, so answer it first (its timeout task finds nothing to do).
+    if (!pending_chrome_window_callback_.is_null()) {
+      printf_log(LOG_SEVERITY_WARNING,
+                 "RootWindowManager: Replacing a pending chrome window "
+                 "completion, answering the previous one as failed");
+      std::move(pending_chrome_window_callback_).Run(nullptr);
+    }
+    pending_chrome_window_callback_ = std::move(created_callback);
+    // Always answer the pending completion, even if Chrome never reports the
+    // browser, so the hot reload query cannot hang forever.
+    const int kCreateTimeoutMs = 10000;
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(&RootWindowManager::OnChromeWindowCreateTimeout,
+                       base::Unretained(this)),
+        kCreateTimeoutMs);
+  }
+
   CefBrowserHost::CreateBrowser(window_info, client, url, settings, nullptr,
                                 nullptr);
+}
+
+void RootWindowManager::OnChromeWindowCreateTimeout() {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (!pending_chrome_window_callback_.is_null()) {
+    printf_log(LOG_SEVERITY_WARNING,
+               "RootWindowManager: Timed out waiting for the Chrome window");
+    std::move(pending_chrome_window_callback_).Run(nullptr);
+  }
+}
+
+void RootWindowManager::OnHotReloadWindowReady(
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
+    CefRefPtr<CefBrowser> browser) {
+  // Runs when the new window exists, or when the wait timed out (null browser).
+  // Only now is it safe to let the app terminate again: right after the old
+  // window closed there are no windows at all, and MaybeCleanup() would quit.
+  SetDisableTerminationInternal(false);
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
+
+  std::move(completion_callback).Run(browser);
+}
+
+void RootWindowManager::CloseOtherBrowsers(bool force) {
+  if (!CURRENTLY_ON_MAIN_THREAD()) {
+    // Execute this method on the main thread.
+    MAIN_POST_CLOSURE(base::BindOnce(&RootWindowManager::CloseOtherBrowsers,
+                                     base::Unretained(this), force));
+    return;
+  }
+
+  if (other_browsers_.empty()) {
+    return;
+  }
+
+  // Copy: OtherBrowserClosed (from OnBeforeClose) mutates |other_browsers_|.
+  auto browsers = other_browsers_;
+  for (auto& entry : browsers) {
+    if (entry.second.get()) {
+      printf_log(LOG_SEVERITY_INFO,
+                 "CloseOtherBrowsers: closing browser %d", entry.first);
+      entry.second->GetHost()->CloseBrowser(force);
+    }
+  }
 }
 
 scoped_refptr<RootWindow> RootWindowManager::CreateDetachedWindow(
@@ -277,16 +350,22 @@ void RootWindowManager::CloseAllWindows(bool force) {
 }
 
 void RootWindowManager::OtherBrowserCreated(int browser_id,
-                                            int opener_browser_id) {
+                                            int opener_browser_id,
+                                            CefRefPtr<CefBrowser> browser) {
   if (!CURRENTLY_ON_MAIN_THREAD()) {
     // Execute this method on the main thread.
     MAIN_POST_CLOSURE(base::BindOnce(&RootWindowManager::OtherBrowserCreated,
                                      base::Unretained(this), browser_id,
-                                     opener_browser_id));
+                                     opener_browser_id, browser));
     return;
   }
 
   other_browser_ct_++;
+  // Hold the browser so hot reload can close it later (CloseAllWindows only
+  // walks |root_windows_|, which never contains these).
+  if (browser.get()) {
+    other_browsers_[browser_id] = browser;
+  }
   printf_log(LOG_SEVERITY_INFO,
             "RootWindowManager: Other browser created, count = %d",
             other_browser_ct_);
@@ -294,6 +373,16 @@ void RootWindowManager::OtherBrowserCreated(int browser_id,
   // Track ownership of popup browsers that don't have a RootWindow.
   if (opener_browser_id > 0) {
     other_browser_owners_[opener_browser_id].insert(browser_id);
+  }
+
+  // A window we were asked to create asynchronously (see the
+  // CreateChromeWindow overload) is ready now. Top-level windows have no
+  // opener, so this cannot be claimed by an unrelated popup.
+  if (opener_browser_id <= 0 && !pending_chrome_window_callback_.is_null()) {
+    printf_log(LOG_SEVERITY_INFO,
+              "RootWindowManager: Pending chrome window created (browser %d)",
+              browser_id);
+    std::move(pending_chrome_window_callback_).Run(browser);
   }
 }
 
@@ -309,6 +398,7 @@ void RootWindowManager::OtherBrowserClosed(int browser_id,
 
   DCHECK_GT(other_browser_ct_, 0);
   other_browser_ct_--;
+  other_browsers_.erase(browser_id);
   printf_log(LOG_SEVERITY_INFO,
             "RootWindowManager: Other browser closed, count = %d",
             other_browser_ct_);
@@ -546,15 +636,13 @@ void RootWindowManager::ExecuteHotReload(
     const std::string& url,
     const std::vector<cef_query_handler::FileCopyInfo>& files,
     base::OnceCallback<void()> copy_callback,
-    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
-    bool custom_process_killer) {
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
   if (!CURRENTLY_ON_MAIN_THREAD()) {
     // Execute this method on the main thread.
     MAIN_POST_CLOSURE(base::BindOnce(&RootWindowManager::ExecuteHotReload,
                                      base::Unretained(this), url, files,
                                      std::move(copy_callback),
-                                     std::move(completion_callback),
-                                     custom_process_killer));
+                                     std::move(completion_callback)));
     return;
   }
   CEF_REQUIRE_UI_THREAD();
@@ -573,102 +661,86 @@ void RootWindowManager::ExecuteHotReload(
     }
   }
 
-  printf_log(LOG_SEVERITY_INFO,
-            "ExecuteHotReload: All windows closed, root_windows_.empty()=%d, other_browser_ct_=%d, custom_process_killer=%s, files count=%zu",
-            root_windows_.empty(), other_browser_ct_,
-            custom_process_killer ? "true" : "false", files.size());
+  // In the default mode the window is hosted by Chrome itself and is tracked as
+  // an "other browser", not as a RootWindow - CloseAllWindows() never sees it.
+  // Close it explicitly, or the old window survives and the reload just opens a
+  // second (differently styled) one next to it.
+  if (MainContext::Get()->UseChromeWindowGlobal()) {
+    printf_log(LOG_SEVERITY_INFO,
+               "ExecuteHotReload: Closing %zu other browser(s)...",
+               other_browsers_.size());
+    CloseOtherBrowsers(true);
+  }
 
-  // Step 3: Wait for all renderer processes to terminate, then copy files
-  // Instead of a fixed delay, we'll poll and wait for renderer processes to exit
+  printf_log(LOG_SEVERITY_INFO,
+            "ExecuteHotReload: Close requested, root_windows_.empty()=%d, other_browser_ct_=%d, files count=%zu",
+            root_windows_.empty(), other_browser_ct_, files.size());
+
+  // Step 3: Wait until the browsers are actually gone, then copy files. Closing
+  // a browser terminates its renderer, so there is no separate "kill the
+  // renderers" step - it is only a fallback if the wait times out.
   const int kPollIntervalMs = 200;
   const int kMaxWaitTimeMs = 10000; // Maximum 10 seconds wait
   CefPostDelayedTask(
       TID_UI,
-      base::BindOnce(&RootWindowManager::TerminateRendererProcessesAndCopy,
+      base::BindOnce(&RootWindowManager::WaitForBrowsersClosed,
                      base::Unretained(this), url, files, std::move(copy_callback),
                      std::move(completion_callback), 0,
-                     kPollIntervalMs, kMaxWaitTimeMs, custom_process_killer),
-      kPollIntervalMs * (custom_process_killer ? 5 : 1));
+                     kPollIntervalMs, kMaxWaitTimeMs),
+      kPollIntervalMs);
 }
 
-void RootWindowManager::TerminateRendererProcessesAndCopy(
+void RootWindowManager::WaitForBrowsersClosed(
     const std::string& url,
     const std::vector<cef_query_handler::FileCopyInfo>& files,
     base::OnceCallback<void()> copy_callback,
-    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
     int elapsed_ms,
     int poll_interval_ms,
-    int max_wait_time_ms,
-    bool custom_process_killer) {
+    int max_wait_time_ms) {
   CEF_REQUIRE_UI_THREAD();
 
-  printf_log(LOG_SEVERITY_INFO,
-            "TerminateRendererProcessesAndCopy: other_browser_ct_=%d, elapsed=%dms",
-            other_browser_ct_, elapsed_ms);
+  // A window owned by a RootWindow is gone once that RootWindow is destroyed.
+  // In the default mode the window is hosted by Chrome and tracked as an "other
+  // browser" instead, so that set is what has to drain there.
+  const bool windows_pending = !root_windows_.empty();
+  const bool other_browsers_pending =
+      MainContext::Get()->UseChromeWindowGlobal() && !other_browsers_.empty();
 
-  // First, count renderer processes
-  int renderer_count = 0;
-  if (custom_process_killer) {
-    renderer_count = CountRenderProcess();
+  if (!windows_pending && !other_browsers_pending) {
     printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: CountRenderProcess returned %d",
-              renderer_count);
-  } else {
-    renderer_count = CefCountRenderProcess();
-    printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: CefCountRenderProcess returned %d",
-              renderer_count);
-  }
-
-  if (renderer_count < 0) {
-    printf_log(LOG_SEVERITY_ERROR,
-              "TerminateRendererProcessesAndCopy: Failed to count renderer processes, proceeding with copy");
+               "WaitForBrowsersClosed: all browsers closed after %dms",
+               elapsed_ms);
     CheckFileLockAndCopy(url, files, std::move(copy_callback),
                          std::move(completion_callback), 0, poll_interval_ms,
                          max_wait_time_ms);
     return;
   }
 
-  // If no renderer processes, proceed with copy
-  if (renderer_count == 0) {
-    printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: No renderer processes found, proceeding with copy");
-    CheckFileLockAndCopy(url, files, std::move(copy_callback),
-                         std::move(completion_callback), 0, poll_interval_ms,
-                         max_wait_time_ms);
-    return;
-  }
-
-  // Terminate renderer processes
-  int terminated_count = 0;
-  if (custom_process_killer) {
-    terminated_count = TerminateRenderProcess();
-    printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: Terminated %d/%d renderer process(es)",
-              terminated_count, renderer_count);
-  } else {
-    terminated_count = CefTerminateRenderProcess();
-    printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: CefTerminateRenderProcess terminated %d/%d renderer process(es)",
-              terminated_count, renderer_count);
-  }
-
-  // Check if termination was successful
-  if (terminated_count == 0 && renderer_count > 0) {
+  if (elapsed_ms >= max_wait_time_ms) {
     printf_log(LOG_SEVERITY_WARNING,
-              "TerminateRendererProcessesAndCopy: Failed to terminate any renderer processes, looping back");
-  } else {
-    printf_log(LOG_SEVERITY_INFO,
-              "TerminateRendererProcessesAndCopy: Looping back to check renderer process count again");
+               "WaitForBrowsersClosed: timed out after %dms with %zu window(s) "
+               "and %zu other browser(s) left; terminating leftover renderers",
+               elapsed_ms, root_windows_.size(), other_browsers_.size());
+    // Fallback: a renderer that outlived its browser still holds the files.
+    CefTerminateRenderProcess();
+    CheckFileLockAndCopy(url, files, std::move(copy_callback),
+                         std::move(completion_callback), 0, poll_interval_ms,
+                         max_wait_time_ms);
+    return;
   }
 
-  // Loop back to count again
+  printf_log(LOG_SEVERITY_INFO,
+             "WaitForBrowsersClosed: waiting, root_windows=%zu, "
+             "other_browsers=%zu, elapsed=%dms",
+             root_windows_.size(), other_browsers_.size(), elapsed_ms);
+
   CefPostDelayedTask(
       TID_UI,
-      base::BindOnce(&RootWindowManager::TerminateRendererProcessesAndCopy,
+      base::BindOnce(&RootWindowManager::WaitForBrowsersClosed,
                      base::Unretained(this), url, files, std::move(copy_callback),
                      std::move(completion_callback), elapsed_ms + poll_interval_ms,
-                     poll_interval_ms, max_wait_time_ms, custom_process_killer),
+                     poll_interval_ms, max_wait_time_ms),
       poll_interval_ms);
 }
 
@@ -676,7 +748,7 @@ void RootWindowManager::CheckFileLockAndCopy(
     const std::string& url,
     const std::vector<cef_query_handler::FileCopyInfo>& files,
     base::OnceCallback<void()> copy_callback,
-    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
     int elapsed_ms,
     int poll_interval_ms,
     int max_wait_time_ms) {
@@ -753,11 +825,22 @@ void RootWindowManager::CheckFileLockAndCopy(
   }
 }
 
+// Hot reload completion for the RootWindow path: the browser is created
+// asynchronously inside the RootWindow, so it is read a moment after the window
+// exists. A null browser means the window never came up; the caller reports it
+// as a failure.
+static void CompleteHotReloadWithRootWindow(
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
+    scoped_refptr<RootWindow> root_window) {
+  std::move(completion_callback)
+      .Run(root_window ? root_window->GetBrowser() : nullptr);
+}
+
 void RootWindowManager::OnCopyFilesAndCreateWindow(
     const std::string& url,
     const std::vector<cef_query_handler::FileCopyInfo>& files,
     base::OnceCallback<void()> copy_callback,
-    base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback) {
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
   CEF_REQUIRE_UI_THREAD();
   printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Copying files...");
 
@@ -766,30 +849,49 @@ void RootWindowManager::OnCopyFilesAndCreateWindow(
     std::move(copy_callback).Run();
   }
 
-  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Creating new window...");
+  // Create the new window the same way the initial one was created: the default
+  // mode uses a Chrome self-created window, everything else a client
+  // RootWindow. Mixing the two up produces a window that looks different from
+  // the one the session started with.
+  if (MainContext::Get()->UseChromeWindowGlobal()) {
+    printf_log(LOG_SEVERITY_INFO,
+               "ExecuteHotReload: Creating new Chrome window with URL: %s",
+               (url.empty() ? "[default]" : url.c_str()));
 
-  // Create new window
-  auto config = std::make_unique<RootWindowConfig>();
-  config->with_controls = true;
-  config->with_osr = false;
-  config->url = url;
+    // Completion runs once Chrome reports the browser (see CreateChromeWindow).
+    // Termination stays disabled until then.
+    CreateChromeWindow(
+        url,
+        base::BindOnce(&RootWindowManager::OnHotReloadWindowReady,
+                       base::Unretained(this), std::move(completion_callback)));
+  } else {
+    printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Creating new window...");
 
-  scoped_refptr<RootWindow> root_window = CreateRootWindow(std::move(config));
-  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: New window created with URL: %s",
-            (url.empty() ? "[default]" : url.c_str()));
+    // Keep the startup defaults - controls / osr / bounds all come from the
+    // command line - and override only the url, so the new window matches the
+    // old one instead of gaining an extra controls bar.
+    auto config = std::make_unique<RootWindowConfig>();
+    config->url = url;
 
-  // Step 4: Re-enable termination
-  SetDisableTerminationInternal(false);
-  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
+    scoped_refptr<RootWindow> root_window = CreateRootWindow(std::move(config));
+    printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: New window created with URL: %s",
+              (url.empty() ? "[default]" : url.c_str()));
 
-  // Step 5: Call completion callback
-  if (completion_callback && root_window.get()) {
-    // Delay to ensure browser is fully initialized
-    const int kReloadDelayMs = 500;
-    CefPostDelayedTask(
-        TID_UI,
-        base::BindOnce(std::move(completion_callback), root_window),
-        kReloadDelayMs);
+    // Step 5 (RootWindow path): the browser is created asynchronously inside the
+    // RootWindow, so report it a moment later.
+    if (!completion_callback.is_null()) {
+      const int kReloadDelayMs = 500;
+      CefPostDelayedTask(
+          TID_UI,
+          base::BindOnce(&CompleteHotReloadWithRootWindow,
+                         std::move(completion_callback), root_window),
+          kReloadDelayMs);
+    }
+
+    // Step 4: Re-enable termination. Safe here - CreateRootWindow registers the
+    // window synchronously, so the app never sees "no windows" in between.
+    SetDisableTerminationInternal(false);
+    printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
   }
 }
 

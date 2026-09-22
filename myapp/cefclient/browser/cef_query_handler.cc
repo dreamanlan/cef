@@ -34,7 +34,6 @@ namespace {
 struct HotReloadRequest {
   std::vector<FileCopyInfo> files;
   std::string url;  // Target URL to load after hot reload (empty = use current URL)
-  bool custom_process_killer = false;  // If true, use custom TerminateRenderProcess
 };
 
 // Convert a JSON string to a dictionary value.
@@ -111,16 +110,6 @@ HotReloadRequest ParseHotReloadRequest(const std::string& request) {
   // Parse optional "url" field
   if (request_dict->HasKey("url") && request_dict->GetType("url") == VTYPE_STRING) {
     reload_request.url = request_dict->GetString("url").ToString();
-  }
-
-  // Parse optional "custom_process_killer" field
-  if (request_dict->HasKey("custom_process_killer") &&
-      request_dict->GetType("custom_process_killer") == VTYPE_BOOL) {
-    reload_request.custom_process_killer =
-        request_dict->GetBool("custom_process_killer");
-    printf_log(LOG_SEVERITY_INFO,
-              "Hot reload: custom_process_killer=%s",
-              reload_request.custom_process_killer ? "true" : "false");
   }
 
   return reload_request;
@@ -303,9 +292,10 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       // Parse hot reload request
       HotReloadRequest reload_request = ParseHotReloadRequest(request.ToString());
 
-      // An empty file list is allowed: it means "reload only, nothing to copy".
-      // In that case CopyFiles() reports completion immediately and the hot
-      // reload flow continues unchanged.
+      // An empty file list is allowed: it means "restart only, nothing to copy".
+      // CopyFiles() still runs the C# before_restart callback (the page is down
+      // either way, so it is a valid moment for managed code to act) - only the
+      // default copy loop has nothing to do.
       if (reload_request.files.empty()) {
         printf_log(LOG_SEVERITY_INFO, "Hot reload: No files specified in request, reload only");
       }
@@ -331,8 +321,7 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       root_window_manager->ExecuteHotReload(reload_request.url,
                                           reload_request.files,
                                           std::move(copy_callback),
-                                          std::move(completion_callback),
-                                          reload_request.custom_process_killer);
+                                          std::move(completion_callback));
       return;
     }
 
@@ -723,14 +712,16 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
   static void CopyFiles(const HotReloadRequest& reload_request) {
     printf_log(LOG_SEVERITY_INFO, "Hot reload: CopyFiles starting, %zu file(s) to copy", reload_request.files.size());
 
-    // Call the hot reload copy files function
+    // The renderer processes are gone and the window has not been recreated
+    // yet, so nothing holds the files: this is the moment they can be copied or
+    // updated. Returning true skips the default copy of |files|.
     bool skip_copy = false;
-    if (on_browser_hot_reload_copyfiles_fptr) {
-      skip_copy = on_browser_hot_reload_copyfiles_fptr(reload_request.url.c_str());
-      printf_log(LOG_SEVERITY_INFO, "Hot reload: on_browser_hot_reload_copyfiles returned %s",
+    if (on_browser_hot_reload_before_restart_fptr) {
+      skip_copy = on_browser_hot_reload_before_restart_fptr(reload_request.url.c_str());
+      printf_log(LOG_SEVERITY_INFO, "Hot reload: on_browser_hot_reload_before_restart returned %s",
                 skip_copy ? "true (skip copy)" : "false (execute copy)");
     } else {
-      printf_log(LOG_SEVERITY_WARNING, "Hot reload: on_browser_hot_reload_copyfiles_fptr is null, proceeding with default copy");
+      printf_log(LOG_SEVERITY_WARNING, "Hot reload: on_browser_hot_reload_before_restart_fptr is null, proceeding with default copy");
     }
 
     if (!skip_copy) {
@@ -752,20 +743,17 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
     }
   }
 
+  // Completion for the hot reload flow, driven with the newly created browser
+  // (both window modes report the same way). A null browser means the window
+  // never came up: reported as a failure, and C# is not called because there
+  // would be no browser/frame context to hand over.
   static void OnWindowCreated(CefRefPtr<Callback> callback,
-                              scoped_refptr<RootWindow> root_window) {
+                              CefRefPtr<CefBrowser> browser) {
     printf_log(LOG_SEVERITY_INFO, "Hot reload: Window created, calling C# hot reload callback");
 
-    if (!root_window.get()) {
-      printf_log(LOG_SEVERITY_INFO, "Hot reload: root_window is null");
-      callback->Success("WARNING: Failed to create window");
-      return;
-    }
-
-    CefRefPtr<CefBrowser> browser = root_window->GetBrowser();
     if (!browser.get()) {
-      printf_log(LOG_SEVERITY_INFO, "Hot reload: browser is not ready");
-      callback->Success("WARNING: Browser not ready");
+      printf_log(LOG_SEVERITY_INFO, "Hot reload: browser is not available");
+      callback->Failure(-1, "ERROR: Failed to create window");
       return;
     }
 

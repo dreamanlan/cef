@@ -487,7 +487,7 @@ on_init_fn on_init_fptr = nullptr;
 on_finalize_fn on_finalize_fptr = nullptr;
 on_browser_init_fn on_browser_init_fptr = nullptr;
 on_browser_finalize_fn on_browser_finalize_fptr = nullptr;
-on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr = nullptr;
+on_browser_hot_reload_before_restart_fn on_browser_hot_reload_before_restart_fptr = nullptr;
 on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr = nullptr;
 on_browser_cef_query_fn on_browser_cef_query_fptr = nullptr;
 on_browser_cef_query_canceled_fn on_browser_cef_query_canceled_fptr = nullptr;
@@ -514,7 +514,7 @@ on_certificate_error_fn on_certificate_error_fptr = nullptr;
 on_before_child_process_launch_fn on_before_child_process_launch_fptr = nullptr;
 on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr = nullptr;
 on_before_browse_fn on_before_browse_fptr = nullptr;
-on_heart_beat_fn on_heart_beat_fptr = nullptr;
+on_heartbeat_fn on_heartbeat_fptr = nullptr;
 on_call_metadsl_fn on_call_metadsl_fptr = nullptr;
 on_console_log_fn on_console_log_fptr = nullptr;
 
@@ -646,8 +646,8 @@ class HeartbeatTask : public CefTask {
     auto now = std::chrono::steady_clock::now();
     float delta_ms = std::chrono::duration<float, std::milli>(now - g_heartbeat_last_time).count();
     g_heartbeat_last_time = now;
-    if (on_heart_beat_fptr) {
-      on_heart_beat_fptr(g_heartbeat_process_type, delta_ms);
+    if (on_heartbeat_fptr) {
+      on_heartbeat_fptr(g_heartbeat_process_type, delta_ms);
     }
     // Schedule next heartbeat
     if (g_heartbeat_running) {
@@ -660,7 +660,7 @@ class HeartbeatTask : public CefTask {
   DISALLOW_COPY_AND_ASSIGN(HeartbeatTask);
 };
 
-void StartHeartbeat(int process_type) {
+void start_heartbeat(int process_type) {
   if (g_heartbeat_running) {
     return;
   }
@@ -672,12 +672,12 @@ void StartHeartbeat(int process_type) {
   printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat started for process_type=%d interval=%dms", process_type, g_heartbeat_interval_ms);
 }
 
-void StopHeartbeat() {
+void stop_heartbeat() {
   g_heartbeat_running = false;
   printf_log(LOG_SEVERITY_INFO, "[native] Heartbeat stopped");
 }
 
-void SetHeartbeatIntervalMs(int interval_ms) {
+void set_heartbeat_interval_ms(int interval_ms) {
   if (interval_ms < 10) interval_ms = 10;
   if (interval_ms > 60000) interval_ms = 60000;
   g_heartbeat_interval_ms = interval_ms;
@@ -819,6 +819,13 @@ typedef int (*native_callback_complete_fn)(int64_t handle, int ok, const char* d
 typedef int (*register_custom_scheme_fn)(const char* scheme, const char* domain);
 typedef int (*unregister_custom_scheme_fn)(const char* scheme, const char* domain);
 
+// Process control by keyword (see terminate_process_by_key / count_process_by_key
+// above): matches the command line, or the executable name when the command line
+// cannot be read. Same signature as the BatchCmdDsl host, so managed code sees
+// terminate_process(key) / count_process(key) there and here.
+typedef int (*terminate_process_fn)(const char* key);
+typedef int (*count_process_fn)(const char* key);
+
 typedef struct {
     host_native_log_fn NativeLog;
     send_cef_message_fn SendCefMessage;
@@ -934,6 +941,9 @@ typedef struct {
     // Custom scheme handler factory (un)registration
     register_custom_scheme_fn RegisterCustomScheme;
     unregister_custom_scheme_fn UnregisterCustomScheme;
+    // Process control by keyword
+    terminate_process_fn TerminateProcess;
+    count_process_fn CountProcess;
 } HostApi;
 
 void host_native_log(const char* msg, void* browser, void* frame)
@@ -2315,12 +2325,15 @@ int load_dotnet_method(bool is_debug, int& rc)
     api.ResponseSetError = &response_set_error;
     api.ResponseSetUrl = &response_set_url;
     // Heartbeat control
-    api.SetHeartbeatInterval = &SetHeartbeatIntervalMs;
+    api.SetHeartbeatInterval = &set_heartbeat_interval_ms;
     // Generic async callback completion
     api.NativeCallbackComplete = &native_callback_complete;
     // Custom scheme handler factory (un)registration
     api.RegisterCustomScheme = &register_custom_scheme;
     api.UnregisterCustomScheme = &unregister_custom_scheme;
+    // Process control by keyword
+    api.TerminateProcess = &terminate_process_by_key;
+    api.CountProcess = &count_process_by_key;
 
     // For UNMANAGEDCALLERSONLY_METHOD, this must be int (or other directly copyable type), not bool.
     typedef int (CORECLR_DELEGATE_CALLTYPE* register_api_fn)(void* arg);
@@ -2510,12 +2523,12 @@ int load_dotnet_method(bool is_debug, int& rc)
     rc = load_assembly_and_get_function_pointer(
     dotnet_assembly_path.c_str(),
     dotnet_class_name,
-    CHAR_T_LITERAL("OnBrowserHotReloadCopyFiles"),
-    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserHotReloadCopyFilesDelegation, CefDotnetApp"), // Delegate type
+    CHAR_T_LITERAL("OnBrowserHotReloadBeforeRestart"),
+    CHAR_T_LITERAL("DotNetLib.Lib+OnBrowserHotReloadBeforeRestartDelegation, CefDotnetApp"), // Delegate type
     nullptr,
-    (void**)&on_browser_hot_reload_copyfiles_fptr);
-    if (rc || !on_browser_hot_reload_copyfiles_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_hot_reload_copyfiles");
+    (void**)&on_browser_hot_reload_before_restart_fptr);
+    if (rc || !on_browser_hot_reload_before_restart_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_browser_hot_reload_before_restart");
     }
 
     rc = load_assembly_and_get_function_pointer(
@@ -2821,9 +2834,9 @@ int load_dotnet_method(bool is_debug, int& rc)
     CHAR_T_LITERAL("OnHeartBeat"),
     CHAR_T_LITERAL("DotNetLib.Lib+OnHeartBeatDelegation, CefDotnetApp"),
     nullptr,
-    (void**)&on_heart_beat_fptr);
-    if (rc || !on_heart_beat_fptr) {
-        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_heart_beat");
+    (void**)&on_heartbeat_fptr);
+    if (rc || !on_heartbeat_fptr) {
+        printf_log(LOG_SEVERITY_ERROR, "Failure: load on_heartbeat");
     }
 
     rc = load_assembly_and_get_function_pointer(
@@ -2899,15 +2912,18 @@ typedef struct _MY_PEB {
 #include <sys/sysctl.h>
 #endif
 
-// Cross-platform function to terminate renderer processes
-// Returns the number of renderer processes terminated, or -1 on error
-int TerminateRenderProcess() {
+// Cross-platform process control by keyword: terminates every process whose
+// command line contains |key|, falling back to matching the executable name
+// when the command line cannot be read. Windows scans all processes, Linux and
+// macOS only the children of this process.
+// Returns the number of processes terminated, or -1 on error.
+int terminate_process_by_key(const char* key) {
     int terminated_count = 0;
 #if defined(_MSC_VER)
     // Windows implementation
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
-        printf_log(LOG_SEVERITY_ERROR, "TerminateRenderProcess: Failed to create process snapshot");
+        printf_log(LOG_SEVERITY_ERROR, "terminate_process_by_key: Failed to create process snapshot");
         return -1;
     }
 
@@ -2915,7 +2931,7 @@ int TerminateRenderProcess() {
     pe32.dwSize = sizeof(PROCESSENTRY32);
 
     if (!Process32First(snapshot, &pe32)) {
-        printf_log(LOG_SEVERITY_ERROR, "TerminateRenderProcess: Failed to get first process");
+        printf_log(LOG_SEVERITY_ERROR, "terminate_process_by_key: Failed to get first process");
         CloseHandle(snapshot);
         return -1;
     }
@@ -2964,7 +2980,7 @@ int TerminateRenderProcess() {
                 // Check if PEB memory is readable before reading
                 if (!IsMemoryReadable(process, pbi.PebBaseAddress)) {
                     printf_log(LOG_SEVERITY_WARNING,
-                              "TerminateRenderProcess: PEB memory not readable for PID=%d",
+                              "terminate_process_by_key: PEB memory not readable for PID=%d",
                               pe32.th32ProcessID);
                     CloseHandle(process);
                     continue;
@@ -2979,7 +2995,7 @@ int TerminateRenderProcess() {
                         // Check if ProcessParameters memory is readable before reading
                         if (!IsMemoryReadable(process, peb.ProcessParameters)) {
                             printf_log(LOG_SEVERITY_WARNING,
-                                      "TerminateRenderProcess: ProcessParameters memory not readable for PID=%d",
+                                      "terminate_process_by_key: ProcessParameters memory not readable for PID=%d",
                                       pe32.th32ProcessID);
                             CloseHandle(process);
                             continue;
@@ -2992,7 +3008,7 @@ int TerminateRenderProcess() {
                             // Check if CommandLine.Buffer memory is readable before reading
                             if (!IsMemoryReadable(process, params.CommandLine.Buffer)) {
                                 printf_log(LOG_SEVERITY_WARNING,
-                                          "TerminateRenderProcess: CommandLine.Buffer memory not readable for PID=%d",
+                                          "terminate_process_by_key: CommandLine.Buffer memory not readable for PID=%d",
                                           pe32.th32ProcessID);
                                 CloseHandle(process);
                                 continue;
@@ -3016,10 +3032,10 @@ int TerminateRenderProcess() {
                                                               cmd_line_utf8, cmd_line_len, NULL, NULL);
 
                                             // Check if command line contains --type=renderer
-                                            if (strstr(cmd_line_utf8, "--type=renderer")) {
+                                            if (strstr(cmd_line_utf8, key)) {
                                                 is_renderer = true;
                                                 printf_log(LOG_SEVERITY_INFO,
-                                                          "TerminateRenderProcess: Found renderer process PID=%d",
+                                                          "terminate_process_by_key: Found renderer process PID=%d",
                                                           pe32.th32ProcessID);
                                             }
 
@@ -3039,9 +3055,9 @@ int TerminateRenderProcess() {
             // Fallback: check if it's webagent.exe (less precise)
             char exe_name[MAX_PATH];
             if (GetModuleBaseNameA(process, NULL, exe_name, MAX_PATH)) {
-                if (strstr(exe_name, "webagent.exe")) {
+                if (strstr(exe_name, key)) {
                     printf_log(LOG_SEVERITY_WARNING,
-                              "TerminateRenderProcess: Using fallback for webagent.exe PID=%d",
+                              "terminate_process_by_key: Using fallback for webagent.exe PID=%d",
                               pe32.th32ProcessID);
                     is_renderer = true;
                 }
@@ -3053,11 +3069,11 @@ int TerminateRenderProcess() {
             if (TerminateProcess(process, 0)) {
                 terminated_count++;
                 printf_log(LOG_SEVERITY_INFO,
-                          "TerminateRenderProcess: Terminated renderer process PID=%d",
+                          "terminate_process_by_key: Terminated renderer process PID=%d",
                           pe32.th32ProcessID);
             } else {
                 printf_log(LOG_SEVERITY_WARNING,
-                          "TerminateRenderProcess: Failed to terminate PID=%d, error=%lu",
+                          "terminate_process_by_key: Failed to terminate PID=%d, error=%lu",
                           pe32.th32ProcessID, GetLastError());
             }
         }
@@ -3072,7 +3088,7 @@ int TerminateRenderProcess() {
     // Linux implementation
     DIR* proc_dir = opendir("/proc");
     if (!proc_dir) {
-        printf_log(LOG_SEVERITY_ERROR, "TerminateRenderProcess: Failed to open /proc");
+        printf_log(LOG_SEVERITY_ERROR, "terminate_process_by_key: Failed to open /proc");
         return -1;
     }
 
@@ -3132,15 +3148,15 @@ int TerminateRenderProcess() {
         fclose(cmdline_file);
 
         // Check if it's a renderer process
-        if (strstr(cmdline, "--type=renderer")) {
-            printf_log(LOG_SEVERITY_INFO, "TerminateRenderProcess: Found renderer process PID=%d", pid);
+        if (strstr(cmdline, key)) {
+            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found renderer process PID=%d", pid);
 
             // Terminate the process
             if (kill(pid, SIGTERM) == 0) {
                 terminated_count++;
-                printf_log(LOG_SEVERITY_INFO, "TerminateRenderProcess: Terminated renderer process PID=%d", pid);
+                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated renderer process PID=%d", pid);
             } else {
-                printf_log(LOG_SEVERITY_WARNING, "TerminateRenderProcess: Failed to terminate PID=%d", pid);
+                printf_log(LOG_SEVERITY_WARNING, "terminate_process_by_key: Failed to terminate PID=%d", pid);
             }
         }
     }
@@ -3153,7 +3169,7 @@ int TerminateRenderProcess() {
     int num_pids = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
 
     if (num_pids <= 0) {
-        printf_log(LOG_SEVERITY_ERROR, "TerminateRenderProcess: Failed to get process list");
+        printf_log(LOG_SEVERITY_ERROR, "terminate_process_by_key: Failed to get process list");
         return -1;
     }
 
@@ -3205,7 +3221,7 @@ int TerminateRenderProcess() {
         bool is_renderer = false;
         char* arg = current_arg;
         for (int j = 0; j < argc && arg < args_end; j++) {
-            if (strstr(arg, "--type=renderer")) {
+            if (strstr(arg, key)) {
                 is_renderer = true;
                 break;
             }
@@ -3218,36 +3234,38 @@ int TerminateRenderProcess() {
         }
 
         if (is_renderer) {
-            printf_log(LOG_SEVERITY_INFO, "TerminateRenderProcess: Found renderer process PID=%d", pids[i]);
+            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found renderer process PID=%d", pids[i]);
 
             // Terminate the process
             if (kill(pids[i], SIGTERM) == 0) {
                 terminated_count++;
-                printf_log(LOG_SEVERITY_INFO, "TerminateRenderProcess: Terminated renderer process PID=%d", pids[i]);
+                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated renderer process PID=%d", pids[i]);
             } else {
-                printf_log(LOG_SEVERITY_WARNING, "TerminateRenderProcess: Failed to terminate PID=%d", pids[i]);
+                printf_log(LOG_SEVERITY_WARNING, "terminate_process_by_key: Failed to terminate PID=%d", pids[i]);
             }
         }
     }
 #else
-    printf_log(LOG_SEVERITY_ERROR, "TerminateRenderProcess: Not implemented for this platform");
+    printf_log(LOG_SEVERITY_ERROR, "terminate_process_by_key: Not implemented for this platform");
     return -1;
 #endif
 
-    printf_log(LOG_SEVERITY_INFO, "TerminateRenderProcess: Terminated %d renderer process(es)", terminated_count);
+    printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated %d renderer process(es)", terminated_count);
     return terminated_count;
 }
 
 // Count renderer processes using platform-specific APIs
 // Returns the number of renderer processes, or -1 on error
-int CountRenderProcess() {
+// Same matching rules as terminate_process_by_key(), but only counts.
+// Returns the number of matching processes, or -1 on error.
+int count_process_by_key(const char* key) {
     int renderer_count = 0;
 
 #if defined(OS_WIN)
     // Windows implementation
     HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) {
-        printf_log(LOG_SEVERITY_ERROR, "CountRenderProcess: Failed to create process snapshot");
+        printf_log(LOG_SEVERITY_ERROR, "count_process_by_key: Failed to create process snapshot");
         return -1;
     }
 
@@ -3256,7 +3274,7 @@ int CountRenderProcess() {
 
     if (!Process32FirstW(snapshot, &pe32)) {
         CloseHandle(snapshot);
-        printf_log(LOG_SEVERITY_ERROR, "CountRenderProcess: Failed to get first process");
+        printf_log(LOG_SEVERITY_ERROR, "count_process_by_key: Failed to get first process");
         return -1;
     }
 
@@ -3303,7 +3321,7 @@ int CountRenderProcess() {
                 // Check if PEB memory is readable before reading
                 if (!IsMemoryReadable(process, pbi.PebBaseAddress)) {
                     printf_log(LOG_SEVERITY_WARNING,
-                              "CountRenderProcess: PEB memory not readable for PID=%d",
+                              "count_process_by_key: PEB memory not readable for PID=%d",
                               pe32.th32ProcessID);
                     CloseHandle(process);
                     continue;
@@ -3315,7 +3333,7 @@ int CountRenderProcess() {
                     // Check if ProcessParameters memory is readable before reading
                     if (!IsMemoryReadable(process, peb.ProcessParameters)) {
                         printf_log(LOG_SEVERITY_WARNING,
-                                  "CountRenderProcess: ProcessParameters memory not readable for PID=%d",
+                                  "count_process_by_key: ProcessParameters memory not readable for PID=%d",
                                   pe32.th32ProcessID);
                         CloseHandle(process);
                         continue;
@@ -3326,7 +3344,7 @@ int CountRenderProcess() {
                         // Check if CommandLine.Buffer memory is readable before reading
                         if (!IsMemoryReadable(process, params.CommandLine.Buffer)) {
                             printf_log(LOG_SEVERITY_WARNING,
-                                      "CountRenderProcess: CommandLine.Buffer memory not readable for PID=%d",
+                                      "count_process_by_key: CommandLine.Buffer memory not readable for PID=%d",
                               pe32.th32ProcessID);
                             CloseHandle(process);
                             continue;
@@ -3355,10 +3373,10 @@ int CountRenderProcess() {
 
                                 // Check if command line contains
                                 // --type=renderer
-                                if (strstr(cmd_line_utf8, "--type=renderer")) {
+                                if (strstr(cmd_line_utf8, key)) {
                                   is_renderer = true;
                                   printf_log(LOG_SEVERITY_INFO,
-                                             "CountRenderProcess: Found renderer process PID=%d", pe32.th32ProcessID);
+                                             "count_process_by_key: Found renderer process PID=%d", pe32.th32ProcessID);
                                 }
 
                                 free(cmd_line_utf8);
@@ -3375,7 +3393,7 @@ int CountRenderProcess() {
         if (!is_renderer && !pNtQueryInformationProcess) {
             char exe_name[MAX_PATH];
             if (GetModuleBaseNameA(process, NULL, exe_name, MAX_PATH)) {
-                if (strstr(exe_name, "webagent.exe")) {
+                if (strstr(exe_name, key)) {
                     is_renderer = true;
                 }
             }
@@ -3383,7 +3401,7 @@ int CountRenderProcess() {
 
         if (is_renderer) {
             renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "CountRenderProcess: Found renderer process PID=%d", pe32.th32ProcessID);
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pe32.th32ProcessID);
         }
 
         CloseHandle(process);
@@ -3396,7 +3414,7 @@ int CountRenderProcess() {
     // Linux implementation
     DIR* proc_dir = opendir("/proc");
     if (!proc_dir) {
-        printf_log(LOG_SEVERITY_ERROR, "CountRenderProcess: Failed to open /proc");
+        printf_log(LOG_SEVERITY_ERROR, "count_process_by_key: Failed to open /proc");
         return -1;
     }
 
@@ -3451,9 +3469,9 @@ int CountRenderProcess() {
         cmdline[bytes_read] = '\0';
         fclose(cmdline_file);
 
-        if (strstr(cmdline, "--type=renderer")) {
+        if (strstr(cmdline, key)) {
             renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "CountRenderProcess: Found renderer process PID=%d", pid);
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pid);
         }
     }
 
@@ -3465,7 +3483,7 @@ int CountRenderProcess() {
     int num_pids = proc_listpids(PROC_ALL_PIDS, 0, NULL, 0);
 
     if (num_pids <= 0) {
-        printf_log(LOG_SEVERITY_ERROR, "CountRenderProcess: Failed to get process list");
+        printf_log(LOG_SEVERITY_ERROR, "count_process_by_key: Failed to get process list");
         return -1;
     }
 
@@ -3513,7 +3531,7 @@ int CountRenderProcess() {
         bool is_renderer = false;
         char* arg = current_arg;
         for (int j = 0; j < argc && arg < args_end; j++) {
-            if (strstr(arg, "--type=renderer")) {
+            if (strstr(arg, key)) {
                 is_renderer = true;
                 break;
             }
@@ -3522,15 +3540,15 @@ int CountRenderProcess() {
 
         if (is_renderer) {
             renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "CountRenderProcess: Found renderer process PID=%d", pids[i]);
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pids[i]);
         }
     }
 #else
-    printf_log(LOG_SEVERITY_ERROR, "CountRenderProcess: Unsupported platform");
+    printf_log(LOG_SEVERITY_ERROR, "count_process_by_key: Unsupported platform");
     return -1;
 #endif
 
-    printf_log(LOG_SEVERITY_INFO, "CountRenderProcess: Found %d renderer process(es)", renderer_count);
+    printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found %d renderer process(es)", renderer_count);
     return renderer_count;
 }
 

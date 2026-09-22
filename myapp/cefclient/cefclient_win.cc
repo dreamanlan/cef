@@ -366,7 +366,7 @@ CEF_BOOTSTRAP_EXPORT int RunWinMain(HINSTANCE hInstance,
                                     void* sandbox_info,
                                     cef_version_info_t* version_info) {
   int exit_code = client::RunMain(hInstance, nCmdShow, sandbox_info, version_info);
-  StopHeartbeat();
+  stop_heartbeat();
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }
@@ -412,7 +412,7 @@ int APIENTRY wWinMain(HINSTANCE hInstance,
   CEF_POPULATE_VERSION_INFO(&version_info);
 
   int exit_code = client::RunMain(hInstance, nCmdShow, sandbox_info, &version_info);
-  StopHeartbeat();
+  stop_heartbeat();
   if (on_finalize_fptr) {
     on_finalize_fptr();
   }

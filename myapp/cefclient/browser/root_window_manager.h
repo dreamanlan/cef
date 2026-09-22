@@ -41,6 +41,14 @@ class RootWindowManager : public RootWindow::Delegate {
   // same counter. This method can be called from anywhere.
   void CreateChromeWindow(const std::string& url);
 
+  // Same as above, but |created_callback| runs with the new browser once Chrome
+  // has actually created it (CefBrowserHost::CreateBrowser is asynchronous, so
+  // the caller cannot just read a return value). Used by the hot reload flow,
+  // which needs the browser to report completion.
+  void CreateChromeWindow(
+      const std::string& url,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> created_callback);
+
   // Create a new native popup window.
   // If |with_controls| is true the window will show controls.
   // If |with_osr| is true the window will use off-screen rendering.
@@ -83,23 +91,49 @@ class RootWindowManager : public RootWindow::Delegate {
   // This may be an overlay browser, a popup created with `--use-default-popup`,
   // or a browser using default Chrome UI. |opener_browser_id| will be > 0 for
   // popup browsers.
-  void OtherBrowserCreated(int browser_id, int opener_browser_id);
+  void OtherBrowserCreated(int browser_id,
+                           int opener_browser_id,
+                           CefRefPtr<CefBrowser> browser);
   void OtherBrowserClosed(int browser_id, int opener_browser_id);
+
+  // Close browsers that have no RootWindow (the default Chrome self-created
+  // window, and default-UI popups). CloseAllWindows() only walks
+  // |root_windows_| and therefore never sees them.
+  void CloseOtherBrowsers(bool force);
 
   // Temporarily disable termination when all windows are closed.
   // Used for hot reload functionality.
   void SetDisableTermination(bool disable);
 
-  // Execute hot reload flow: close windows, terminate renderer processes,
-  // copy files, and create new window.
+  // Execute hot reload flow: close the browsers, wait until they are really
+  // gone, copy files, and create a new window.
   void ExecuteHotReload(
       const std::string& url,
       const std::vector<cef_query_handler::FileCopyInfo>& files,
       base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
-      bool custom_process_killer);
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
 
  private:
+  // Browsers without a RootWindow, keyed by browser id. Held so hot reload can
+  // close them: the default Chrome self-created window lives here and would
+  // otherwise survive CloseAllWindows(), which only walks |root_windows_|.
+  std::map<int, CefRefPtr<CefBrowser>> other_browsers_;
+
+  // Completion for a CreateChromeWindow() call still waiting for Chrome to
+  // create the browser (CefBrowserHost::CreateBrowser is asynchronous).
+  base::OnceCallback<void(CefRefPtr<CefBrowser>)> pending_chrome_window_callback_;
+
+  // Gives up on a pending CreateChromeWindow() completion and reports it with a
+  // null browser, so the hot reload query is always answered.
+  void OnChromeWindowCreateTimeout();
+
+  // Wraps the hot reload completion for the Chrome window path: the window is
+  // created asynchronously, so termination may only be re-enabled once the new
+  // browser exists (otherwise the app sees "no windows" in between and quits).
+  void OnHotReloadWindowReady(
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
+      CefRefPtr<CefBrowser> browser);
+
   // Internal method to update disable_termination_ flag with logging.
   // All modifications to disable_termination_ should go through this method.
   void SetDisableTerminationInternal(bool disable);
@@ -109,25 +143,28 @@ class RootWindowManager : public RootWindow::Delegate {
       const std::string& url,
       const std::vector<cef_query_handler::FileCopyInfo>& files,
       base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback);
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
 
-  // Internal method for hot reload flow: terminate renderer processes and copy files.
-  void TerminateRendererProcessesAndCopy(
+  // Internal method for hot reload flow: poll until the browsers that were asked
+  // to close are actually gone, then copy files. Closing a browser also takes
+  // its renderer process with it, so there is no separate "kill the renderers"
+  // step - it is only used as a fallback when the wait times out, to make sure
+  // no renderer survives holding the files.
+  void WaitForBrowsersClosed(
       const std::string& url,
       const std::vector<cef_query_handler::FileCopyInfo>& files,
       base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
       int elapsed_ms,
       int poll_interval_ms,
-      int max_wait_time_ms,
-      bool custom_process_killer);
+      int max_wait_time_ms);
 
   // Internal method for hot reload flow: check file lock and copy files.
   void CheckFileLockAndCopy(
       const std::string& url,
       const std::vector<cef_query_handler::FileCopyInfo>& files,
       base::OnceCallback<void()> copy_callback,
-      base::OnceCallback<void(scoped_refptr<RootWindow>)> completion_callback,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
       int elapsed_ms,
       int poll_interval_ms,
       int max_wait_time_ms);

@@ -26,7 +26,10 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_init_fn)(const char* cmd_line, const
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_finalize_fn)();
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_init_fn)(void* browser);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_finalize_fn)(void* browser);
-typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_copyfiles_fn)(const char* url);
+// Called after the renderer processes are gone and before the page is
+// restarted: the window is closed, so nothing holds the files any more - this
+// is the moment to copy/update them. Return true to skip the default copy.
+typedef bool (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_before_restart_fn)(const char* url);
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_browser_hot_reload_completed_fn)(void* browser, void* frame, const char* url);
 // on_browser_cef_query: called when the page calls window.cefQuery
 // (browser process, UI thread). |handle| identifies the parked
@@ -150,7 +153,7 @@ typedef bool (CORECLR_DELEGATE_CALLTYPE* on_certificate_error_fn)(void* browser,
 typedef void (CORECLR_DELEGATE_CALLTYPE* on_before_child_process_launch_fn)(int process_type, void* command_line);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_already_running_app_relaunch_fn)(void* command_line, const char* current_directory);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_before_browse_fn)(void* browser, void* frame, void* request, bool user_gesture, bool is_redirect, bool* out_return_value);
-typedef void (CORECLR_DELEGATE_CALLTYPE* on_heart_beat_fn)(int process_type, float delta_time);
+typedef void (CORECLR_DELEGATE_CALLTYPE* on_heartbeat_fn)(int process_type, float delta_time);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_call_metadsl_fn)(const char* func_name, const uint8_t* args_blob, int args_len, char* result_str, int& result_size, void* browser, void* frame);
 typedef bool (CORECLR_DELEGATE_CALLTYPE* on_console_log_fn)(void* browser, void* frame, int level, const char* message, const char* source, int line, int& max_log_size);
 
@@ -227,7 +230,7 @@ extern on_init_fn on_init_fptr;
 extern on_finalize_fn on_finalize_fptr;
 extern on_browser_init_fn on_browser_init_fptr;
 extern on_browser_finalize_fn on_browser_finalize_fptr;
-extern on_browser_hot_reload_copyfiles_fn on_browser_hot_reload_copyfiles_fptr;
+extern on_browser_hot_reload_before_restart_fn on_browser_hot_reload_before_restart_fptr;
 extern on_browser_hot_reload_completed_fn on_browser_hot_reload_completed_fptr;
 extern on_browser_cef_query_fn on_browser_cef_query_fptr;
 extern on_browser_cef_query_canceled_fn on_browser_cef_query_canceled_fptr;
@@ -255,7 +258,7 @@ extern on_before_child_process_launch_fn on_before_child_process_launch_fptr;
 extern on_already_running_app_relaunch_fn on_already_running_app_relaunch_fptr;
 extern on_before_browse_fn on_before_browse_fptr;
 extern on_before_resource_load_fn on_before_resource_load_fptr;
-extern on_heart_beat_fn on_heart_beat_fptr;
+extern on_heartbeat_fn on_heartbeat_fptr;
 extern on_call_metadsl_fn on_call_metadsl_fptr;
 extern on_console_log_fn on_console_log_fptr;
 
@@ -275,9 +278,9 @@ extern on_protocol_execution_fn on_protocol_execution_fptr;
 extern on_js_dialog_fn on_js_dialog_fptr;
 
 // Start/stop heartbeat timer
-extern void StartHeartbeat(int process_type);
-extern void StopHeartbeat();
-extern void SetHeartbeatIntervalMs(int interval_ms);
+extern void start_heartbeat(int process_type);
+extern void stop_heartbeat();
+extern void set_heartbeat_interval_ms(int interval_ms);
 
 // Renderer ref map: hold CefRefPtr on both browser and its main frame to
 // prevent premature release while C# may still hold raw pointers. Refs are
@@ -293,13 +296,11 @@ extern void browser_ref_remove(CefRefPtr<CefBrowser> browser);
 // frame ref in sync with cross-origin navigations and renderer crash recovery.
 extern void browser_ref_update_frame(CefRefPtr<CefBrowser> browser, CefRefPtr<CefFrame> frame);
 
-// Cross-platform function to terminate renderer processes
-// Returns the number of renderer processes terminated, or -1 on error
-extern int TerminateRenderProcess();
-
-// Count renderer processes using platform-specific APIs
-// Returns the number of renderer processes, or -1 on error
-extern int CountRenderProcess();
+// Process control by keyword: matches the command line, or the executable name
+// when the command line cannot be read. |key| is a plain substring.
+// Returns the number of processes terminated / counted, or -1 on error.
+extern int terminate_process_by_key(const char* key);
+extern int count_process_by_key(const char* key);
 
 // DevTools observer registration (browser process, UI thread).
 // Called from BaseClientHandler::OnAfterCreated / OnBeforeClose.

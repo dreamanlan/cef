@@ -306,7 +306,7 @@ class ClientRenderDelegate : public ClientAppRenderer::Delegate {
     // Start heartbeat timer for renderer process (process_type=1), only once
     if (!heartbeat_started_) {
       heartbeat_started_ = true;
-      StartHeartbeat(1);
+      start_heartbeat(1);
     }
   }
 

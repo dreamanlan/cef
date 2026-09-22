@@ -58,7 +58,7 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
     }
 
     // Start heartbeat timer for browser process (process_type=0)
-    StartHeartbeat(0);
+    start_heartbeat(0);
   }
 
   void OnBeforeCommandLineProcessing(
