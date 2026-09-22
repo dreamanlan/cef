@@ -303,10 +303,11 @@ class Handler : public CefMessageRouterBrowserSide::Handler {
       // Parse hot reload request
       HotReloadRequest reload_request = ParseHotReloadRequest(request.ToString());
 
+      // An empty file list is allowed: it means "reload only, nothing to copy".
+      // In that case CopyFiles() reports completion immediately and the hot
+      // reload flow continues unchanged.
       if (reload_request.files.empty()) {
-        printf_log(LOG_SEVERITY_ERROR, "Hot reload: No files specified in request");
-        callback->Failure(-1, "ERROR: No files specified");
-        return;
+        printf_log(LOG_SEVERITY_INFO, "Hot reload: No files specified in request, reload only");
       }
 
       // If no URL specified, use current browser's URL
