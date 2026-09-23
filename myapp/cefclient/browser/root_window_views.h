@@ -37,6 +37,7 @@ class RootWindowViews : public RootWindow,
 
   // RootWindow methods:
   bool IsViewsHosted() const override { return true; }
+  RootWindowViews* AsRootWindowViews() override { return this; }
   void Init(RootWindow::Delegate* delegate,
             std::unique_ptr<RootWindowConfig> config,
             const CefBrowserSettings& settings) override;

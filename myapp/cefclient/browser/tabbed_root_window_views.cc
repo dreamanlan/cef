@@ -668,6 +668,15 @@ bool TabbedRootWindowViews::MergeDraggedTabInto(TabbedRootWindowViews* target_ro
   if (!window || !window->SupportsMultipleTabs() || all_browsers_closed_ ||
       !target_window || !target_window->SupportsMultipleTabs() ||
       target_root == this || view_tabs_.empty()) {
+    printf_log(LOG_SEVERITY_WARNING,
+              "[tabs] merge rejected: window=%d windowTabs=%d closed=%d "
+              "targetWindow=%d targetTabs=%d self=%d ownTabs=%d",
+              window ? 1 : 0,
+              window && window->SupportsMultipleTabs() ? 1 : 0,
+              all_browsers_closed_ ? 1 : 0, target_window ? 1 : 0,
+              target_window && target_window->SupportsMultipleTabs() ? 1 : 0,
+              target_root == this ? 1 : 0,
+              static_cast<int>(view_tabs_.size()));
     return false;
   }
   // Whole-window merge (M4a single tab + M4b multi tab): every tab of this
@@ -679,12 +688,16 @@ bool TabbedRootWindowViews::MergeDraggedTabInto(TabbedRootWindowViews* target_ro
     const CefRefPtr<CefBrowserView> view = tab->GetBrowserView();
     const auto browser = view ? view->GetBrowser() : nullptr;
     if (!tab || !view || !view->IsValid() || !browser || !browser->IsValid()) {
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge rejected: invalid tab/view/browser");
       return false;
     }
     // Pre-check the removable conditions so the unparent loop below cannot
     // fail halfway and leave a partially disassembled strip (M1_M5 review,
     // merge item 2).
     if (ViewsWindow::GetHostWindowForView(view).get() != window.get()) {
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge rejected: view owner is not this window");
       return false;
     }
     // Prefer the active tab; fall back to the first one.
@@ -717,6 +730,8 @@ bool TabbedRootWindowViews::MergeDraggedTabInto(TabbedRootWindowViews* target_ro
   for (const auto& tab : tabs) {
     if (!window->RemoveBrowserView(tab->GetBrowserView(),
                                    /*allow_active_removal=*/true)) {
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge rejected: RemoveBrowserView failed");
       return false;
     }
   }
@@ -733,26 +748,53 @@ bool TabbedRootWindowViews::MergeDraggedTabInto(TabbedRootWindowViews* target_ro
   adopted.reserve(tabs.size());
   for (const auto& tab : tabs) {
     const CefRefPtr<CefBrowserView> view = tab->GetBrowserView();
+    // A refused adoption force-closes the browser: the source shell is
+    // already disassembled, so there is no "cancel the merge" path back, and
+    // a graceful close can stall forever on a beforeunload handler (the
+    // window then never completes its close, MaybeCleanup never fires and
+    // the process refuses to exit).
+    // The close of a views-hosted browser is view-driven (see
+    // DetachApprovedBrowser): the pending close only completes when the view
+    // is destroyed. The Tab still holds that view reference, so it must be
+    // dropped here - otherwise the browser, its page and this source window
+    // all stay alive forever (the tab's final close callback is what empties
+    // tabs_ and closes this shell).
     if (!ViewsWindow::RepointViewOwner(view, target_window.get())) {
-      view->GetBrowser()->GetHost()->CloseBrowser(false);
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge adoption failed: RepointViewOwner (view=%d)",
+                view && view->IsValid() ? 1 : 0);
+      view->GetBrowser()->GetHost()->CloseBrowser(true);
+      ReleaseViewTab(tab);
       continue;
     }
     if (!target_root->RegisterBrowserView(tab, view)) {
-      view->GetBrowser()->GetHost()->CloseBrowser(false);
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge adoption failed: RegisterBrowserView");
+      // Give the view back to this window so its destruction callbacks run
+      // on the window that still owns the tab.
+      ViewsWindow::RepointViewOwner(view, window.get());
+      view->GetBrowser()->GetHost()->CloseBrowser(true);
+      ReleaseViewTab(tab);
       continue;
     }
     if (!target_window->AddBrowserView(view)) {
+      printf_log(LOG_SEVERITY_WARNING,
+                "[tabs] merge adoption failed: AddBrowserView");
       const auto it = std::find(target_root->view_tabs_.begin(),
                                 target_root->view_tabs_.end(), tab);
       if (it != target_root->view_tabs_.end()) {
         target_root->view_tabs_.erase(it);
       }
-      view->GetBrowser()->GetHost()->CloseBrowser(false);
+      ViewsWindow::RepointViewOwner(view, window.get());
+      view->GetBrowser()->GetHost()->CloseBrowser(true);
+      ReleaseViewTab(tab);
       continue;
     }
     adopted.push_back(tab);
   }
   if (adopted.empty()) {
+    printf_log(LOG_SEVERITY_WARNING,
+              "[tabs] merge rejected: nothing was adopted");
     return false;
   }
   // The appended block sits at the back; move it in front of the anchor when
@@ -853,6 +895,85 @@ void TabbedRootWindowViews::CompleteTabMerge(
     CefPostTask(TID_UI, base::BindOnce(
         &TabbedRootWindowViews::CloseEmptyWindow, this));
   }
+}
+
+bool TabbedRootWindowViews::AdoptPopupAsTab(
+    CefRefPtr<ViewsWindow> popup_window,
+    CefRefPtr<CefBrowserView> popup_view) {
+  CEF_REQUIRE_UI_THREAD();
+  auto window = GetViewsWindow();
+  if (!window || !window->SupportsMultipleTabs() || all_browsers_closed_ ||
+      !popup_window || !popup_view || !popup_view->IsValid()) {
+    return false;
+  }
+  // The pre-created popup root owns the bootstrap Tab that is paired with the
+  // popup browser's client handler. A Tab cannot be re-created for that
+  // browser - it has to be transferred, exactly like a tab merge moves Tabs.
+  auto* popup_delegate = popup_window->delegate();
+  auto* popup_root =
+      popup_delegate ? popup_delegate->AsTabbedRootWindow() : nullptr;
+  if (!popup_root || popup_root == this || !popup_root->tab_ ||
+      popup_root->tab_->GetBrowserView()) {
+    return false;
+  }
+  const std::shared_ptr<Tab> tab = popup_root->tab_;
+  if (!ViewsWindow::RepointViewOwner(popup_view, window.get())) {
+    return false;
+  }
+  if (!RegisterBrowserView(tab, popup_view) ||
+      !window->AddBrowserView(popup_view)) {
+    // Roll the registration back so the caller can open the popup as a
+    // regular window instead.
+    const auto it = std::find(view_tabs_.begin(), view_tabs_.end(), tab);
+    if (it != view_tabs_.end()) {
+      view_tabs_.erase(it);
+    }
+    if (tab->GetBrowserView() == popup_view) {
+      tab->SetBrowserView(nullptr);
+    }
+    ViewsWindow::RepointViewOwner(popup_view, popup_window.get());
+    return false;
+  }
+  window->SetActiveBrowserView(popup_view);
+  // The view moved from no widget into this window's widget; kick the
+  // compositor so the first frame is produced (see CreateDetachedViewsWindow).
+  if (auto browser = popup_view->GetBrowser()) {
+    browser->GetHost()->NotifyMoveOrResizeStarted();
+  }
+  MAIN_POST_CLOSURE(base::BindOnce(
+      &TabbedRootWindowViews::CompletePopupTabAdoption,
+      scoped_refptr<TabbedRootWindowViews>(this),
+      scoped_refptr<TabbedRootWindowViews>(popup_root), tab,
+      popup_view->GetBrowser()));
+  printf_log(LOG_SEVERITY_INFO, "[tabs] popup adopted as a new tab");
+  return true;
+}
+
+void TabbedRootWindowViews::CompletePopupTabAdoption(
+    scoped_refptr<TabbedRootWindowViews> popup_root,
+    std::shared_ptr<Tab> tab,
+    CefRefPtr<CefBrowser> browser) {
+  REQUIRE_MAIN_THREAD();
+  if (!popup_root || !tab) {
+    return;
+  }
+  // Detach the bootstrap tab from the popup root's registry.
+  const auto it =
+      std::find(popup_root->tabs_.begin(), popup_root->tabs_.end(), tab);
+  if (it != popup_root->tabs_.end()) {
+    popup_root->tabs_.erase(it);
+  }
+  // Ownership handoff: state callbacks now report to this window.
+  tab->SetOwner(this);
+  tabs_.push_back(tab);
+  if (browser) {
+    SetActiveBrowser(browser);
+  }
+  PublishTabSnapshot();
+  // The popup root never created its window shell. Finish its teardown
+  // accounting; the browser itself moved here and stays alive.
+  popup_root->NotifyWindowlessTeardown();
+  popup_root->NotifyAllBrowsersClosed();
 }
 
 void TabbedRootWindowViews::AbortDetachedWindow() {

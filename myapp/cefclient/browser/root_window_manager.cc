@@ -13,6 +13,7 @@
 #include "include/base/cef_callback.h"
 #include "include/base/cef_logging.h"
 #include "include/cef_browser.h"
+#include "include/cef_id_mappers.h"
 #include "include/cef_task_manager.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_helpers.h"
@@ -29,6 +30,32 @@
 namespace client {
 
 namespace {
+
+// Waits used while a hot reload brings the closed windows back. Named because
+// the polling helpers of both window modes share them.
+constexpr int kHotReloadTabStepDelayMs = 100;      // between two tabs of a window
+constexpr int kHotReloadShellPollMs = 200;         // waiting for a window shell
+constexpr int kHotReloadSettlePollMs = 300;        // waiting for restored windows
+constexpr int kHotReloadMaxWaitMs = 5000;          // give up after this
+
+// Chrome's tab restore service only records pages that have a real navigation
+// and skips its own internal UI pages, so the same urls are excluded here when
+// counting what a hot reload will be able to bring back. Plain pointers keep
+// this a trivially destructible constant.
+bool IsRestorableHotReloadUrl(const std::string& url) {
+  if (url.empty()) {
+    return false;
+  }
+  static const char* const kInternalPrefixes[] = {
+      "chrome://", "chrome-untrusted://", "devtools://", "about:",
+      "view-source:", "chrome-extension://", "webagent://"};
+  for (const char* prefix : kInternalPrefixes) {
+    if (url.rfind(prefix, 0) == 0) {
+      return false;
+    }
+  }
+  return true;
+}
 
 class ClientRequestContextHandler : public CefRequestContextHandler {
  public:
@@ -207,6 +234,356 @@ void RootWindowManager::OnHotReloadWindowReady(
   std::move(completion_callback).Run(browser);
 }
 
+void RootWindowManager::RestoreNextChromeWindow(
+    size_t window_index,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (window_index >= hot_reload_chrome_windows_.size()) {
+    FinishHotReloadChromeRestore(std::move(completion_callback));
+    return;
+  }
+
+  hot_reload_chrome_index_ = window_index;
+  // The first browser of the window is reported before this collection flag
+  // goes up again, so only the tabs created by IDC_NEW_TAB end up in it.
+  hot_reload_collect_new_tabs_ = false;
+  hot_reload_chrome_host_ = nullptr;
+
+  const auto& urls = hot_reload_chrome_windows_[window_index].urls;
+  printf_log(LOG_SEVERITY_INFO,
+             "ExecuteHotReload: rebuilding Chrome window %zu with %zu tab(s)",
+             window_index, urls.size());
+
+  CreateChromeWindow(
+      urls[0],
+      base::BindOnce(&RootWindowManager::OnHotReloadChromeWindowReady,
+                     base::Unretained(this), std::move(completion_callback)));
+}
+
+void RootWindowManager::OnHotReloadChromeWindowReady(
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
+    CefRefPtr<CefBrowser> browser) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (!browser.get()) {
+    // The window never came up - continue with the next one instead of giving
+    // up on the whole rebuild.
+    printf_log(LOG_SEVERITY_WARNING,
+               "ExecuteHotReload: Chrome window %zu missing",
+               hot_reload_chrome_index_);
+    RestoreNextChromeWindow(hot_reload_chrome_index_ + 1,
+                            std::move(completion_callback));
+    return;
+  }
+
+  hot_reload_chrome_host_ = browser;
+  hot_reload_result_browsers_.push_back(browser);
+  // From here on every browser that shows up is a tab of this window.
+  hot_reload_collect_new_tabs_ = true;
+  RestoreNextChromeTab(1, 0, false, std::move(completion_callback));
+}
+
+void RootWindowManager::RestoreNextChromeTab(
+    size_t tab_index,
+    int wait_ms,
+    bool issued,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (hot_reload_chrome_index_ >= hot_reload_chrome_windows_.size()) {
+    FinishHotReloadChromeRestore(std::move(completion_callback));
+    return;
+  }
+  const auto& urls = hot_reload_chrome_windows_[hot_reload_chrome_index_].urls;
+
+  if (tab_index >= urls.size()) {
+    // This window is complete; the next one resets the collection.
+    RestoreNextChromeWindow(hot_reload_chrome_index_ + 1,
+                            std::move(completion_callback));
+    return;
+  }
+
+  // The tab created for |tab_index| is reported through OtherBrowserCreated
+  // and collected in creation order, so it lands at [tab_index - 1].
+  if (hot_reload_new_tabs_.size() >= tab_index) {
+    CefRefPtr<CefBrowser> tab_browser = hot_reload_new_tabs_[tab_index - 1];
+    CefRefPtr<CefFrame> frame =
+        tab_browser.get() ? tab_browser->GetMainFrame() : nullptr;
+    if (frame.get()) {
+      frame->LoadURL(urls[tab_index]);
+    } else {
+      printf_log(LOG_SEVERITY_WARNING,
+                 "ExecuteHotReload: rebuilt tab %zu has no main frame",
+                 tab_index);
+    }
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(&RootWindowManager::RestoreNextChromeTab,
+                       base::Unretained(this), tab_index + 1, 0, false,
+                       std::move(completion_callback)),
+        kHotReloadTabStepDelayMs);
+    return;
+  }
+
+  // The command is refused on a window that was just created (its command
+  // state is not ready yet), so keep retrying instead of giving up on the
+  // first refusal.
+  if (!issued) {
+    const int new_tab_id = cef_id_for_command_id_name("IDC_NEW_TAB");
+    if (new_tab_id >= 0 &&
+        hot_reload_chrome_host_->GetHost()->CanExecuteChromeCommand(
+            new_tab_id)) {
+      printf_log(LOG_SEVERITY_INFO,
+                 "ExecuteHotReload: opening tab %zu of window %zu with "
+                 "IDC_NEW_TAB (after %dms)",
+                 tab_index, hot_reload_chrome_index_, wait_ms);
+      hot_reload_chrome_host_->GetHost()->ExecuteChromeCommand(new_tab_id,
+                                                                CEF_WOD_UNKNOWN);
+      issued = true;
+    } else if (wait_ms == 0) {
+      printf_log(LOG_SEVERITY_INFO,
+                 "ExecuteHotReload: IDC_NEW_TAB not available yet (id=%d), "
+                 "retrying",
+                 new_tab_id);
+    }
+  }
+
+  if (wait_ms < kHotReloadMaxWaitMs) {
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(&RootWindowManager::RestoreNextChromeTab,
+                       base::Unretained(this), tab_index,
+                       wait_ms + kHotReloadShellPollMs, issued,
+                       std::move(completion_callback)),
+        kHotReloadShellPollMs);
+    return;
+  }
+
+  printf_log(LOG_SEVERITY_WARNING,
+             issued ? "ExecuteHotReload: rebuilt tab %zu never appeared, page "
+                      "is lost"
+                    : "ExecuteHotReload: IDC_NEW_TAB never became available, "
+                      "page %zu is lost",
+             tab_index);
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce(&RootWindowManager::RestoreNextChromeTab,
+                     base::Unretained(this), tab_index + 1, 0, false,
+                     std::move(completion_callback)),
+      kHotReloadTabStepDelayMs);
+}
+
+void RootWindowManager::FinishHotReloadChromeRestore(
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  hot_reload_chrome_windows_.clear();
+  hot_reload_chrome_host_ = nullptr;
+  hot_reload_new_tabs_.clear();
+  hot_reload_collect_new_tabs_ = false;
+
+  // Report the page the reload was asked for when it is among the rebuilt
+  // ones, so the completion hook sees the page that started the reload.
+  CefRefPtr<CefBrowser> result;
+  for (const auto& browser : hot_reload_result_browsers_) {
+    if (!browser.get()) {
+      continue;
+    }
+    if (!result.get()) {
+      result = browser;
+    }
+    CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+    const std::string page_url =
+        frame.get() ? frame->GetURL().ToString() : std::string();
+    if (!hot_reload_url_.empty() && page_url == hot_reload_url_) {
+      result = browser;
+      break;
+    }
+  }
+  hot_reload_result_browsers_.clear();
+
+  SetDisableTerminationInternal(false);
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
+
+  std::move(completion_callback).Run(result);
+}
+
+void RootWindowManager::RestoreNextHotReloadViewsWindow(
+    size_t window_index,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  REQUIRE_MAIN_THREAD();
+
+  if (window_index >= hot_reload_views_windows_.size()) {
+    FinishHotReloadViewsRestore(0, std::move(completion_callback));
+    return;
+  }
+
+  hot_reload_views_index_ = window_index;
+
+  // Keep the startup defaults - controls / osr / bounds all come from the
+  // command line - and override only the url, so the new window matches the one
+  // it replaces.
+  auto config = std::make_unique<RootWindowConfig>();
+  config->url = hot_reload_views_windows_[window_index].urls[0];
+  hot_reload_views_root_ = CreateRootWindow(std::move(config));
+  if (window_index == 0) {
+    hot_reload_views_first_root_ = hot_reload_views_root_;
+  }
+
+  // The first tab is the window's own browser, created together with the
+  // window; the remaining ones are added by the step below.
+  RestoreNextHotReloadViewsTab(1, 0, std::move(completion_callback));
+}
+
+void RootWindowManager::RestoreNextHotReloadViewsTab(
+    size_t tab_index,
+    int wait_ms,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (hot_reload_views_index_ >= hot_reload_views_windows_.size()) {
+    FinishHotReloadViewsRestore(0, std::move(completion_callback));
+    return;
+  }
+  const auto& snap = hot_reload_views_windows_[hot_reload_views_index_];
+
+  if (tab_index >= snap.urls.size()) {
+    // The tabs created here end up with the last one in front, so the tab that
+    // was active before the reload has to be selected again.
+    ActivateHotReloadViewsTab(0, std::move(completion_callback));
+    return;
+  }
+
+  RootWindowViews* views = hot_reload_views_root_.get()
+                               ? hot_reload_views_root_->AsRootWindowViews()
+                               : nullptr;
+  TabbedRootWindowViews* tabbed = views ? views->AsTabbedRootWindow() : nullptr;
+
+  if (!tabbed || !tabbed->OnNewTabRequested(snap.urls[tab_index])) {
+    // The window shell is built asynchronously, so it may not exist yet.
+    if (wait_ms < kHotReloadMaxWaitMs) {
+      CefPostDelayedTask(
+          TID_UI,
+          base::BindOnce(&RootWindowManager::RestoreNextHotReloadViewsTab,
+                         base::Unretained(this), tab_index,
+                         wait_ms + kHotReloadShellPollMs,
+                         std::move(completion_callback)),
+          kHotReloadShellPollMs);
+      return;
+    }
+    printf_log(LOG_SEVERITY_WARNING,
+               "ExecuteHotReload: tab %zu of window %zu was not accepted",
+               tab_index, hot_reload_views_index_);
+  }
+
+  CefPostDelayedTask(
+      TID_UI,
+      base::BindOnce(&RootWindowManager::RestoreNextHotReloadViewsTab,
+                     base::Unretained(this), tab_index + 1, 0,
+                     std::move(completion_callback)),
+      kHotReloadTabStepDelayMs);
+}
+
+void RootWindowManager::ActivateHotReloadViewsTab(
+    int wait_ms,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  if (hot_reload_views_index_ >= hot_reload_views_windows_.size()) {
+    FinishHotReloadViewsRestore(0, std::move(completion_callback));
+    return;
+  }
+  const auto& snap = hot_reload_views_windows_[hot_reload_views_index_];
+
+  RootWindowViews* views = hot_reload_views_root_.get()
+                               ? hot_reload_views_root_->AsRootWindowViews()
+                               : nullptr;
+  TabbedRootWindowViews* tabbed = views ? views->AsTabbedRootWindow() : nullptr;
+
+  if (!tabbed || snap.urls.size() <= 1) {
+    // Nothing to select in a window that cannot hold more than one tab.
+    RestoreNextHotReloadViewsWindow(hot_reload_views_index_ + 1,
+                                    std::move(completion_callback));
+    return;
+  }
+
+  CefRefPtr<CefBrowser> target;
+  if (snap.active_index >= 0) {
+    const auto& tabs = tabbed->GetTabs();
+    if (snap.active_index < static_cast<int>(tabs.size())) {
+      target = tabs[snap.active_index]->GetBrowser();
+    }
+  }
+
+  if (!target.get()) {
+    // The tabs are still being created.
+    if (wait_ms < kHotReloadMaxWaitMs) {
+      CefPostDelayedTask(
+          TID_UI,
+          base::BindOnce(&RootWindowManager::ActivateHotReloadViewsTab,
+                         base::Unretained(this),
+                         wait_ms + kHotReloadSettlePollMs,
+                         std::move(completion_callback)),
+          kHotReloadSettlePollMs);
+      return;
+    }
+    printf_log(LOG_SEVERITY_WARNING,
+               "ExecuteHotReload: active tab of window %zu has no browser yet",
+               hot_reload_views_index_);
+  } else {
+    tabbed->OnTabCommandRequested("selecttab", target->GetIdentifier());
+  }
+
+  RestoreNextHotReloadViewsWindow(hot_reload_views_index_ + 1,
+                                  std::move(completion_callback));
+}
+
+void RootWindowManager::FinishHotReloadViewsRestore(
+    int wait_ms,
+    base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback) {
+  CEF_REQUIRE_UI_THREAD();
+
+  CefRefPtr<CefBrowser> result =
+      hot_reload_views_first_root_ ? hot_reload_views_first_root_->GetBrowser()
+                                   : nullptr;
+
+  if (!result.get() && wait_ms < kHotReloadMaxWaitMs) {
+    // The browser of the first rebuilt window is created asynchronously.
+    CefPostDelayedTask(
+        TID_UI,
+        base::BindOnce(&RootWindowManager::FinishHotReloadViewsRestore,
+                       base::Unretained(this),
+                       wait_ms + kHotReloadSettlePollMs,
+                       std::move(completion_callback)),
+        kHotReloadSettlePollMs);
+    return;
+  }
+  if (!result.get()) {
+    printf_log(LOG_SEVERITY_WARNING,
+               "ExecuteHotReload: rebuilt window has no browser yet");
+  }
+
+  hot_reload_views_windows_.clear();
+  hot_reload_views_root_ = nullptr;
+  hot_reload_views_first_root_ = nullptr;
+
+  if (!hot_reload_chrome_windows_.empty()) {
+    // Chrome-created windows were closed as well - rebuild those before
+    // completing the reload.
+    if (result.get()) {
+      hot_reload_result_browsers_.push_back(result);
+    }
+    RestoreNextChromeWindow(0, std::move(completion_callback));
+    return;
+  }
+
+  SetDisableTerminationInternal(false);
+  printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Termination re-enabled");
+
+  std::move(completion_callback).Run(result);
+}
+
 void RootWindowManager::CloseOtherBrowsers(bool force) {
   if (!CURRENTLY_ON_MAIN_THREAD()) {
     // Execute this method on the main thread.
@@ -263,7 +640,8 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindowAsPopup(
     const CefPopupFeatures& popupFeatures,
     CefWindowInfo& windowInfo,
     CefRefPtr<CefClient>& client,
-    CefBrowserSettings& settings) {
+    CefBrowserSettings& settings,
+    bool adopt_as_tab) {
   CEF_REQUIRE_UI_THREAD();
 
   if (MainContext::Get()->UseDefaultPopup() || (is_devtools && !use_views)) {
@@ -295,6 +673,9 @@ scoped_refptr<RootWindow> RootWindowManager::CreateRootWindowAsPopup(
                                      : WindowType::NORMAL);
   if (!is_devtools) {
     root_window->SetPopupId(opener_browser_id, popup_id);
+    // Remember the disposition decision: the popup root later publishes it to
+    // the opening window when the popup browser view is created.
+    root_window->set_popup_adopt_as_tab(adopt_as_tab);
   }
   root_window->InitAsPopup(this, with_controls, with_osr, popupFeatures,
                            windowInfo, client, settings);
@@ -365,6 +746,11 @@ void RootWindowManager::OtherBrowserCreated(int browser_id,
   // walks |root_windows_|, which never contains these).
   if (browser.get()) {
     other_browsers_[browser_id] = browser;
+    // Tabs created by the hot reload rebuild (IDC_NEW_TAB), collected in
+    // creation order so each one can be loaded with its page.
+    if (hot_reload_collect_new_tabs_) {
+      hot_reload_new_tabs_.push_back(browser);
+    }
   }
   printf_log(LOG_SEVERITY_INFO,
             "RootWindowManager: Other browser created, count = %d",
@@ -651,26 +1037,124 @@ void RootWindowManager::ExecuteHotReload(
   // Step 1: Disable termination
   SetDisableTerminationInternal(true);
 
+  // Snapshot the windows this process owns before closing them: they are
+  // rebuilt here, so the window count, the tab urls in strip order and the
+  // active tab all have to be recorded. The bounds and the show state are not -
+  // each window saves them on its way out and the new one reads them back.
+  hot_reload_url_ = url;
+  hot_reload_views_windows_.clear();
+  for (auto root_window : root_windows_) {
+    // Popup windows opened by the pages (window.open) hold real pages, so they
+    // are rebuilt as well - as ordinary top-level windows, which is the price
+    // of the rebuild. DevTools windows are dropped by the url check below.
+    HotReloadWindowPages snap;
+    CefRefPtr<CefBrowser> active_browser = root_window->GetBrowser();
+    RootWindowViews* views = root_window->AsRootWindowViews();
+    TabbedRootWindowViews* tabbed = views ? views->AsTabbedRootWindow() : nullptr;
+    if (tabbed) {
+      for (const auto& tab : tabbed->GetTabs()) {
+        CefRefPtr<CefBrowser> browser = tab->GetBrowser();
+        CefRefPtr<CefFrame> frame =
+            browser.get() ? browser->GetMainFrame() : nullptr;
+        const std::string page_url =
+            frame.get() ? frame->GetURL().ToString() : std::string();
+        if (!IsRestorableHotReloadUrl(page_url)) {
+          continue;
+        }
+        if (browser.get() && active_browser.get() &&
+            browser->IsSame(active_browser)) {
+          snap.active_index = static_cast<int>(snap.urls.size());
+        }
+        snap.urls.push_back(page_url);
+      }
+    } else if (active_browser.get()) {
+      CefRefPtr<CefFrame> frame = active_browser->GetMainFrame();
+      const std::string page_url =
+          frame.get() ? frame->GetURL().ToString() : std::string();
+      if (IsRestorableHotReloadUrl(page_url)) {
+        snap.urls.push_back(page_url);
+      }
+    }
+    if (!snap.urls.empty()) {
+      hot_reload_views_windows_.push_back(std::move(snap));
+    }
+  }
+
   // Step 2: Close all windows
   if (!root_windows_.empty()) {
     printf_log(LOG_SEVERITY_INFO, "ExecuteHotReload: Closing %zu windows...",
               root_windows_.size());
     RootWindowSet root_windows = root_windows_;
     for (auto root_window : root_windows) {
-      root_window->Close(true);
+      // A forced close on a multi-tab window declines the tab takeover and only
+      // runs the shell path, which leaves every tab browser behind as a zombie
+      // (the window can no longer be closed and the process will not exit).
+      // Close the tab browsers instead - the window follows on its own once its
+      // last tab is gone.
+      RootWindowViews* close_views = root_window->AsRootWindowViews();
+      TabbedRootWindowViews* close_tabbed =
+          close_views ? close_views->AsTabbedRootWindow() : nullptr;
+      bool closed_tab_browsers = false;
+      if (close_tabbed) {
+        for (const auto& tab : close_tabbed->GetTabs()) {
+          CefRefPtr<CefBrowser> browser = tab->GetBrowser();
+          if (browser.get() && browser->GetHost()) {
+            browser->GetHost()->CloseBrowser(true);
+            closed_tab_browsers = true;
+          }
+        }
+      }
+      if (!closed_tab_browsers) {
+        root_window->Close(true);
+      }
     }
   }
 
-  // In the default mode the window is hosted by Chrome itself and is tracked as
-  // an "other browser", not as a RootWindow - CloseAllWindows() never sees it.
-  // Close it explicitly, or the old window survives and the reload just opens a
-  // second (differently styled) one next to it.
-  if (MainContext::Get()->UseChromeWindowGlobal()) {
+  // Snapshot the Chrome-created browsers before closing them - the pages of the
+  // default Chrome window mode, and the Chrome windows the pages open in the
+  // other modes (window.open targets, "new window"). They are not recorded by
+  // Chrome's own restore service (CEF hosts them without the tabstrip feature
+  // that service requires), so they have to be rebuilt here as well.
+  // Browsers of the same window share its window handle, and |other_browsers_|
+  // is keyed by browser id, which follows the tab order.
+  hot_reload_chrome_windows_.clear();
+  {
+    std::map<CefWindowHandle, size_t> window_index;
+    int page_ct = 0;
+    for (const auto& entry : other_browsers_) {
+      CefRefPtr<CefBrowser> browser = entry.second;
+      if (!browser.get() || !browser->GetHost()) {
+        continue;
+      }
+      CefRefPtr<CefFrame> frame = browser->GetMainFrame();
+      const std::string page_url =
+          frame.get() ? frame->GetURL().ToString() : std::string();
+      if (!IsRestorableHotReloadUrl(page_url)) {
+        continue;
+      }
+      page_ct++;
+      const CefWindowHandle handle = browser->GetHost()->GetWindowHandle();
+      auto it = window_index.find(handle);
+      if (it == window_index.end()) {
+        it = window_index
+                 .emplace(handle, hot_reload_chrome_windows_.size())
+                 .first;
+        hot_reload_chrome_windows_.push_back(HotReloadWindowPages());
+      }
+      hot_reload_chrome_windows_[it->second].urls.push_back(page_url);
+    }
     printf_log(LOG_SEVERITY_INFO,
-               "ExecuteHotReload: Closing %zu other browser(s)...",
-               other_browsers_.size());
-    CloseOtherBrowsers(true);
+               "ExecuteHotReload: %d page(s) in %zu window(s) to rebuild",
+               page_ct, hot_reload_chrome_windows_.size());
   }
+
+  // Close every Chrome-created browser. CloseAllWindows() only walks
+  // |root_windows_| and never sees these, and a renderer that survives here
+  // keeps the files locked and the agent host running.
+  printf_log(LOG_SEVERITY_INFO,
+             "ExecuteHotReload: Closing %zu other browser(s)...",
+             other_browsers_.size());
+  CloseOtherBrowsers(true);
 
   printf_log(LOG_SEVERITY_INFO,
             "ExecuteHotReload: Close requested, root_windows_.empty()=%d, other_browser_ct_=%d, files count=%zu",
@@ -701,11 +1185,10 @@ void RootWindowManager::WaitForBrowsersClosed(
   CEF_REQUIRE_UI_THREAD();
 
   // A window owned by a RootWindow is gone once that RootWindow is destroyed.
-  // In the default mode the window is hosted by Chrome and tracked as an "other
-  // browser" instead, so that set is what has to drain there.
+  // The Chrome-created browsers are tracked in the "other browsers" set, which
+  // has to drain in every mode now that the reload closes and rebuilds them.
   const bool windows_pending = !root_windows_.empty();
-  const bool other_browsers_pending =
-      MainContext::Get()->UseChromeWindowGlobal() && !other_browsers_.empty();
+  const bool other_browsers_pending = !other_browsers_.empty();
 
   if (!windows_pending && !other_browsers_pending) {
     printf_log(LOG_SEVERITY_INFO,
@@ -722,6 +1205,10 @@ void RootWindowManager::WaitForBrowsersClosed(
                "WaitForBrowsersClosed: timed out after %dms with %zu window(s) "
                "and %zu other browser(s) left; terminating leftover renderers",
                elapsed_ms, root_windows_.size(), other_browsers_.size());
+    // A window whose close is still waiting on a beforeunload handler never
+    // made it into the restore service as a whole window; force it now so the
+    // flow can go on.
+    CloseOtherBrowsers(true);
     // Fallback: a renderer that outlived its browser still holds the files.
     CefTerminateRenderProcess();
     CheckFileLockAndCopy(url, files, std::move(copy_callback),
@@ -849,11 +1336,17 @@ void RootWindowManager::OnCopyFilesAndCreateWindow(
     std::move(copy_callback).Run();
   }
 
-  // Create the new window the same way the initial one was created: the default
-  // mode uses a Chrome self-created window, everything else a client
-  // RootWindow. Mixing the two up produces a window that looks different from
-  // the one the session started with.
-  if (MainContext::Get()->UseChromeWindowGlobal()) {
+  // Rebuild what was closed: the windows this process owns first, then the
+  // Chrome-created ones. Whichever kind the session started with is the kind
+  // that gets recreated here, so the reload does not change the window style.
+  if (!hot_reload_views_windows_.empty()) {
+    printf_log(LOG_SEVERITY_INFO,
+               "ExecuteHotReload: Rebuilding %zu window(s)",
+               hot_reload_views_windows_.size());
+    RestoreNextHotReloadViewsWindow(0, std::move(completion_callback));
+  } else if (!hot_reload_chrome_windows_.empty()) {
+    RestoreNextChromeWindow(0, std::move(completion_callback));
+  } else if (MainContext::Get()->UseChromeWindowGlobal()) {
     printf_log(LOG_SEVERITY_INFO,
                "ExecuteHotReload: Creating new Chrome window with URL: %s",
                (url.empty() ? "[default]" : url.c_str()));

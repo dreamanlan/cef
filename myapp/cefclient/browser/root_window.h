@@ -22,6 +22,7 @@
 
 namespace client {
 
+class RootWindowViews;
 class Tab;
 
 enum class WindowType {
@@ -157,6 +158,9 @@ class RootWindow
   // called on the main thread.
   static scoped_refptr<RootWindow> GetForBrowser(int browser_id);
 
+  // Downcast accessor, nullptr for windows that are not hosted by Views.
+  virtual RootWindowViews* AsRootWindowViews() { return nullptr; }
+
   // Returns true if the RootWindow is Views-hosted.
   virtual bool IsViewsHosted() const { return false; }
 
@@ -254,6 +258,12 @@ class RootWindow
   int opener_browser_id() const { return opener_browser_id_; }
   int popup_id() const { return popup_id_; }
 
+  // Whether a tab-disposition popup (window.open without popup features)
+  // should be adopted as a new tab of the opening window instead of opening
+  // a top-level window (Chrome tab semantics). Set on popup roots only.
+  void set_popup_adopt_as_tab(bool adopt) { popup_adopt_as_tab_ = adopt; }
+  bool popup_adopt_as_tab() const { return popup_adopt_as_tab_; }
+
  protected:
   // Allow deletion via scoped_refptr only.
   friend struct DeleteOnMainThread;
@@ -275,6 +285,7 @@ class RootWindow
   // Members set during initialization. Safe to access from any thread.
   int opener_browser_id_ = 0;
   int popup_id_ = 0;
+  bool popup_adopt_as_tab_ = false;
 };
 
 }  // namespace client

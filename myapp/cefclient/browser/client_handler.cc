@@ -1089,10 +1089,18 @@ bool ClientHandler::OnBeforePopup(
     return false;
   }
 
+  // A tab-disposition popup (window.open without popup features) is meant to
+  // open in the same window as a new tab, not as a popup window - Chrome tab
+  // semantics. The opening window adopts the popup browser view when it is
+  // created; when that fails the popup still opens as a window.
+  const bool adopt_as_tab =
+      target_disposition == CEF_WOD_NEW_FOREGROUND_TAB ||
+      target_disposition == CEF_WOD_NEW_BACKGROUND_TAB;
+
   // Potentially create a new RootWindow for the popup browser that will be
   // created asynchronously.
   CreatePopupWindow(browser, popup_id, /*is_devtools=*/false, popupFeatures,
-                    windowInfo, client, settings);
+                    windowInfo, client, settings, adopt_as_tab);
 
   // Allow popup creation.
   return false;
@@ -1464,7 +1472,8 @@ bool ClientHandler::CreatePopupWindow(CefRefPtr<CefBrowser> browser,
                                       const CefPopupFeatures& popupFeatures,
                                       CefWindowInfo& windowInfo,
                                       CefRefPtr<CefClient>& client,
-                                      CefBrowserSettings& settings) {
+                                      CefBrowserSettings& settings,
+                                      bool adopt_as_tab) {
   CEF_REQUIRE_UI_THREAD();
 
   // The popup browser will be parented to a new native window.
@@ -1473,7 +1482,7 @@ bool ClientHandler::CreatePopupWindow(CefRefPtr<CefBrowser> browser,
   return !!MainContext::Get()->GetRootWindowManager()->CreateRootWindowAsPopup(
       use_views_, use_alloy_style_, with_controls_ && !is_devtools, is_osr_,
       browser->GetIdentifier(), popup_id, is_devtools, popupFeatures,
-      windowInfo, client, settings);
+      windowInfo, client, settings, is_devtools ? false : adopt_as_tab);
 }
 
 void ClientHandler::NotifyBrowserCreated(CefRefPtr<CefBrowser> browser) {

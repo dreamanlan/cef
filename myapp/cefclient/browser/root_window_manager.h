@@ -9,6 +9,8 @@
 #include <map>
 #include <memory>
 #include <set>
+#include <string>
+#include <vector>
 
 #include "include/cef_command_line.h"
 #include "include/cef_request_context_handler.h"
@@ -65,7 +67,8 @@ class RootWindowManager : public RootWindow::Delegate {
       const CefPopupFeatures& popupFeatures,
       CefWindowInfo& windowInfo,
       CefRefPtr<CefClient>& client,
-      CefBrowserSettings& settings);
+      CefBrowserSettings& settings,
+      bool adopt_as_tab = false);
 
   // Abort or close the popup matching the specified identifiers. If |popup_id|
   // is -1 then all popups for |opener_browser_id| will be impacted.
@@ -123,6 +126,41 @@ class RootWindowManager : public RootWindow::Delegate {
   // create the browser (CefBrowserHost::CreateBrowser is asynchronous).
   base::OnceCallback<void(CefRefPtr<CefBrowser>)> pending_chrome_window_callback_;
 
+  // The url the reload was asked for, kept to pick the browser that the
+  // completion callback reports.
+  std::string hot_reload_url_;
+
+  // Hot reload, Windows we own (everything but the Chrome window mode): those
+  // are rebuilt here instead of being restored by Chrome - one window per
+  // closed window, with all of its tabs in strip order and the tab that was
+  // active. The window bounds and the show state come back from the
+  // preferences each window saves when it closes, so they are not recorded.
+  struct HotReloadWindowPages {
+    std::vector<std::string> urls;
+    int active_index = 0;
+  };
+
+  // Same for the Windows we own: the windows that were closed, and the ones
+  // being rebuilt.
+  std::vector<HotReloadWindowPages> hot_reload_views_windows_;
+  scoped_refptr<RootWindow> hot_reload_views_root_;
+  scoped_refptr<RootWindow> hot_reload_views_first_root_;
+  size_t hot_reload_views_index_ = 0;
+
+  // Chrome-created windows to rebuild: the pages of the default Chrome window
+  // mode, and the Chrome windows pages open in the other modes (window.open
+  // targets, "new window"). They are not recorded by Chrome's own restore
+  // service (CEF hosts them without the tabstrip feature Chrome requires), so
+  // they are rebuilt here as well: one window per closed window, one
+  // IDC_NEW_TAB command plus a LoadURL for every further tab.
+  std::vector<HotReloadWindowPages> hot_reload_chrome_windows_;
+  size_t hot_reload_chrome_index_ = 0;
+  CefRefPtr<CefBrowser> hot_reload_chrome_host_;
+  std::vector<CefRefPtr<CefBrowser>> hot_reload_new_tabs_;
+  bool hot_reload_collect_new_tabs_ = false;
+  // One browser per rebuilt window, either kind, for the completion callback.
+  std::vector<CefRefPtr<CefBrowser>> hot_reload_result_browsers_;
+
   // Gives up on a pending CreateChromeWindow() completion and reports it with a
   // null browser, so the hot reload query is always answered.
   void OnChromeWindowCreateTimeout();
@@ -133,6 +171,37 @@ class RootWindowManager : public RootWindow::Delegate {
   void OnHotReloadWindowReady(
       base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
       CefRefPtr<CefBrowser> browser);
+
+  void RestoreNextHotReloadViewsWindow(
+      size_t window_index,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+  void RestoreNextHotReloadViewsTab(
+      size_t tab_index,
+      int wait_ms,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+  void ActivateHotReloadViewsTab(
+      int wait_ms,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+  void FinishHotReloadViewsRestore(
+      int wait_ms,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+
+  // Rebuild of the Chrome-created windows: one CreateChromeWindow per window,
+  // then IDC_NEW_TAB + LoadURL for each further tab. The tab browsers are
+  // collected through OtherBrowserCreated while the rebuild runs.
+  void RestoreNextChromeWindow(
+      size_t window_index,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+  void OnHotReloadChromeWindowReady(
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback,
+      CefRefPtr<CefBrowser> browser);
+  void RestoreNextChromeTab(
+      size_t tab_index,
+      int wait_ms,
+      bool issued,
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
+  void FinishHotReloadChromeRestore(
+      base::OnceCallback<void(CefRefPtr<CefBrowser>)> completion_callback);
 
   // Internal method to update disable_termination_ flag with logging.
   // All modifications to disable_termination_ should go through this method.

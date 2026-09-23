@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <fstream>
+#include <map>
 #include <set>
 
 #include "include/base/cef_build.h"
@@ -20,6 +21,7 @@
 #include "myapp/cefclient/browser/main_context.h"
 #include "myapp/cefclient/browser/resource.h"
 #include "myapp/cefclient/browser/tab_drag_controller.h"
+#include "myapp/cefclient/browser/tabbed_root_window_views.h"
 #include "myapp/cefclient/browser/views_style.h"
 #include "myapp/cefclient/common/custom_scheme_common.h"
 #include "myapp/cefclient/hostclr/HostCLR.h"
@@ -229,6 +231,20 @@ std::set<ViewsWindow*>& LiveViewsWindows() {
   return *instance;
 }
 
+// Popup bootstrap bridge: GetDelegateForPopupBrowserView wraps the popup
+// window in a per-tab ContentBrowserViewDelegate (which only holds a weak
+// owner pointer), so nothing else keeps the window alive until
+// OnPopupBrowserViewCreated creates its top-level window. This map holds that
+// reference across the two framework callbacks. The entry is erased when the
+// popup view's delegate is destroyed, so an aborted popup cannot leak it.
+// Leaked on purpose, like LiveContentDelegates above.
+std::map<ContentBrowserViewDelegate*, CefRefPtr<ViewsWindow>>&
+PendingPopupWindows() {
+  static auto* const instance =
+      new std::map<ContentBrowserViewDelegate*, CefRefPtr<ViewsWindow>>();
+  return *instance;
+}
+
 class ContentBrowserViewDelegate : public CefBrowserViewDelegate {
  public:
   explicit ContentBrowserViewDelegate(ViewsWindow* owner) : owner_(owner) {
@@ -352,6 +368,7 @@ class ContentBrowserViewDelegate : public CefBrowserViewDelegate {
  private:
   ~ContentBrowserViewDelegate() override {
     LiveContentDelegates().erase(this);
+    PendingPopupWindows().erase(this);
   }
 
   // Weak, may be nullptr after the owning window is destroyed.
@@ -1049,6 +1066,19 @@ CefRefPtr<CefBrowserViewDelegate> ViewsWindow::GetDelegateForPopupBrowserView(
       is_devtools ? WindowType::DEVTOOLS : WindowType::NORMAL, popup_delegate,
       nullptr, command_line_);
   popup_window->settings_ = settings;
+  if (!is_devtools) {
+    // Wrap the popup window in a per-tab delegate, the same one used by the
+    // initial view of a regular window and by every new tab. The popup content
+    // view is the initial tab of a multi-tab window, and drag/merge/detach
+    // re-point the per-tab delegate when the tab moves to another window -
+    // a view whose delegate is the ViewsWindow itself can never be re-pointed
+    // and a later merge of that tab fails (MULTITAB_WINDOW_DESIGN.md, M3).
+    // PendingPopupWindows keeps the window alive until OnPopupBrowserViewCreated
+    // consumes it and creates the top-level window.
+    auto* content_delegate = new ContentBrowserViewDelegate(popup_window.get());
+    PendingPopupWindows()[content_delegate] = popup_window;
+    return CefRefPtr<CefBrowserViewDelegate>(content_delegate);
+  }
   return popup_window;
 }
 
@@ -1059,9 +1089,23 @@ bool ViewsWindow::OnPopupBrowserViewCreated(
   CEF_REQUIRE_UI_THREAD();
 
   // Retrieve the ViewsWindow created in GetDelegateForPopupBrowserView.
-  CefRefPtr<ViewsWindow> popup_window =
-      static_cast<ViewsWindow*>(static_cast<CefBrowserViewDelegate*>(
-          popup_browser_view->GetDelegate().get()));
+  CefRefPtr<ViewsWindow> popup_window;
+  CefViewDelegate* view_delegate = popup_browser_view->GetDelegate().get();
+  if (auto* content_delegate = GetContentDelegate(view_delegate)) {
+    // The popup window was wrapped in a per-tab delegate; take the reference
+    // back from the bridge map.
+    auto& pending = PendingPopupWindows();
+    auto it = pending.find(content_delegate);
+    if (it != pending.end()) {
+      popup_window = it->second;
+      pending.erase(it);
+    } else {
+      popup_window = CefRefPtr<ViewsWindow>(content_delegate->owner());
+    }
+  } else {
+    popup_window = static_cast<ViewsWindow*>(
+        static_cast<CefBrowserViewDelegate*>(view_delegate));
+  }
 
   // May be nullptr when using the default popup behavior.
   if (!popup_window) {
@@ -1070,6 +1114,23 @@ bool ViewsWindow::OnPopupBrowserViewCreated(
 
   // Should not be the same ViewsWindow as |this|.
   DCHECK(popup_window != this);
+
+  // A tab-disposition popup (window.open without popup features) is adopted
+  // as a new tab of this window instead of opening a top-level window
+  // (Chrome tab semantics). The popup root pre-created in OnBeforePopup
+  // flagged that decision; when the adoption is refused the popup opens as
+  // a regular window below.
+  if (!is_devtools) {
+    auto* popup_delegate = popup_window->delegate();
+    auto* popup_root =
+        popup_delegate ? popup_delegate->AsTabbedRootWindow() : nullptr;
+    auto* source_root = delegate_ ? delegate_->AsTabbedRootWindow() : nullptr;
+    if (popup_root && popup_root->popup_adopt_as_tab() && source_root &&
+        source_root->AdoptPopupAsTab(popup_window, popup_browser_view)) {
+      // Adopted as a new tab of this window; no top-level popup window.
+      return true;
+    }
+  }
 
   // Preserve the popup's actual request context, not the opener's.
   if (auto popup_browser = popup_browser_view->GetBrowser()) {

@@ -36,6 +36,10 @@ class TabbedRootWindowViews : public RootWindowViews {
                     const CefRect& bounds);
 
   bool HasBrowser(int browser_id) const override;
+
+  // Tabs of this window, in strip order. Main thread only. Hot reload reads
+  // them to rebuild the window with the tabs it had.
+  const std::vector<std::shared_ptr<Tab>>& GetTabs() const { return tabs_; }
   void OnTabBrowserCreated(Tab* tab,
                            CefRefPtr<CefBrowser> browser) override;
   void OnTabBrowserClosed(Tab* tab,
@@ -60,6 +64,15 @@ class TabbedRootWindowViews : public RootWindowViews {
   // position. Called by TabDragController on the UI thread when a drag
   // session ends over the target's tab bar.
   bool MergeDraggedTabInto(TabbedRootWindowViews* target_root, int before_id);
+
+  // Adopt the browser view of a tab-disposition popup as a new tab of this
+  // window (window.open without popup features; Chrome tab semantics).
+  // |popup_window| is the ViewsWindow pre-created for the popup; the popup
+  // root's bootstrap Tab is transferred together with the browser. Returns
+  // false when this window cannot adopt it, in which case the popup opens
+  // as a regular window.
+  bool AdoptPopupAsTab(CefRefPtr<ViewsWindow> popup_window,
+                       CefRefPtr<CefBrowserView> popup_view);
   bool OnTabBrowserCloseApproved(Tab* tab,
                                  CefRefPtr<CefBrowser> browser) override;
   void OnBrowserViewCreated(
@@ -124,6 +137,15 @@ class TabbedRootWindowViews : public RootWindowViews {
                         scoped_refptr<TabbedRootWindowViews> target_root,
                         int before_id,
                         bool anchored);
+
+  // Main-thread tail of the popup tab adoption: registry handover, owner
+  // re-pointing, snapshot, and windowless teardown of the popup root that
+  // never created its window shell. Both roots are kept alive across the
+  // thread hop.
+  void CompletePopupTabAdoption(
+      scoped_refptr<TabbedRootWindowViews> popup_root,
+      std::shared_ptr<Tab> tab,
+      CefRefPtr<CefBrowser> browser);
 
   // Detached-adoption state. Seeded by InitDetached on the main thread
   // before the UI continuation is posted.

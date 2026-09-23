@@ -372,7 +372,9 @@ class ClientHandler : public BaseClientHandler,
   friend class ClientDownloadImageCallback;
 
   // Create a new popup window using the specified information. |is_devtools|
-  // will be true if the window will be used for DevTools. Returns true if a
+  // will be true if the window will be used for DevTools. |adopt_as_tab|
+  // requests that the popup become a new tab of the opening window instead of
+  // a top-level window (tab disposition popups only). Returns true if a
   // RootWindow was created for the popup.
   bool CreatePopupWindow(CefRefPtr<CefBrowser> browser,
                          int popup_id,
@@ -380,7 +382,8 @@ class ClientHandler : public BaseClientHandler,
                          const CefPopupFeatures& popupFeatures,
                          CefWindowInfo& windowInfo,
                          CefRefPtr<CefClient>& client,
-                         CefBrowserSettings& settings);
+                         CefBrowserSettings& settings,
+                         bool adopt_as_tab = false);
 
   // Execute Delegate notifications on the main thread.
   void NotifyBrowserCreated(CefRefPtr<CefBrowser> browser);
