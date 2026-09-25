@@ -247,19 +247,31 @@ patch更新方法：
 5、验证：git apply -p0 --ignore-whitespace --reverse --check 必须通过（幂等性）；新旧 patch 对比确认差异仅为本次合入内容与行号平移。
 6、重新构建。
 
-================ 8037 SDK_VERSION 坑（2026-09-26 已修，未构建验证） ================
+================ 8037 SDK_VERSION 坑（2026-09-26 最终结论：必须装 28000 SDK） ================
 现象：gn gen（cef_create_projects / gclient_hook.py）报
   Exception: Path "C:\Program Files (x86)\Windows Kits\10\include\10.0.28000.0\um" from
   environment variable "include" does not exist.
-根因：8037 上游工具链按 depot_tools 打包的 VS2026 + Win11 SDK 10.0.28000.0 配置，两处硬编码：
+根因：8037（Chromium 154）上游按 depot_tools 打包的 VS2026 + Win11 SDK 10.0.28000.0 配置：
   build/vs_toolchain.py:63                SDK_VERSION = '10.0.28000.0'
   build/toolchain/win/setup_toolchain.py  SDK_VERSION = '10.0.28000.0'
-setup_toolchain.py 会把该版本显式传给 vcvarsall.bat；本机 VS 2022 Community 只装了
-10.0.26100.0（Windows Kits\10\Include 下有 10240/19041/22621/26100），故 vcvarsall 产出的
-include 指向不存在的目录。7871 时代 SDK_VERSION 恰好是本机装过的版本，升级后才暴露。
-修复（已完成）：把两处 SDK_VERSION 都改为 '10.0.26100.0' 并加英文注释，与这两个文件既有的
-本地修改同类。已手动跑 setup_toolchain.py（DEPOT_TOOLS_WIN_TOOLCHAIN=0）验证 include/lib
-全部指向 26100，退出码 0。
-注意：这两处是构建树工作区改动，gclient sync 更新源码后会被还原，需重新修改；下次 Chromium
-大版本升级后 SDK_VERSION 数值会再变，同样按本机已装 SDK 改。备选正道是用 VS Installer 装上
-上游指定的 SDK 版本（当前 10.0.28000.0，Win11 26H2），装上后可还原这两处改动。
+  build/config/win/BUILD.gn:308           NTDDI_VERSION=NTDDI_WIN11_BR
+setup_toolchain.py 会把 SDK_VERSION 显式传给 vcvarsall.bat。本机 VS 2022 Community 原本只装了
+26100 及更早 SDK。
+曾尝试把两处 SDK_VERSION 改成 10.0.26100.0，gn gen 能过，但编译立即失败：
+  fileapi.h(1081,10): error: unknown type name 'FILE_INFO_BY_HANDLE_CLASS'
+因为 NTDDI_WIN11_BR 只在 28000 SDK 的 sdkddkver.h 中定义（26100 最高 NTDDI_WIN11_GE），宏未定义
+导致 NTDDI_VERSION 展开为 0，minwinbase.h 里该枚举的 NTDDI_VERSION 守卫不通过。
+且 base/win/windows_version.cc:30 有硬性检查：
+  #if !defined(NTDDI_WIN11_BR) #error Windows 10.0.28000.0 SDK or higher required. #endif
+→ M154 硬性要求 SDK >= 10.0.28000.0，绕不过去（改宏是无底洞，源码还有按 NTDDI_WIN11_BR 条件
+  编译的新 API 依赖）。
+最终修复：不动 VS2022 组件，安装 VS2026 Build Tools（勾选 MSVC v145 + "Windows 11 SDK
+(10.0.28000.0)"，Win11 26H2）。装好后两处 SDK_VERSION 保持上游原值 28000.0 不改（已还原），
+构建配置也不用改（bat 的 GYP_MSVS_VERSION=2022 会继续锁定 VS2022 实例：SDK 装到整机共享的
+Windows Kits 目录，VS2022 编译器直接用 28000 SDK 头/库），直接重新构建即可。
+若编译期再报 MSVC 14.38 头文件版本类错误，可把 bat 改为 set GYP_MSVS_VERSION=2026（可再加
+set GYP_MSVS_OVERRIDE_PATH=<VS2026 BuildTools 安装路径>），用 VS2026 的 VC145 工具集彻底对齐
+上游打包工具链（8037 的 MSVS_VERSIONS 本就注册 '2026'→18.0）。
+注意：若以后做了 gclient sync，vs_toolchain.py / setup_toolchain.py 里既有的本地修改（GYP_MSVS_
+OVERRIDE_PATH 不拷 DLL、GYP_MSVS_VERSION 直返等）会被还原，需重打；SDK_VERSION 值本身保持上游
+即可，无需再改。
