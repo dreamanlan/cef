@@ -61,7 +61,8 @@ scoped_refptr<URLLoaderFactoryGetter> URLLoaderFactoryGetter::Create(
       ukm::SourceIdObj(), factory_builder, /*header_client=*/nullptr,
       /*bypass_redirect_checks=*/nullptr, /*disable_secure_dns=*/nullptr,
       /*factory_override=*/nullptr,
-      /*navigation_response_task_runner=*/nullptr);
+      /*navigation_response_task_runner=*/nullptr,
+      /*is_for_network_service=*/false);
 
   return base::WrapRefCounted(new URLLoaderFactoryGetter(
       loader_factory->Clone(), std::move(factory_builder)));

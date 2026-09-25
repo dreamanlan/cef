@@ -68,6 +68,24 @@ list(APPEND CEF_COMPILER_DEFINES
 # Configure use of the sandbox.
 option(USE_SANDBOX "Enable or disable use of the sandbox." ON)
 
+# Configure the installer-managed cefclient example.
+option(USE_INSTALLER "Build the installer-managed cefclient example." OFF)
+
+if(USE_INSTALLER)
+  if(NOT OS_WINDOWS)
+    message(FATAL_ERROR "USE_INSTALLER is supported only on Windows.")
+  endif()
+  if(NOT USE_SANDBOX)
+    message(FATAL_ERROR
+            "USE_INSTALLER requires USE_SANDBOX=On for bootstrap support.")
+  endif()
+  if((GEN_NINJA OR GEN_MAKEFILES) AND
+     NOT "${CMAKE_BUILD_TYPE}" STREQUAL "Release")
+    message(FATAL_ERROR
+            "USE_INSTALLER requires CMAKE_BUILD_TYPE=Release.")
+  endif()
+endif()
+
 
 # Optionally configure the CEF API version by adding `-D api_version=XXXXX` to the
 # cmake command-line where XXXXX is the desired version number. For background see
@@ -79,6 +97,18 @@ if(DEFINED api_version)
   endif()
   list(APPEND CEF_COMPILER_DEFINES
     CEF_API_VERSION=${api_version}
+  )
+elseif(OS_WINDOWS AND USE_SANDBOX)
+  # When building a client DLL loaded by bootstrap.exe (Windows + USE_SANDBOX),
+  # default to the last released API version instead of the experimental
+  # (unversioned) API. The experimental API is not back/forward compatible
+  # across CEF versions and does not bump the version number, so the installer's
+  # vmin-based version selection cannot work safely against it. Building against
+  # CEF_API_VERSION_LAST makes the client forward-compatible with newer
+  # libcef.dll binaries (via API backwards compatibility). Set -Dapi_version=XXXXX
+  # to override (e.g. for new-API development testing).
+  list(APPEND CEF_COMPILER_DEFINES
+    CEF_API_VERSION=CEF_API_VERSION_LAST
   )
 endif()
 
@@ -232,8 +262,6 @@ if(OS_LINUX)
   set(CEF_BINARY_FILES
     chrome-sandbox
     libcef.so
-    libEGL.so
-    libGLESv2.so
     libvk_swiftshader.so
     libvulkan.so.1
     v8_context_snapshot.bin
@@ -582,8 +610,6 @@ if(OS_WINDOWS)
     chrome_elf.dll
     d3dcompiler_47.dll
     libcef.dll
-    libEGL.dll
-    libGLESv2.dll
     v8_context_snapshot.bin
     vk_swiftshader.dll
     vk_swiftshader_icd.json

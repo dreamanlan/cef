@@ -4,6 +4,8 @@
 
 #include "cef/libcef/browser/chrome/views/chrome_browser_widget.h"
 
+#include "base/functional/bind.h"
+#include "cef/libcef/browser/chrome/browser_util.h"
 #include "cef/libcef/browser/chrome/chrome_browser_host_impl.h"
 #include "cef/libcef/browser/chrome/views/chrome_browser_frame_view.h"
 #include "cef/libcef/browser/thread_util.h"
@@ -45,6 +47,13 @@ void ChromeBrowserWidget::Init(BrowserView* browser_view, Browser* browser) {
 
   // Initialize BrowserView state.
   browser_view->InitBrowser(browser);
+
+  // Browser closure and native window destruction may occur in either order.
+  // Close owned widgets before Browser deletion when the Browser lifecycle
+  // completes first. OnNativeWidgetDestroying handles the reverse ordering.
+  browser_close_subscription_ = browser->RegisterBrowserDidClose(
+      base::BindRepeating(&ChromeBrowserWidget::OnBrowserDidClose,
+                          weak_ptr_factory_.GetWeakPtr()));
 
 #if BUILDFLAG(IS_MAC)
   // Initialize native window state.
@@ -173,7 +182,8 @@ std::unique_ptr<views::FrameView> ChromeBrowserWidget::CreateFrameView() {
 
 void ChromeBrowserWidget::Activate() {
   if (browser_view() && browser_view()->browser() &&
-      browser_view()->browser()->is_type_devtools()) {
+      browser_view()->browser()->GetType() ==
+          BrowserWindowInterface::TYPE_DEVTOOLS) {
     if (auto browser_host = ChromeBrowserHostImpl::GetBrowserForBrowser(
             browser_view()->browser())) {
       if (browser_host->platform_delegate()->HasExternalParent()) {
@@ -192,6 +202,37 @@ void ChromeBrowserWidget::Activate() {
   BrowserWidget::Activate();
 }
 
+void ChromeBrowserWidget::OnNativeWidgetDestroying() {
+  CloseOwnedWidgets();
+
+  BrowserWidget::OnNativeWidgetDestroying();
+}
+
+void ChromeBrowserWidget::OnBrowserDidClose(BrowserWindowInterface* browser) {
+  DCHECK(browser_view());
+  DCHECK_EQ(browser_view()->browser(), browser);
+  CloseOwnedWidgets();
+}
+
+void ChromeBrowserWidget::CloseOwnedWidgets() {
+  if (!GetNativeView()) {
+    return;
+  }
+
+  // Preserve overlay contents before CloseNow bypasses the normal overlay
+  // cleanup in CefWindowView::WindowClosing.
+  if (window_view_) {
+    window_view_->CloseOverlayViews();
+  }
+
+  views::Widget::ForEachOwnedWidget(GetNativeView(),
+                                    [this](views::Widget* widget) {
+                                      if (widget != this) {
+                                        widget->CloseNow();
+                                      }
+                                    });
+}
+
 void ChromeBrowserWidget::OnNativeWidgetDestroyed() {
   if (browser_view()) {
     // Remove the listener registration added in BrowserView::InitBrowser().
@@ -207,9 +248,10 @@ void ChromeBrowserWidget::OnNativeWidgetDestroyed() {
     browser_view()->DeleteBrowserWindow();
 
     // Destruction logic from BrowserWidget::OnNativeWidgetDestroyed.
-    Browser* const browser = browser_view()->browser();
-    UnloadController::From(browser)->set_force_skip_warning_user_on_close(true);
-    browser->OnWindowClosing();
+    Browser* const browser = cef::BrowserForBWI(browser_view()->browser());
+    auto* unload_controller = UnloadController::From(browser);
+    unload_controller->set_force_skip_warning_user_on_close(true);
+    unload_controller->OnWindowClosing();
 
     // Invoke the pre-window-destruction lifecycle hook before the BrowserView
     // and BrowserWidget are destroyed.

@@ -99,6 +99,11 @@ class ReadTestHandler : public RoutingTestHandler {
       CefRefPtr<CefBrowser> browser,
       CefRefPtr<CefFrame> frame,
       CefRefPtr<CefRequest> request) override {
+    if (request->GetResourceType() == RT_FAVICON) {
+      // Ignore favicon requests.
+      return nullptr;
+    }
+
     got_resource_handler_.yes();
 
     const std::string& url = request->GetURL();

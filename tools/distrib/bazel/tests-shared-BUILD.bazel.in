@@ -30,6 +30,14 @@ srcs_browser_mac = [
     ${shared_sources_mac}
 ]
 
+srcs_osr_mac = [
+    ${shared_sources_osr_mac}
+]
+
+srcs_osr_accessibility = [
+    ${shared_sources_osr_accessibility}
+]
+
 srcs_browser_mac_ceftests = [
     ${ceftests_sources_mac_browser_shared}
 ]
@@ -85,6 +93,17 @@ declare_cc_library(
     ],
 )
 
+declare_objc_library(
+    name = "OsrLibMac",
+    srcs = srcs_osr_mac + srcs_osr_accessibility,
+    target_compatible_with = [
+        "@platforms//os:macos",
+    ],
+    deps = [
+        "//:cef_wrapper",
+    ],
+)
+
 # Same as above, but adding additional files for ceftests. This is a workaround
 # for ceftests including browser and renderer test code in the same cc files.
 # Needs to be defined here because Bazel disallows direct access to files
@@ -118,6 +137,14 @@ declare_objc_library(
 # Windows targets.
 #
 
+filegroup(
+    name = "OsrAccessibilitySrcsWin",
+    srcs = srcs_osr_accessibility,
+    target_compatible_with = [
+        "@platforms//os:windows",
+    ],
+)
+
 # Include files directly in the declare_exe target. This simplifies the build
 # configuration and avoids issues with Windows discarding symbols (like WinMain)
 # when linking libraries.
@@ -142,4 +169,3 @@ filegroup(
         "@platforms//os:linux",
     ],
 )
-

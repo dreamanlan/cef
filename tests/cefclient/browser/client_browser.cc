@@ -14,6 +14,10 @@
 #include "tests/cefclient/browser/root_window_manager.h"
 #include "tests/shared/common/client_switches.h"
 
+#if defined(CEF_USE_BOOTSTRAP)
+#include "tests/cefclient/browser/client_update_win.h"
+#endif
+
 namespace client::browser {
 
 namespace {
@@ -54,6 +58,13 @@ class ClientBrowserDelegate : public ClientAppBrowser::Delegate {
       // Load the CRLSets file from the specified path.
       CefLoadCRLSetsFile(crl_sets_path);
     }
+
+#if defined(CEF_USE_BOOTSTRAP)
+    // Confirm launch health after a delay, then check for an update. Ordering
+    // the update after confirmation preserves this healthy version as a
+    // fallback under the installer's existing pruning policy.
+    StartLaunchHealthConfirmation();
+#endif
   }
 
   void OnBeforeCommandLineProcessing(

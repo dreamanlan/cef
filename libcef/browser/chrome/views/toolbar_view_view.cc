@@ -7,7 +7,7 @@
 #include "ui/base/metadata/metadata_impl_macros.h"
 
 CefToolbarViewView::CefToolbarViewView(CefViewDelegate* cef_delegate,
-                                       Browser* browser,
+                                       BrowserWindowInterface* browser,
                                        BrowserView* browser_view,
                                        std::optional<DisplayMode> display_mode)
     : ParentClass(cef_delegate, browser, browser_view, display_mode) {}

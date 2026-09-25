@@ -8,6 +8,7 @@
 #include "base/notimplemented.h"
 #include "cef/libcef/browser/browser_platform_delegate.h"
 #include "cef/libcef/browser/chrome/browser_platform_delegate_chrome.h"
+#include "cef/libcef/browser/chrome/browser_util.h"
 #include "cef/libcef/browser/chrome/views/chrome_browser_view.h"
 #include "cef/libcef/browser/chrome/views/chrome_browser_widget.h"
 #include "cef/libcef/browser/thread_util.h"
@@ -95,12 +96,12 @@ CefRefPtr<ChromeBrowserHostImpl> ChromeBrowserHostImpl::GetBrowserForGlobalId(
 
 // static
 CefRefPtr<ChromeBrowserHostImpl> ChromeBrowserHostImpl::GetBrowserForBrowser(
-    const Browser* browser) {
+    const BrowserWindowInterface* browser) {
   // Return the ChromeBrowserHostImpl that is currently active.
   // Views-hosted Browsers will contain a single ChromeBrowserHostImpl.
   // Otherwise, there will be a ChromeBrowserHostImpl per Tab/WebContents.
   // |contents| may be nullptr during Browser initialization or destruction.
-  auto contents = browser->tab_strip_model()->GetActiveWebContents();
+  auto contents = browser->GetTabStripModel()->GetActiveWebContents();
   if (!contents) {
     return nullptr;
   }
@@ -111,7 +112,7 @@ ChromeBrowserHostImpl::~ChromeBrowserHostImpl() = default;
 
 void ChromeBrowserHostImpl::AddNewContents(
     std::unique_ptr<content::WebContents> contents,
-    std::optional<Browser::CreateParams> browser_create_params) {
+    std::optional<BrowserWindowCreateParams> browser_create_params) {
   DCHECK(contents);
   DCHECK(!browser_);
 
@@ -344,7 +345,8 @@ void ChromeBrowserHostImpl::ExecuteChromeCommand(
 
 ChromeBrowserView* ChromeBrowserHostImpl::chrome_browser_view() const {
   if (browser_ && is_views_hosted_) {
-    return static_cast<ChromeBrowserView*>(browser_->window());
+    return static_cast<ChromeBrowserView*>(
+        BrowserView::GetBrowserViewForBrowser(browser_));
   }
   return nullptr;
 }
@@ -400,11 +402,12 @@ ChromeBrowserHostImpl::ChromeBrowserHostImpl(
 // static
 Browser* ChromeBrowserHostImpl::CreateBrowser(
     const CefBrowserCreateParams& params,
-    std::optional<Browser::CreateParams> browser_create_params) {
-  Browser::CreateParams chrome_params = [&params, &browser_create_params]() {
+    std::optional<BrowserWindowCreateParams> browser_create_params) {
+  BrowserWindowCreateParams chrome_params = [&params,
+                                             &browser_create_params]() {
     if (!browser_create_params.has_value()) {
       auto* profile = CefRequestContextImpl::GetProfile(params.request_context);
-      return Browser::CreateParams(profile, /*user_gesture=*/false);
+      return BrowserWindowCreateParams(profile, /*from_user_gesture=*/false);
     } else {
       return std::move(*browser_create_params);
     }
@@ -419,11 +422,11 @@ Browser* ChromeBrowserHostImpl::CreateBrowser(
   // documentation.
   ChromeBrowserView* chrome_browser_view = nullptr;
   if (params.browser_view) {
-    if (chrome_params.type == Browser::TYPE_NORMAL) {
+    if (chrome_params.type == BrowserWindowInterface::TYPE_NORMAL) {
       // Don't show most controls.
-      chrome_params.type = Browser::TYPE_POPUP;
+      chrome_params.type = BrowserWindowInterface::TYPE_POPUP;
       // Don't show title bar or address.
-      chrome_params.trusted_source = true;
+      chrome_params.is_trusted_source = true;
     }
 
     auto view_impl =
@@ -445,7 +448,8 @@ Browser* ChromeBrowserHostImpl::CreateBrowser(
   // The same params will be used to create a new Browser if the tab is dragged
   // out of the existing Browser. The returned Browser is owned by the
   // BrowserManagerService.
-  auto* browser = Browser::Create(chrome_params);
+  auto* browser =
+      cef::BrowserForBWI(CreateBrowserWindow(std::move(chrome_params)));
 
   bool show_browser = true;
 
@@ -462,7 +466,7 @@ Browser* ChromeBrowserHostImpl::CreateBrowser(
   }
 
   if (show_browser) {
-    browser->window()->Show();
+    browser->GetWindow()->Show();
   }
 
   return browser;
@@ -532,7 +536,7 @@ void ChromeBrowserHostImpl::SetBrowser(Browser* browser) {
       ->set_chrome_browser(browser);
   if (browser_) {
     // We expect the Browser and CefRequestContext to have the same Profile.
-    CHECK_EQ(browser_->profile(),
+    CHECK_EQ(browser_->GetProfile(),
              request_context()->GetBrowserContext()->AsProfile());
 
     host_window_handle_ = platform_delegate_->GetHostWindowHandle();

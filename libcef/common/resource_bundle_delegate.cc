@@ -23,7 +23,8 @@ bool CefResourceBundleDelegate::HasDataResource(int resource_id) const {
   return false;
 }
 
-base::RefCountedMemory* CefResourceBundleDelegate::LoadDataResourceBytes(
+scoped_refptr<base::RefCountedMemory>
+CefResourceBundleDelegate::LoadDataResourceBytes(
     int resource_id,
     ui::ResourceScaleFactor scale_factor) {
   return nullptr;

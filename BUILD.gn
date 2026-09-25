@@ -341,6 +341,7 @@ group("cef") {
       ":cefsimple_dll",
       ":cefsimple_capi_dll",
       ":ceftests_dll",
+      "libcef_dll/bootstrap/installer:installer_tests",
     ]
   }
 
@@ -364,7 +365,6 @@ if (is_win) {
       # Otherwise we need to copy this array into CEF, which would be difficult
       # to maintain.
       "//chrome/common/crash_keys.cc",
-      "//chrome/common/chrome_switches.cc",
       "//components/webui/flags/flags_ui_switches.cc",
       "//content/public/common/content_switches.cc",
     ]
@@ -391,6 +391,7 @@ if (is_win) {
 
       # Required by chrome_switches.cc
       "//chrome/common:buildflags",
+      "//extensions/buildflags:buildflags",
       "//printing/buildflags:buildflags",
       "//ui/base:buildflags",
 
@@ -458,6 +459,33 @@ test("libcef_static_unittests") {
     "libcef/features:config",
     "//build/config:precompiled_headers",
   ]
+}
+
+if (is_win) {
+  # Certificate utilities used by installer_signature and bootstrap.
+  # Separated to avoid duplicate symbol errors when both depend on these.
+  source_set("cef_certificate_util") {
+    sources = [
+      "include/wrapper/cef_certificate_util_win.h",
+      "include/wrapper/cef_util_win.h",
+      "libcef_dll/wrapper/cef_certificate_util_win.cc",
+      "libcef_dll/wrapper/cef_util_win.cc",
+    ]
+
+    deps = [ "//base" ]
+
+    libs = [
+      "wintrust.lib",
+      "crypt32.lib",
+    ]
+
+    defines = [ "CEF_BUILD_BOOTSTRAP" ]
+
+    configs += [
+      "libcef/features:config",
+      "//build/config:precompiled_headers",
+    ]
+  }
 }
 
 # Source files that are linked into libcef and cef_framework and implement
@@ -545,6 +573,8 @@ source_set("libcef_static") {
     "libcef/browser/chrome/chrome_browser_host_impl.h",
     "libcef/browser/chrome/chrome_browser_main_extra_parts_cef.cc",
     "libcef/browser/chrome/chrome_browser_main_extra_parts_cef.h",
+    "libcef/browser/chrome/chrome_browser_web_contents_delegate.cc",
+    "libcef/browser/chrome/chrome_browser_web_contents_delegate.h",
     "libcef/browser/chrome/chrome_content_browser_client_cef.cc",
     "libcef/browser/chrome/chrome_content_browser_client_cef.h",
     "libcef/browser/chrome/chrome_context_menu_handler.cc",
@@ -1028,7 +1058,7 @@ source_set("libcef_static") {
     ]
 
     deps += [
-      "//chrome/browser/win:isolated_browser_support",
+      "//chrome/browser/win/isolated_browser:isolated_browser_support",
       "//chrome/install_static:secondary_module",
       "//chrome/chrome_elf",
     ]
@@ -1211,9 +1241,11 @@ config("libcef_includes_config") {
   ]
 }
 
-# Configuration that will be applied to all targets that depend on
-# libcef_dll_wrapper.
-config("libcef_dll_wrapper_config") {
+# Shared configuration for all libcef_dll_wrapper variants. This contains
+# everything except the CEF_API_VERSION define, which differs between the
+# default wrapper and the distribution (DLL) wrapper. See
+# libcef_dll_wrapper_config and libcef_dll_wrapper_dll_config below.
+config("libcef_dll_wrapper_config_base") {
   configs = [
     ":libcef_autogen_config",
     ":libcef_includes_config",
@@ -1252,6 +1284,13 @@ config("libcef_dll_wrapper_config") {
   if (is_mac) {
     cflags_objcc = [ "-std=c++20" ]
   }
+}
+
+# Configuration that will be applied to all targets that depend on
+# libcef_dll_wrapper. The CEF_API_VERSION defaults to the experimental
+# (unversioned) API unless cef_api_version is explicitly set.
+config("libcef_dll_wrapper_config") {
+  configs = [ ":libcef_dll_wrapper_config_base" ]
 
   if (cef_api_version != "") {
     defines = [ "CEF_API_VERSION=$cef_api_version" ]
@@ -1292,6 +1331,58 @@ static_library("libcef_dll_wrapper") {
   use_libcxx_modules = false
 }
 
+# Distribution variant of libcef_dll_wrapper for client DLLs loaded by
+# bootstrap.exe (e.g. cefclient_dll). Identical to libcef_dll_wrapper except it
+# defaults CEF_API_VERSION to CEF_API_VERSION_LAST. A separate target is
+# required because a static_library is compiled once: the same wrapper instance
+# cannot serve both an experimental-API consumer and a CEF_API_VERSION_LAST
+# consumer. The experimental API is not back/forward compatible across CEF
+# versions and does not bump the version number, so a client built against it
+# cannot safely use vmin-only version selection. Building against the last
+# released API version makes the client forward-compatible with newer libcef.dll
+# binaries (via API backwards compatibility), which is what the installer's
+# vmin=CEF_API_VERSION_LAST selection relies on. An explicit cef_api_version
+# (e.g. CEF_NEXT for new-API development testing) still takes precedence.
+# Windows-only: the bootstrap + installer model is Windows-only.
+if (is_win) {
+  config("libcef_dll_wrapper_dll_config") {
+    configs = [ ":libcef_dll_wrapper_config_base" ]
+
+    if (cef_api_version != "") {
+      defines = [ "CEF_API_VERSION=$cef_api_version" ]
+    } else {
+      defines = [ "CEF_API_VERSION=CEF_API_VERSION_LAST" ]
+    }
+  }
+
+  static_library("libcef_dll_wrapper_dll") {
+    sources = includes_common +
+              gypi_paths.autogen_cpp_includes +
+              gypi_paths2.includes_capi +
+              gypi_paths.autogen_capi_includes +
+              gypi_paths2.includes_wrapper +
+              gypi_paths2.libcef_dll_wrapper_sources_base +
+              gypi_paths2.libcef_dll_wrapper_sources_common +
+              gypi_paths.autogen_client_side +
+              gypi_paths2.libcef_dll_wrapper_sources_win
+
+    libs = [
+      "crypt32.lib",
+      "wintrust.lib",
+    ]
+
+    defines = [ "WRAPPING_CEF_SHARED" ]
+
+    configs += [ ":libcef_dll_wrapper_dll_config" ]
+    public_configs = [ ":libcef_dll_wrapper_dll_config" ]
+
+    deps = [ ":cef_make_headers" ]
+
+    # Disable clang modules for this target (see issue #3611).
+    use_libcxx_modules = false
+  }
+}
+
 
 #
 # cef_sandbox target.
@@ -1327,15 +1418,11 @@ if (is_mac) {
 if (is_win) {
   bootstrap_sources = includes_common +
                       includes_win + [
-    "include/wrapper/cef_certificate_util_win.h",
-    "include/wrapper/cef_util_win.h",
     "libcef_dll/bootstrap/bootstrap_util_win.cc",
     "libcef_dll/bootstrap/bootstrap_util_win.h",
     "libcef_dll/bootstrap/bootstrap_win.cc",
     "libcef_dll/bootstrap/win/bootstrap.rc",
     "libcef_dll/bootstrap/win/resource.h",
-    "libcef_dll/wrapper/cef_certificate_util_win.cc",
-    "libcef_dll/wrapper/cef_util_win.cc",
     "libcef/browser/crashpad_runner.cc",
     "libcef/browser/crashpad_runner.h",
     "libcef/browser/preferred_stack_size_win.inc",
@@ -1345,12 +1432,12 @@ if (is_win) {
     "//chrome/common/win/delay_load_failure_support.h",
     "//content/app/sandbox_helper_win.cc",
     "//content/public/app/sandbox_helper_win.h",
+
   ]
 
   bootstrap_deps = [
-    ":make_api_versions_header",
-    ":make_config_header",
-    ":make_version_header",
+    ":cef_certificate_util",
+    "libcef_dll/bootstrap/installer:cef_installer",
     "//base",
     "//build/win:default_exe_manifest",
     "//chrome/install_static:secondary_module",
@@ -1381,7 +1468,13 @@ if (is_win) {
     testonly = true
 
     sources = bootstrap_sources
-    deps = bootstrap_deps
+    deps = bootstrap_deps + [
+      # Trigger generation of both installer config pairs so that the files
+      # exist for distributions (automate-git.py builds bootstrap but not
+      # cefclient_dll). The files are not embedded in this binary.
+      "libcef_dll/bootstrap/installer:cef_installer_config",
+      "libcef_dll/bootstrap/installer:cef_installer_config_managed",
+    ]
     libs = bootstrap_libs
     configs += bootstrap_configs
 
@@ -1716,11 +1809,11 @@ if (is_mac) {
     if (v8_use_external_startup_data) {
       public_deps += [ "//v8" ]
       if (use_v8_context_snapshot) {
-        sources += [ "$root_build_dir/$v8_context_snapshot_filename" ]
+        sources += [ "$root_out_dir/$v8_context_snapshot_filename" ]
         public_deps += [ "//tools/v8_context_snapshot" ]
       }
       if (!use_v8_context_snapshot || include_both_v8_snapshots) {
-        sources += [ "$root_build_dir/snapshot_blob.bin" ]
+        sources += [ "$root_out_dir/snapshot_blob.bin" ]
       }
     }
 
@@ -1786,6 +1879,19 @@ if (is_mac) {
     ]
   }
 
+  # Add the Vulkan loader .dylib in the MODULE_DIR of the Framework app bundle.
+  bundle_data("cef_framework_vulkan_binaries") {
+    sources = [
+      "$root_out_dir/vulkan_intermediates/libvulkan.dylib",
+    ]
+    outputs = [
+      "{{bundle_contents_dir}}/Libraries/{{source_file_part}}",
+    ]
+    public_deps = [
+      "//ui/gl:vulkan_loader_library_copy",
+    ]
+  }
+
   mac_framework_bundle("cef_framework") {
     # Necessary because the libcef_test_support target is testonly.
     testonly = true
@@ -1804,6 +1910,7 @@ if (is_mac) {
       ":cef_framework_cef_binaries",
       ":cef_framework_resources",
       ":cef_framework_swiftshader_binaries",
+      ":cef_framework_vulkan_binaries",
     ]
 
     if (!use_static_angle) {
@@ -2170,6 +2277,8 @@ if (is_mac) {
               gypi_paths2.shared_sources_mac +
               gypi_paths2.cefclient_sources_browser +
               gypi_paths2.cefclient_sources_common +
+              gypi_paths2.shared_sources_osr_mac +
+              gypi_paths2.shared_sources_osr_accessibility +
               gypi_paths2.cefclient_sources_mac
     deps = [
       ":libcef_dll_wrapper",
@@ -2180,7 +2289,8 @@ if (is_mac) {
     frameworks = [
       "AppKit.framework",
       "IOSurface.framework",
-      "OpenGL.framework",
+      "Metal.framework",
+      "QuartzCore.framework",
     ]
     defines = [
       "CEF_USE_SANDBOX",
@@ -2557,6 +2667,8 @@ if (is_mac) {
               gypi_paths2.shared_sources_common +
               gypi_paths2.shared_sources_mac +
               gypi_paths2.ceftests_sources_common +
+              gypi_paths2.shared_sources_osr_mac +
+              gypi_paths2.shared_sources_osr_accessibility +
               gypi_paths2.ceftests_sources_mac
     deps = [
       ":libcef_dll_wrapper",
@@ -2569,6 +2681,9 @@ if (is_mac) {
     ]
     frameworks = [
       "AppKit.framework",
+      "IOSurface.framework",
+      "Metal.framework",
+      "QuartzCore.framework",
     ]
     defines = [
       "CEF_USE_SANDBOX",
@@ -2640,6 +2755,7 @@ if (is_mac) {
                  gypi_paths2.includes_wrapper_win +
                  gypi_paths2.shared_sources_win +
                  gypi_paths2.cefclient_sources_win +
+                 gypi_paths2.shared_sources_osr_accessibility +
                  gypi_paths2.cefclient_sources_resources_win_rc
 
       # Set /SUBSYSTEM:WINDOWS.
@@ -2736,12 +2852,18 @@ if (is_mac) {
                 gypi_paths2.cefclient_sources_common +
                 gypi_paths2.cefclient_sources_renderer +
                 gypi_paths2.cefclient_sources_win +
-                gypi_paths2.cefclient_sources_resources_win_rc
+                gypi_paths2.shared_sources_osr_accessibility +
+                gypi_paths2.cefclient_sources_resources_win_rc + [
+                  # Generated installer config resource (embedded in client DLL,
+                  # read by bootstrap.exe).
+                  "$target_gen_dir/installer_config.rc",
+                ]
 
       deps = [
         ":bootstrap",
+        "libcef_dll/bootstrap/installer:cef_installer_config",
         ":libcef",
-        ":libcef_dll_wrapper",
+        ":libcef_dll_wrapper_dll",
       ]
 
       defines = [
@@ -2873,7 +2995,7 @@ if (is_mac) {
       deps = [
         ":bootstrap",
         ":libcef",
-        ":libcef_dll_wrapper",
+        ":libcef_dll_wrapper_dll",
       ]
 
       defines = [
@@ -3335,7 +3457,7 @@ if (is_mac) {
       deps = [
         ":bootstrapc",
         ":libcef",
-        ":libcef_dll_wrapper",
+        ":libcef_dll_wrapper_dll",
         ":gtest_teamcity",
         "//testing/gmock",
         "//testing/gtest",

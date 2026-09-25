@@ -97,11 +97,11 @@ index aa43742055b04c70bcb60bd21f61897b3c6b79a6..e84f21ab963ccf6e54afcb659f5ceccd
    // it will get the locale that should be used potentially from other sources,
    // depending on the platform (e.g. the OS locale on Mac).
 diff --git ui/base/l10n/l10n_util.cc ui/base/l10n/l10n_util.cc
-index 7c7450f33adbccdf75537d591ec71db2b4ceaf49..6c26d7cc77cfb8f65154593cfabd60a32dbb9b4d 100644
+index 466e9001064cb5354672f7a35b8f4dd8e0d992cd..284fc32ec379fe6d7c08df6dc27dc362d26f5525 100644
 --- ui/base/l10n/l10n_util.cc
 +++ ui/base/l10n/l10n_util.cc
-@@ -488,25 +488,7 @@ std::optional<std::string> CheckAndResolveLocale(std::string_view locale,
-   return std::nullopt;
+@@ -159,25 +159,7 @@ std::optional<std::string> CheckAndResolveLocale(std::string_view locale,
+       });
  }
  
 -#if BUILDFLAG(IS_APPLE)
@@ -113,7 +113,7 @@ index 7c7450f33adbccdf75537d591ec71db2b4ceaf49..6c26d7cc77cfb8f65154593cfabd60a3
 -    app_locale = pref_locale;
 -
 -  // The above should handle all of the cases Chrome normally hits, but for some
--  // unit tests, we need something to fall back too.
+-  // unit tests, fallback is needed too.
 -  if (app_locale.empty())
 -    app_locale = "en-US";
 -
@@ -124,12 +124,12 @@ index 7c7450f33adbccdf75537d591ec71db2b4ceaf49..6c26d7cc77cfb8f65154593cfabd60a3
 -#if !BUILDFLAG(IS_APPLE)
 -std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
 +std::string GetApplicationLocaleInternal(std::string_view pref_locale) {
-   std::vector<std::string> candidates;
- 
-   // We only use --lang and the app pref on Windows.  On Linux, we only
-@@ -574,15 +556,6 @@ std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
- 
-   return std::string();
+   std::vector<std::optional<LanguageTag>> candidates;
+   // The `prefered_tag` is separated from the other candidates.
+   std::optional<LanguageTag> prefered_tag = std::nullopt;
+@@ -280,15 +262,6 @@ std::string GetApplicationLocaleInternalNonMac(std::string_view pref_locale) {
+   // Fallback to "en-US"
+   return IsResourceBundleLocale(GetKnownLanguageTag("en-US")) ? "en-US" : "";
  }
 -#endif  // !BUILDFLAG(IS_APPLE)
 -

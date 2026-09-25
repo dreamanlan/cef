@@ -17,7 +17,7 @@ class CefToolbarViewView : public CefViewView<ToolbarView, CefViewDelegate> {
 
   // |cef_delegate| may be nullptr.
   explicit CefToolbarViewView(CefViewDelegate* cef_delegate,
-                              Browser* browser,
+                              BrowserWindowInterface* browser,
                               BrowserView* browser_view,
                               std::optional<DisplayMode> display_mode);
 

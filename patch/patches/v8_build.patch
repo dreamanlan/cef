@@ -1,5 +1,5 @@
 diff --git BUILD.gn BUILD.gn
-index a19ec5212547a907fd9c094dc030e806110d176c..53ca28646b1f846c1cbd2eb740ceec54326d3036 100644
+index 76391be1666b0b2e57c91bdac59070224e57ce24..875a51541b36aa6f9ace78b4464642d53b8f8bff 100644
 --- BUILD.gn
 +++ BUILD.gn
 @@ -14,6 +14,7 @@ import("//build/config/mips.gni")
@@ -10,17 +10,17 @@ index a19ec5212547a907fd9c094dc030e806110d176c..53ca28646b1f846c1cbd2eb740ceec54
  import("//third_party/icu/config.gni")
  
  import("gni/cluster_build.gni")
-@@ -486,6 +487,9 @@ declare_args() {
+@@ -507,6 +508,9 @@ declare_args() {
    # Experimental testing mode where various limits are artificially set lower.
    v8_lower_limits_mode = false
  
 +  # Set to true if V8 will be used in a shared library.
 +  v8_used_in_shared_library = enable_cef
 +
-   # Enables the use of partition_alloc as the default allocator for standalone
-   # V8. This should be used for benchmarking and testing purposes to more
+   # Enables the use of PartitionAlloc as the default allocator for standalone
+   # d8. This should be used for benchmarking and testing purposes to more
    # closely mimic in-browser behavior.
-@@ -920,6 +924,10 @@ config("internal_config") {
+@@ -959,6 +963,10 @@ config("internal_config") {
      defines += [ "BUILDING_V8_SHARED" ]
    }
  

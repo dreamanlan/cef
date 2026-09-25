@@ -32,6 +32,8 @@
 #include "ui/base/cursor/mojom/cursor_type.mojom-shared.h"
 #include "ui/base/ime/text_input_client.h"
 #include "ui/compositor/compositor.h"
+#include "ui/compositor/layer.h"
+#include "ui/compositor/layer_surface.h"
 #include "ui/events/base_event_utils.h"
 #include "ui/events/gesture_detection/filtered_gesture_provider.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
@@ -118,13 +120,13 @@ class CefRenderWidgetHostViewOSR
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
   void Focus() override;
   bool HasFocus() override;
-  uint32_t GetCaptureSequenceNumber() const override;
+  uint32_t GetCaptureSequenceNumber() const;
   bool IsSurfaceAvailableForCopy() override;
   void ShowWithVisibility(
       content::PageVisibilityState page_visibility) override;
   void Hide() override;
   bool IsShowing() override;
-  void EnsureSurfaceSynchronizedForWebTest() override;
+  void EnsureSurfaceSynchronizedForWebTest();
   content::TouchSelectionControllerClientManager*
   GetTouchSelectionControllerClientManager() override;
   gfx::Rect GetViewBounds() override;
@@ -179,12 +181,10 @@ class CefRenderWidgetHostViewOSR
       override;
   display::ScreenInfos GetNewScreenInfosForUpdate() override;
   void TransformPointToRootSurface(gfx::PointF* point) override;
-  gfx::Rect GetBoundsInRootWindow() override;
+  gfx::Rect GetBoundsInScreen() override;
 
-#if !BUILDFLAG(IS_MAC)
   viz::ScopedSurfaceIdAllocator DidUpdateVisualProperties(
       const cc::RenderFrameMetadata& metadata) override;
-#endif
 
   viz::SurfaceId GetCurrentSurfaceId() const override;
   bool HasSavedCompositorFrame() const override;
@@ -298,7 +298,7 @@ class CefRenderWidgetHostViewOSR
   content::RenderWidgetHostImpl* render_widget_host() const {
     return render_widget_host_;
   }
-  ui::Layer* GetRootLayer() const;
+  ui::LayerSurface* GetRootLayer() const;
 
   void OnPresentCompositorFrame();
 
@@ -396,7 +396,7 @@ class CefRenderWidgetHostViewOSR
   std::unique_ptr<content::DelegatedFrameHost> delegated_frame_host_;
   std::unique_ptr<content::DelegatedFrameHostClient>
       delegated_frame_host_client_;
-  std::unique_ptr<ui::Layer> root_layer_;
+  std::unique_ptr<ui::LayerSurface> root_layer_;
 
   // Used to allocate LocalSurfaceIds when this is embedding external content.
   std::unique_ptr<viz::ParentLocalSurfaceIdAllocator>
@@ -460,7 +460,7 @@ class CefRenderWidgetHostViewOSR
   uint32_t latest_capture_sequence_number_ = 0u;
 
   // ui::GestureProviderClient implementation.
-  ui::FilteredGestureProvider gesture_provider_;
+  scoped_refptr<ui::FilteredGestureProvider> gesture_provider_;
 
   CefMotionEventOSR pointer_state_;
   bool forward_touch_to_popup_ = false;

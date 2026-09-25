@@ -17,6 +17,7 @@
 #include "cef/libcef/browser/prefs/browser_prefs.h"
 #include "cef/libcef/browser/thread_util.h"
 #include "cef/libcef/common/app_manager.h"
+#include "cef/libcef/common/frame_util.h"
 #include "cef/libcef/common/net/scheme_registration.h"
 #include "cef/libcef/common/net_service/net_service_util.h"
 #include "cef/libcef/common/request_impl.h"
@@ -515,6 +516,25 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
   }
 
   // InterceptedRequestHandler methods:
+  void Shutdown() override {
+    CEF_REQUIRE_IOT();
+
+    if (shutting_down_) {
+      return;
+    }
+
+    if (!init_state_) {
+      // Initialization is pending. Stop accepting new requests and cancel any
+      // requests that are already queued.
+      shutting_down_ = true;
+      weak_ptr_factory_.InvalidateWeakPtrs();
+      pending_requests_.clear();
+      return;
+    }
+
+    OnDestroyed();
+  }
+
   void OnBeforeRequest(int32_t request_id,
                        network::ResourceRequest* request,
                        bool request_was_redirected,
@@ -1181,7 +1201,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
         init_state_->browser_, init_state_->GetFrame(),
         state->pending_request_.get(), state->pending_response_.get(),
         status.error_code == 0 ? UR_SUCCESS : UR_FAILED,
-        status.encoded_body_length);
+        status.encoded_body_length.InBytes());
   }
 
   // Returns the handler, if any, that should be used for this request.
@@ -1215,6 +1235,15 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
       CefRefPtr<CefRequestContextHandler> context_handler =
           init_state_->iothread_state_->GetHandler(
               init_state_->global_id_, /*require_frame_match=*/false);
+      if (!context_handler && !init_state_->browser_ &&
+          frame_util::IsValidChildId(init_state_->global_id_.child_id) &&
+          init_state_->global_id_.frame_routing_id ==
+              IPC::mojom::kRoutingIdNone) {
+        // Service workers can run in a process without any registered frames,
+        // including after their originating page has navigated or closed.
+        context_handler =
+            init_state_->iothread_state_->GetWorkerRequestContextHandler();
+      }
       if (context_handler) {
         if (!requestPtr) {
           requestPtr = MakeRequest(request, request_id, true);
@@ -1260,6 +1289,10 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
   void OnDestroyed() {
     CEF_REQUIRE_IOT();
     DCHECK(init_state_);
+
+    if (shutting_down_) {
+      return;
+    }
 
     init_state_->DeleteDestructionObserver();
 

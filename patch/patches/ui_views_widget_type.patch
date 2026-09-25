@@ -1,8 +1,8 @@
 diff --git chrome/browser/ui/views/chrome_views_delegate_linux.cc chrome/browser/ui/views/chrome_views_delegate_linux.cc
-index e0f5a80dda90a9df2d309acdb7952e891dbc189a..a6e4d853749fca8ea4c50384c358a7dbbc35b013 100644
+index c5808a079716b9b21039c0d30d7625a1ed6f26d4..2c9f04a07c16dba3d9af635ebd41679837becfa3 100644
 --- chrome/browser/ui/views/chrome_views_delegate_linux.cc
 +++ chrome/browser/ui/views/chrome_views_delegate_linux.cc
-@@ -70,6 +70,8 @@ NativeWidgetType GetNativeWidgetTypeForInitParams(
+@@ -87,6 +87,8 @@ NativeWidgetType GetNativeWidgetTypeForInitParams(
    }
  
    return (params.parent &&
@@ -12,10 +12,10 @@ index e0f5a80dda90a9df2d309acdb7952e891dbc189a..a6e4d853749fca8ea4c50384c358a7db
            params.type != views::Widget::InitParams::TYPE_TOOLTIP)
               ? NativeWidgetType::kNativeWidgetAura
 diff --git ui/views/test/desktop_test_views_delegate_aura.cc ui/views/test/desktop_test_views_delegate_aura.cc
-index 18281d9a3002647786ca99b2b2bd7bef104154a0..5e86ab38b9e35044a879475846ed8d600352a1e5 100644
+index 78aa8726deedc16639d10892717a69d85e038eb4..f4d20b39b844abe9afc9cb6557db6fbc217a5b9d 100644
 --- ui/views/test/desktop_test_views_delegate_aura.cc
 +++ ui/views/test/desktop_test_views_delegate_aura.cc
-@@ -27,7 +27,8 @@ void DesktopTestViewsDelegate::OnBeforeWidgetInit(
+@@ -29,7 +29,8 @@ void DesktopTestViewsDelegate::OnBeforeWidgetInit(
      return;
    }
  

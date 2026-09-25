@@ -186,6 +186,14 @@ void ClearProxiesForContextId(ContextId context_id) {
     for (const auto& proxy : proxies) {
       proxy->SetDisconnectCallback(base::DoNothing());
     }
+
+    // Cancel pending/in-flight requests before destroying the proxies. This
+    // ensures that request handler state is cleared before handler
+    // destruction.
+    for (const auto& proxy : proxies) {
+      proxy->Shutdown();
+    }
+
     // Clear the set, which will delete all proxies for this context.
     proxy_map.erase(it);
   }
@@ -208,9 +216,10 @@ class CorsPreflightRequest : public network::mojom::TrustedHeaderClient {
   CorsPreflightRequest& operator=(const CorsPreflightRequest&) = delete;
 
   // mojom::TrustedHeaderClient methods:
-  void OnBeforeSendHeaders(const net::HttpRequestHeaders& headers,
+  void OnBeforeSendHeaders(const GURL& request_url,
+                           const net::HttpRequestHeaders& headers,
                            OnBeforeSendHeadersCallback callback) override {
-    std::move(callback).Run(net::OK, headers);
+    std::move(callback).Run(net::OK, headers, std::nullopt);
   }
 
   void OnHeadersReceived(const std::string& headers,
@@ -266,7 +275,8 @@ class InterceptedRequest : public network::mojom::URLLoader,
   bool InputStreamFailed();
 
   // mojom::TrustedHeaderClient methods:
-  void OnBeforeSendHeaders(const net::HttpRequestHeaders& headers,
+  void OnBeforeSendHeaders(const GURL& request_url,
+                           const net::HttpRequestHeaders& headers,
                            OnBeforeSendHeadersCallback callback) override;
   void OnHeadersReceived(const std::string& headers,
                          const net::IPEndPoint& remote_endpoint,
@@ -600,15 +610,16 @@ bool InterceptedRequest::InputStreamFailed() {
 // TrustedHeaderClient methods.
 
 void InterceptedRequest::OnBeforeSendHeaders(
+    const GURL& request_url,
     const net::HttpRequestHeaders& headers,
     OnBeforeSendHeadersCallback callback) {
   if (!current_request_uses_header_client_) {
-    std::move(callback).Run(net::OK, std::nullopt);
+    std::move(callback).Run(net::OK, std::nullopt, std::nullopt);
     return;
   }
 
   request_.headers = headers;
-  std::move(callback).Run(net::OK, std::nullopt);
+  std::move(callback).Run(net::OK, std::nullopt, std::nullopt);
 
   // Resume handling of client messages after continuing from an async callback.
   if (proxied_client_receiver_.is_bound()) {
@@ -1419,6 +1430,11 @@ void ProxyURLLoaderFactory::SetDisconnectCallback(
   CEF_REQUIRE_IOT();
   DCHECK(!destroyed_);
   on_disconnect_ = std::move(on_disconnect);
+}
+
+void ProxyURLLoaderFactory::Shutdown() {
+  CEF_REQUIRE_IOT();
+  request_handler_->Shutdown();
 }
 
 // static

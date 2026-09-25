@@ -1,5 +1,5 @@
 diff --git content/browser/renderer_host/render_widget_host_view_aura.cc content/browser/renderer_host/render_widget_host_view_aura.cc
-index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc9d924975 100644
+index 3324954f298227456904c4d3cfe9e1e42dcc61af..c7db8755f9f25ad1a56ce8b002fe85c260d9157a 100644
 --- content/browser/renderer_host/render_widget_host_view_aura.cc
 +++ content/browser/renderer_host/render_widget_host_view_aura.cc
 @@ -8,6 +8,7 @@
@@ -10,7 +10,7 @@ index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc
  #include <utility>
  
  #include "base/auto_reset.h"
-@@ -55,6 +56,7 @@
+@@ -56,6 +57,7 @@
  #include "content/public/browser/content_browser_client.h"
  #include "content/public/browser/device_service.h"
  #include "content/public/browser/render_view_host.h"
@@ -18,20 +18,20 @@ index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc
  #include "content/public/common/page_visibility_state.h"
  #include "services/service_manager/public/cpp/interface_provider.h"
  #include "third_party/blink/public/common/input/web_input_event.h"
-@@ -854,6 +856,9 @@ gfx::Rect RenderWidgetHostViewAura::GetViewBounds() {
+@@ -868,6 +870,9 @@ gfx::Rect RenderWidgetHostViewAura::GetViewBoundsWithoutTransform() {
  void RenderWidgetHostViewAura::UpdateBackgroundColor() {
    CHECK(GetBackgroundColor());
  
 +  if (!window_) {
 +    return;
 +  }
-   SkColor color = *GetBackgroundColor();
-   window_->layer()->SetColor(color);
- }
-@@ -1241,6 +1246,12 @@ void RenderWidgetHostViewAura::TransformPointToRootSurface(gfx::PointF* point) {
+   SkColor4f background_color =
+       SkColor4f::FromColor(GetBackgroundColor().value());
+   window_->layer()->SetFillsBoundsOpaquely(background_color.isOpaque());
+@@ -1253,6 +1258,12 @@ void RenderWidgetHostViewAura::TransformPointToRootSurface(gfx::PointF* point) {
  }
  
- gfx::Rect RenderWidgetHostViewAura::GetBoundsInRootWindow() {
+ gfx::Rect RenderWidgetHostViewAura::GetBoundsInScreen() {
 +  if (!root_window_bounds_callback_.is_null()) {
 +    if (auto bounds = root_window_bounds_callback_.Run()) {
 +      return *bounds;
@@ -41,9 +41,9 @@ index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc
    aura::Window* top_level = window_->GetToplevelWindow();
    gfx::Rect bounds(top_level->GetBoundsInScreen());
  
-@@ -2923,6 +2934,16 @@ void RenderWidgetHostViewAura::CreateAuraWindow(aura::client::WindowType type) {
-   window_->layer()->SetColor(GetBackgroundColor() ? *GetBackgroundColor()
-                                                   : SK_ColorWHITE);
+@@ -2986,6 +2997,16 @@ void RenderWidgetHostViewAura::CreateAuraWindow(aura::client::WindowType type) {
+   window_->layer()->SetFillsBoundsOpaquely(background_color.isOpaque());
+   window_->layer()->AsSurface()->SetFallbackBackgroundColor(background_color);
    UpdateFrameSinkIdRegistration();
 +
 +  // Do this after |window_| is created to avoid crashes on Win10.
@@ -59,10 +59,10 @@ index 3b05810c56c848423c09da30d24da61b32a3189e..166305c1a500576b15d90f50019791dc
  
  void RenderWidgetHostViewAura::UpdateFrameSinkIdRegistration() {
 diff --git content/browser/renderer_host/render_widget_host_view_aura.h content/browser/renderer_host/render_widget_host_view_aura.h
-index 45a1f3e8d6d7d4c6294482d9229e1926231fc3d5..bf503c23e9d44befcd5644b68580d46ad9d77a0a 100644
+index 21422e7e2d44aa4766d081da2e42e7ba5ebd82f4..ffea7823346063f5307927377987df84c18e95ed 100644
 --- content/browser/renderer_host/render_widget_host_view_aura.h
 +++ content/browser/renderer_host/render_widget_host_view_aura.h
-@@ -468,6 +468,12 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+@@ -482,6 +482,12 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
  
    bool ShouldUseDefaultDeadlineOnResize() const;
  
@@ -75,7 +75,7 @@ index 45a1f3e8d6d7d4c6294482d9229e1926231fc3d5..bf503c23e9d44befcd5644b68580d46a
   protected:
    ~RenderWidgetHostViewAura() override;
  
-@@ -900,6 +906,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
+@@ -909,6 +915,8 @@ class CONTENT_EXPORT RenderWidgetHostViewAura
  
    bool use_default_deadline_on_resize_ = false;
  

@@ -29,7 +29,7 @@ Current CEF master branch build requirements are as follows. See the [Master Bui
 
 Windows Build Requirements | macOS Build Requirements | Linux Build Requirements |
 |:---------------------------|:----------------------------|:-------------------------|
-Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.28000.2270 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 
 The following URLs should be used for downloading development versions of CEF.
 
@@ -78,8 +78,9 @@ The [Spotify automated builder](https://cef-builds.spotifycdn.com/index.html) pr
 
 | Channel |Release Branch | Version | Branch Date | Last Refresh  | Windows Build Requirements | macOS Build Requirements | Linux Build Requirements |
 |:--------|:--------------|:--------|:------------|:--------------|:---------------------------|:----------------------------|:-------------------------|
-| Beta    | [7871](https://github.com/chromiumembedded/cef/tree/7871) | 150              | Jun 2026    | Apr 13, 2027 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
-| Stable  | [7827](https://github.com/chromiumembedded/cef/tree/7827) | 149              | May 2026    | Jun 30, 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| Beta    | [8037](https://github.com/chromiumembedded/cef/tree/8037) | 154              | Sep 2026    | Sep 23, 2027 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.28000.2270 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| Stable  | [7977](https://github.com/chromiumembedded/cef/tree/7977) | 152              | Aug 2026    | Sep 8, 2027  | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| LTC     | [7871](https://github.com/chromiumembedded/cef/tree/7871) | 150              | Jun 2026    | Apr 13, 2027 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 | LTS     | [7559](https://github.com/chromiumembedded/cef/tree/7559) | 144              | Dec 2025    | Oct 6, 2026  | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 
 ## Legacy Release Branches (Unsupported)
@@ -92,8 +93,10 @@ Legacy CEF builds are available from the [Spotify automated builder](https://cef
 
 | Release Branch | Version | Branch Date | Windows Build Requirements | macOS Build Requirements | Linux Build Requirements |
 |:---------------|:--------|:------------|:---------------------------|:----------------------------|:-------------------------|
-| [7778](https://github.com/chromiumembedded/cef/tree/7778) | 148 | Apr 2026  | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
-| [7727](https://github.com/chromiumembedded/cef/tree/7727) | 147 | Mar 2026  | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| [7922](https://github.com/chromiumembedded/cef/tree/7922) | 151 | Jul 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| [7827](https://github.com/chromiumembedded/cef/tree/7827) | 149 | May 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.7705 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| [7778](https://github.com/chromiumembedded/cef/tree/7778) | 148 | Apr 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
+| [7727](https://github.com/chromiumembedded/cef/tree/7727) | 147 | Mar 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 | [7680](https://github.com/chromiumembedded/cef/tree/7680) | 146 | Feb 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 | [7632](https://github.com/chromiumembedded/cef/tree/7632) | 145 | Jan 2026 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |
 | [7499](https://github.com/chromiumembedded/cef/tree/7499) | 143 | Nov 2025 | Win 10+ deployment, Win 10+ build system w/ VS2022 17.13.4, Win 10.0.26100.4654 SDK, Ninja | macOS 12.0+ deployment, 15.6+ build system w/ 26.0 base SDK (Xcode 26.0), Ninja, 64-bit only | Ubuntu 20.04+, Debian 10+, Ninja |

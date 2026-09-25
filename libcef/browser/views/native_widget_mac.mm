@@ -19,7 +19,7 @@
 
 namespace {
 
-AppShimHost* GetHostForBrowser(Browser* browser) {
+AppShimHost* GetHostForBrowser(BrowserWindowInterface* browser) {
   auto* const shim_manager = apps::AppShimManager::Get();
   if (!shim_manager) {
     return nullptr;

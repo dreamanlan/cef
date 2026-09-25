@@ -8,20 +8,42 @@
 
 #include <memory>
 #include <optional>
+#include <string>
+#include <vector>
 
+#include "base/memory/ref_counted.h"
 #include "base/memory/scoped_refptr.h"
 #include "chrome/browser/ui/page_action/page_action_icon_type.h"
-#include "content/public/browser/web_contents_delegate.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom-forward.h"
 #include "third_party/skia/include/core/SkRegion.h"
 #include "ui/base/window_open_disposition.h"
 
 class Browser;
+class BrowserUiController;
+class BrowserWebContentsDelegate;
+class BrowserWindow;
 class BrowserWindowInterface;
+class DesktopBrowserWindowCapabilities;
+class ExclusiveAccessManager;
+class GURL;
 class Profile;
+class UnloadController;
+
+namespace chrome {
+class BrowserCommandController;
+}
 
 namespace content {
-class NavigationHandle;
+struct GlobalRenderFrameHostId;
+class WebContents;
+}  // namespace content
+
+namespace gfx {
+class Rect;
+}
+
+namespace web_app {
+class AppBrowserController;
 }
 
 namespace cef {
@@ -29,7 +51,7 @@ namespace cef {
 // Delegate for the chrome Browser object. Lifespan is controlled by the Browser
 // object. See the ChromeBrowserDelegate documentation for additional details.
 // Only accessed on the UI thread.
-class BrowserDelegate : public content::WebContentsDelegate {
+class BrowserDelegate {
  public:
   // Opaque ref-counted base class for CEF-specific parameters passed via
   // Browser::CreateParams::cef_params and possibly shared by multiple Browser
@@ -45,16 +67,29 @@ class BrowserDelegate : public content::WebContentsDelegate {
       scoped_refptr<CreateParams> cef_params,
       const BrowserWindowInterface* opener);
 
+  // Called from BrowserWindowFeatures after the window and its controllers
+  // have been initialized. The returned delegate is owned by that features
+  // object and implements CEF's WebContents-specific behavior.
+  static std::unique_ptr<BrowserWebContentsDelegate> CreateWebContentsDelegate(
+      BrowserWindowInterface* browser,
+      ExclusiveAccessManager& exclusive_access_manager,
+      chrome::BrowserCommandController& command_controller,
+      UnloadController& unload_controller,
+      web_app::AppBrowserController* app_browser_controller,
+      BrowserWindow& window,
+      DesktopBrowserWindowCapabilities& capabilities,
+      BrowserUiController& browser_ui_controller);
+
   // Optionally override Browser creation in
   // DevToolsWindow::CreateDevToolsBrowser. The returned Browser, if any, will
   // take ownership of |devtools_contents|.
   static Browser* CreateDevToolsBrowser(
       Profile* profile,
-      Browser* opener,
+      BrowserWindowInterface* opener,
       content::WebContents* inspected_web_contents,
       std::unique_ptr<content::WebContents>& devtools_contents);
 
-  ~BrowserDelegate() override = default;
+  virtual ~BrowserDelegate() = default;
 
   // Optionally override chrome::AddWebContents behavior. This is most often
   // called via Browser::AddNewContents for new popup browsers and provides an
@@ -67,6 +102,15 @@ class BrowserDelegate : public content::WebContentsDelegate {
   // This is most often called for navigations targeting a new tab without a
   // pre-existing WebContents.
   virtual void OnWebContentsCreated(content::WebContents* new_contents) = 0;
+
+  // Initialize the CEF browser host for a renderer-created popup. Called by
+  // ChromeBrowserWebContentsDelegate after Chrome initializes the tab helpers.
+  virtual void OnPopupWebContentsCreated(
+      content::WebContents* source_contents,
+      const content::GlobalRenderFrameHostId& opener_id,
+      const std::string& frame_name,
+      const GURL& target_url,
+      content::WebContents* new_contents) = 0;
 
   // Add or remove ownership of the WebContents.
   virtual void SetAsDelegate(content::WebContents* web_contents,
@@ -104,7 +148,7 @@ class BrowserDelegate : public content::WebContentsDelegate {
     kSendTabToSelf_DEPRECATED,
     kSidePanel_DEPRECATED,
     kMedia,
-    kTabSearch,
+    kTabSearch_DEPRECATED,
     kBatterySaver,
     kAvatar,
     kMaxValue = kAvatar,
@@ -121,30 +165,6 @@ class BrowserDelegate : public content::WebContentsDelegate {
   // Optionally modify the top inset for dialogs.
   virtual void UpdateDialogTopInset(int* dialog_top_y) {}
 
-  // Same as RequestMediaAccessPermission but returning |callback| if the
-  // request is unhandled.
-  [[nodiscard]] virtual content::MediaResponseCallback
-  RequestMediaAccessPermissionEx(content::WebContents* web_contents,
-                                 const content::MediaStreamRequest& request,
-                                 content::MediaResponseCallback callback) {
-    return callback;
-  }
-
-  // Same as RendererUnresponsive but returning false if unhandled.
-  virtual bool RendererUnresponsiveEx(
-      content::WebContents* source,
-      content::RenderWidgetHost* render_widget_host,
-      base::RepeatingClosure hang_monitor_restarter) {
-    return false;
-  }
-
-  // Same as RendererResponsive but returning false if unhandled.
-  virtual bool RendererResponsiveEx(
-      content::WebContents* source,
-      content::RenderWidgetHost* render_widget_host) {
-    return false;
-  }
-
   // Optionally override support for the specified window feature of type
   // Browser::WindowFeature (passed as underlying int to avoid circular
   // include).
@@ -154,6 +174,12 @@ class BrowserDelegate : public content::WebContentsDelegate {
 
   // Returns true if draggable regions are supported.
   virtual bool SupportsDraggableRegion() const { return false; }
+
+  // Update the window's draggable region, or forward the update to its
+  // contents when window-level draggable regions are not supported.
+  virtual void UpdateDraggableRegions(
+      const std::vector<blink::mojom::DraggableRegionPtr>& regions,
+      content::WebContents* contents) = 0;
 
   // Returns the draggable region, if any, relative to the web contents.
   // Called from PictureInPictureBrowserFrameView::NonClientHitTest and
@@ -171,23 +197,6 @@ class BrowserDelegate : public content::WebContentsDelegate {
   // Returns true if this browser has a Views-hosted opener. Only
   // applicable for Browsers of type picture_in_picture and devtools.
   virtual bool HasViewsHostedOpener() const { return false; }
-
-  // Same as OpenURLFromTab but only taking |navigation_handle_callback|
-  // if the return value is false. Return false to cancel the navigation
-  // or true to proceed with default chrome handling.
-  virtual bool OpenURLFromTabEx(
-      content::WebContents* source,
-      const content::OpenURLParams& params,
-      base::OnceCallback<void(content::NavigationHandle&)>&
-          navigation_handle_callback) {
-    return true;
-  }
-
-  // Same as SetContentsBounds but returning false if unhandled.
-  virtual bool SetContentsBoundsEx(content::WebContents* source,
-                                   const gfx::Rect& bounds) {
-    return false;
-  }
 };
 
 }  // namespace cef

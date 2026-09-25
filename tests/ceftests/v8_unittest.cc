@@ -104,7 +104,6 @@ enum V8TestMode {
   V8TEST_STACK_TRACE,
   V8TEST_ON_UNCAUGHT_EXCEPTION,
   V8TEST_ON_UNCAUGHT_EXCEPTION_DEV_TOOLS,
-  V8TEST_EXTENSION,
   V8TEST_HANDLER_CALL_ON_RELEASED_CONTEXT,
 };
 
@@ -290,17 +289,6 @@ class V8RendererTest : public ClientAppRenderer::Delegate,
         // Was a startup test.
         EXPECT_TRUE(startup_test_success_);
         DestroyTest();
-        break;
-    }
-  }
-
-  // Run a test on render process startup.
-  void RunStartupTest() {
-    switch (test_mode_) {
-      case V8TEST_EXTENSION:
-        RunExtensionTest();
-        break;
-      default:
         break;
     }
   }
@@ -2923,43 +2911,11 @@ class V8RendererTest : public ClientAppRenderer::Delegate,
         "window.setTimeout(test, 0)", browser_->GetMainFrame()->GetURL(), 0);
   }
 
-  // Test execution of a native function when the extension is loaded.
-  void RunExtensionTest() {
-    std::string code =
-        "native function v8_extension_test();"
-        "v8_extension_test();";
-
-    class Handler : public CefV8Handler {
-     public:
-      explicit Handler(TrackCallback* callback) : callback_(callback) {}
-
-      bool Execute(const CefString& name,
-                   CefRefPtr<CefV8Value> object,
-                   const CefV8ValueList& arguments,
-                   CefRefPtr<CefV8Value>& retval,
-                   CefString& exception) override {
-        EXPECT_STREQ("v8_extension_test", name.ToString().c_str());
-        callback_->yes();
-        return true;
-      }
-
-      TrackCallback* callback_;
-
-      IMPLEMENT_REFCOUNTING(Handler);
-    };
-
-    CefRegisterExtension("v8/test-extension", code,
-                         new Handler(&startup_test_success_));
-  }
-
   void OnBrowserCreated(CefRefPtr<ClientAppRenderer> app,
                         CefRefPtr<CefBrowser> browser,
                         CefRefPtr<CefDictionaryValue> extra_info) override {
     if (extra_info && extra_info->HasKey(kV8TestCmdKey)) {
       test_mode_ = static_cast<V8TestMode>(extra_info->GetInt(kV8TestCmdKey));
-    }
-    if (test_mode_ > V8TEST_NONE) {
-      RunStartupTest();
     }
     if (test_mode_ == V8TEST_CONTEXT_EVAL_CSP_BYPASS_UNSAFE_EVAL ||
         test_mode_ == V8TEST_CONTEXT_EVAL_CSP_BYPASS_SANDBOX) {
@@ -3578,7 +3534,6 @@ V8_TEST_EX(Binding, V8TEST_BINDING, kV8BindingTestUrl)
 V8_TEST(StackTrace, V8TEST_STACK_TRACE)
 V8_TEST(OnUncaughtException, V8TEST_ON_UNCAUGHT_EXCEPTION)
 V8_TEST(OnUncaughtExceptionDevTools, V8TEST_ON_UNCAUGHT_EXCEPTION_DEV_TOOLS)
-V8_TEST(Extension, V8TEST_EXTENSION)
 V8_TEST_EX(HandlerCallOnReleasedContext,
            V8TEST_HANDLER_CALL_ON_RELEASED_CONTEXT,
            kV8HandlerCallOnReleasedContextUrl)

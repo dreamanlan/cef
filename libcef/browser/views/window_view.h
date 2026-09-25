@@ -108,6 +108,10 @@ class CefWindowView : public CefPanelView<views::View, CefWindowDelegate>,
   // Called from CefOverlayViewHost::Cleanup().
   void RemoveOverlayView(CefOverlayViewHost* host, views::View* host_view);
 
+  // Close overlays before owned Widgets are destroyed, preserving their
+  // contents Views for reuse by the client.
+  void CloseOverlayViews();
+
   // Set/get the draggable regions.
   void SetDraggableRegions(const std::vector<CefDraggableRegion>& regions);
   SkRegion* draggable_region() const { return draggable_region_.get(); }

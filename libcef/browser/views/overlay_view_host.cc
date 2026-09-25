@@ -350,12 +350,10 @@ gfx::Rect CefOverlayViewHost::ComputeBounds() const {
 void CefOverlayViewHost::Cleanup() {
   // This method may be called multiple times. For example, explicitly after the
   // client calls CefOverlayController::Destroy or implicitly when the host
-  // Widget is being closed or destroyed. In most implicit cases
-  // CefWindowView::WindowClosing will call this before the host Widget is
-  // destroyed, allowing the client to optionally reuse the child View. However,
-  // if CefWindowView::WindowClosing is not called, DeleteDelegate will call
-  // this after the host Widget and all associated Widgets/Views have been
-  // destroyed. In the DeleteDelegate case |widget_| will return nullptr.
+  // Widget is being closed or destroyed. CefWindowView::CloseOverlayViews calls
+  // this before the host Widget is destroyed, allowing the client to reuse the
+  // child View. If the overlay Widget is closed directly instead, its contents
+  // are destroyed and WidgetIsZombie calls this after resetting |widget_|.
   if (view_ && widget_) {
     // Remove the child View immediately. It may be reused by the client.
     auto view = view_util::GetFor(view_, /*find_known_parent=*/false);

@@ -26,7 +26,6 @@ CefTaskManager::TaskType toCefTaskType(task_manager::Task::Type type) {
     case task_manager::Task::UNKNOWN:
     case task_manager::Task::ARC:
     case task_manager::Task::CROSTINI:
-    case task_manager::Task::PLUGIN_VM:
       return CEF_TASK_TYPE_UNKNOWN;
     case task_manager::Task::BROWSER:
       return CEF_TASK_TYPE_BROWSER;

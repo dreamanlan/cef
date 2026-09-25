@@ -13,6 +13,7 @@
 #include "cef/libcef/browser/browser_host_base.h"
 #include "cef/libcef/browser/chrome/browser_delegate.h"
 #include "chrome/browser/ui/browser.h"
+#include "chrome/browser/ui/browser_window/public/create_browser_window.h"
 
 class ChromeBrowserDelegate;
 class ChromeBrowserView;
@@ -55,9 +56,10 @@ class ChromeBrowserHostImpl : public CefBrowserHostBase {
   // Returns the browser associated with the specified global ID.
   static CefRefPtr<ChromeBrowserHostImpl> GetBrowserForGlobalId(
       const content::GlobalRenderFrameHostId& global_id);
-  // Returns the browser associated with the specified Browser.
+  // Returns the browser associated with the specified Browser or
+  // BrowserWindowInterface.
   static CefRefPtr<ChromeBrowserHostImpl> GetBrowserForBrowser(
-      const Browser* browser);
+      const BrowserWindowInterface* browser);
 
   ~ChromeBrowserHostImpl() override;
 
@@ -133,7 +135,7 @@ class ChromeBrowserHostImpl : public CefBrowserHostBase {
   // |browser_create_params| may be empty for default Browser creation behavior.
   static Browser* CreateBrowser(
       const CefBrowserCreateParams& params,
-      std::optional<Browser::CreateParams> browser_create_params);
+      std::optional<BrowserWindowCreateParams> browser_create_params);
 
   // Called from ChromeBrowserDelegate::CreateBrowser when this object is first
   // created. Must be called on the UI thread.
@@ -146,7 +148,7 @@ class ChromeBrowserHostImpl : public CefBrowserHostBase {
   // creation behavior.
   void AddNewContents(
       std::unique_ptr<content::WebContents> contents,
-      std::optional<Browser::CreateParams> browser_create_params);
+      std::optional<BrowserWindowCreateParams> browser_create_params);
 
   // Called when this object changes Browser ownership (e.g. initially created,
   // dragging between windows, etc). The old Browser, if any, will be cleared

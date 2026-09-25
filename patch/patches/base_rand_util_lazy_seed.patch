@@ -1,8 +1,8 @@
 diff --git base/rand_util.cc base/rand_util.cc
-index ee86984a222c44d29c83da0134a93b0e7ddaa1e4..5580637cc84be708c8fe65b535fae219555515c3 100644
+index 0387c25e436c1e7d6b379fcbfcd0cb62970792c8..57c434330ac31cb661ec15c6e9581c5dc3ddee3e 100644
 --- base/rand_util.cc
 +++ base/rand_util.cc
-@@ -135,17 +135,28 @@ std::vector<uint8_t> RandBytesAsVector(size_t length) {
+@@ -130,17 +130,28 @@ std::vector<uint8_t> RandBytesAsVector(size_t length) {
    return result;
  }
  
@@ -36,7 +36,7 @@ index ee86984a222c44d29c83da0134a93b0e7ddaa1e4..5580637cc84be708c8fe65b535fae219
    // https://en.wikipedia.org/wiki/Xorshift#xorshift+ for details.
    uint64_t t = a_;
 diff --git base/rand_util.h base/rand_util.h
-index a9ca1f92958e792db46c3e11182b6313a63ae1bc..d14daa58e41ccbfc6638a43b10d0c9858ef8f0cf 100644
+index ae5425cf171e811447a5a0a82f67429b2914188f..6b1b98440fb1babc32cc7b506c207eb7dc991b36 100644
 --- base/rand_util.h
 +++ base/rand_util.h
 @@ -246,8 +246,12 @@ class MetricsSubSampler;

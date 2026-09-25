@@ -1,30 +1,8 @@
-diff --git content/browser/child_process_security_policy_impl.cc content/browser/child_process_security_policy_impl.cc
-index 6fde91c4db54dd5ffd01c141b9adcde2005b4fa4..bc1922325091c70602a6530a11e0e87e2c166147 100644
---- content/browser/child_process_security_policy_impl.cc
-+++ content/browser/child_process_security_policy_impl.cc
-@@ -2479,6 +2479,17 @@ bool ChildProcessSecurityPolicyImpl::PerformJailAndCitadelChecks(
-         if (actual_process_lock.MatchesScheme(url::kDataScheme)) {
-           return true;
-         }
-+
-+        // Allow other schemes that are non-standard, non-local and WebSafe.
-+        if (lock_url.is_valid() && !lock_url.IsStandard() &&
-+            !std::ranges::contains(url::GetLocalSchemes(),
-+                                   lock_url.scheme())) {
-+          base::AutoLock schemes_lock(schemes_lock_);
-+          if (std::ranges::contains(schemes_okay_to_request_in_any_process_,
-+                                    std::string(lock_url.scheme()))) {
-+            return true;
-+          }
-+        }
-       }
- 
-       // Make an exception to allow most visited tiles to commit in third-party
 diff --git content/browser/renderer_host/navigation_request.cc content/browser/renderer_host/navigation_request.cc
-index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91dbfd9b0189 100644
+index 57a6345fc69bad14f319ab93b0c2cca4d3a294ea..60a6ea22055d34c5a69b59ebd10f21374d958efc 100644
 --- content/browser/renderer_host/navigation_request.cc
 +++ content/browser/renderer_host/navigation_request.cc
-@@ -387,8 +387,13 @@ void AddAdditionalRequestHeaders(
+@@ -393,8 +393,13 @@ void AddAdditionalRequestHeaders(
      blink::mojom::Referrer* referrer,
      FrameTreeNode* frame_tree_node,
      bool is_browser_initiated) {
@@ -40,7 +18,7 @@ index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91db
  
    bool is_reload = NavigationTypeUtils::IsReload(navigation_type);
    bool is_history = NavigationTypeUtils::IsHistory(navigation_type);
-@@ -9464,7 +9469,8 @@ std::optional<url::Origin> NavigationRequest::GetOriginToCommit() {
+@@ -9869,7 +9874,8 @@ std::optional<url::Origin> NavigationRequest::GetOriginToCommit() {
  }
  
  url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
@@ -50,7 +28,7 @@ index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91db
    // Calculate an approximation of the origin. The sandbox/csp are ignored.
    url::Origin origin = GetOriginForURLLoaderFactoryUnchecked();
  
-@@ -9481,6 +9487,17 @@ url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
+@@ -9886,6 +9892,17 @@ url::Origin NavigationRequest::GetOriginForURLLoaderFactoryBeforeResponse(
    bool use_opaque_origin =
        (sandbox_flags & network::mojom::WebSandboxFlags::kOrigin) ==
        network::mojom::WebSandboxFlags::kOrigin;
@@ -68,7 +46,7 @@ index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91db
    if (use_opaque_origin) {
      origin = origin.DeriveNewOpaqueOrigin();
    }
-@@ -9541,8 +9558,9 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
+@@ -9946,8 +9963,9 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
      return GetRenderFrameHost()->GetLastCommittedOrigin();
    }
  
@@ -80,7 +58,7 @@ index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91db
  
    SCOPED_CRASH_KEY_BOOL("Bug1454273", "is_in_main_frame", IsInMainFrame());
    SCOPED_CRASH_KEY_STRING256(
-@@ -9577,10 +9595,17 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
+@@ -9982,10 +10000,17 @@ NavigationRequest::GetOriginForURLLoaderFactoryAfterResponse() {
        DetermineInitiatorRelationship(initiator_rfh,
                                       frame_tree_node_->current_frame_host()));
  
@@ -100,10 +78,10 @@ index 2809347b7fa086bf01edcbf0c4763e4862df3ff8..16e61c85820bc6373dec74a66dbb91db
    // If the target of this navigation will be rendered in a RenderFrameHost,
    // then verify that the chosen origin is allowed to be accessed from that
 diff --git content/browser/renderer_host/navigation_request.h content/browser/renderer_host/navigation_request.h
-index 230da416a73f65daa2c3f1d7b488e10bb5e43116..7864e1be81cf7cbde7b2ad03fa226d7d207e748c 100644
+index 63ae86f505f4f2dbd3f48f252087f317c7d799ee..7face03534fe8522bcdea4e59549ee3b931bbaa4 100644
 --- content/browser/renderer_host/navigation_request.h
 +++ content/browser/renderer_host/navigation_request.h
-@@ -2488,7 +2488,8 @@ class CONTENT_EXPORT NavigationRequest
+@@ -2624,7 +2624,8 @@ class CONTENT_EXPORT NavigationRequest
    // situations where the final frame host hasn't been determined but the origin
    // is needed to create URLLoaderFactory.
    url::Origin GetOriginForURLLoaderFactoryBeforeResponse(
@@ -113,3 +91,25 @@ index 230da416a73f65daa2c3f1d7b488e10bb5e43116..7864e1be81cf7cbde7b2ad03fa226d7d
  
    // Superset of GetOriginForURLLoaderFactoryBeforeResponse(). Calculates
    // the origin with information from the final frame host. Can be called only
+diff --git content/browser/security/cpsp/child_process_security_policy_impl.cc content/browser/security/cpsp/child_process_security_policy_impl.cc
+index 62e399f851aadddfc704f6f7c3d45883c467d95a..79cae8cc32f06d1596c2f596202643b68af93e4b 100644
+--- content/browser/security/cpsp/child_process_security_policy_impl.cc
++++ content/browser/security/cpsp/child_process_security_policy_impl.cc
+@@ -2732,6 +2732,17 @@ bool ChildProcessSecurityPolicyImpl::PerformJailAndCitadelChecks(
+         if (actual_process_lock.MatchesScheme(url::kDataScheme)) {
+           return true;
+         }
++
++        // Allow other schemes that are non-standard, non-local and WebSafe.
++        if (lock_url.is_valid() && !lock_url.IsStandard() &&
++            !std::ranges::contains(url::GetLocalSchemes(),
++                                   lock_url.scheme())) {
++          base::AutoLock schemes_lock(schemes_lock_);
++          if (std::ranges::contains(schemes_okay_to_request_in_any_process_,
++                                    std::string(lock_url.scheme()))) {
++            return true;
++          }
++        }
+       }
+ 
+       // Make an exception to allow most visited tiles to commit in third-party

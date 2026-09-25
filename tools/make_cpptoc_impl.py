@@ -1006,21 +1006,21 @@ def write_cpptoc_impl(header, clsname, dir):
     file = os.path.join(dir, get_capi_name(clsname[3:], False) + '_cpptoc.cc')
 
   set_notify_context(file)
+  try:
+    if path_exists(file):
+      oldcontents = read_file(file)
+    else:
+      oldcontents = ''
 
-  if path_exists(file):
-    oldcontents = read_file(file)
-  else:
-    oldcontents = ''
+    if clsname is None:
+      newcontents, customized = make_cpptoc_global_impl(header, oldcontents)
+    else:
+      newcontents, customized = make_cpptoc_class_impl(header, clsname,
+                                                       oldcontents)
 
-  if clsname is None:
-    newcontents, customized = make_cpptoc_global_impl(header, oldcontents)
-  else:
-    newcontents, customized = make_cpptoc_class_impl(header, clsname,
-                                                     oldcontents)
-
-  set_notify_context(None)
-
-  return (file, newcontents, customized)
+    return (file, newcontents, customized)
+  finally:
+    set_notify_context(None)
 
 
 # test the module
@@ -1048,4 +1048,5 @@ if __name__ == "__main__":
     f.close()
 
   # dump the result to stdout
-  sys.stdout.write(make_cpptoc_class_impl(header, sys.argv[2], data))
+  result, _ = make_cpptoc_class_impl(header, sys.argv[2], data)
+  sys.stdout.write(result)

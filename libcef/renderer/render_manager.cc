@@ -311,9 +311,9 @@ CefRefPtr<CefBrowserImpl> CefRenderManager::MaybeCreateBrowser(
   }
 
   if (params->is_excluded || params->browser_id < 0) {
-    // Don't create a CefBrowser for excluded content (PDF renderer, PDF
-    // extension or print preview dialog), or if the new browser info response
-    // has timed out.
+    // Don't create a CefBrowser for excluded content (Chrome UI, PDF
+    // renderer, PDF extension or print preview dialog), or if the new browser
+    // info response has timed out.
     excluded_views_.insert(std::make_pair(
         web_view, std::make_unique<CefExcludedView>(this, web_view, config)));
     return nullptr;

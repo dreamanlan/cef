@@ -89,7 +89,7 @@ class CefDelegatedFrameHostClient : public content::DelegatedFrameHostClient {
   CefDelegatedFrameHostClient& operator=(const CefDelegatedFrameHostClient&) =
       delete;
 
-  ui::Layer* DelegatedFrameHostGetLayer() const override {
+  ui::LayerSurface* GetDelegatedFrameHostLayer() const override {
     return view_->GetRootLayer();
   }
 
@@ -216,7 +216,9 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
       parent_host_view_(parent_host_view),
       pinch_zoom_enabled_(input::switches::IsPinchToZoomEnabled()),
       mouse_wheel_phase_handler_(this),
-      gesture_provider_(CreateGestureProviderConfig(), this),
+      gesture_provider_(base::MakeRefCounted<ui::FilteredGestureProvider>(
+          CreateGestureProviderConfig(),
+          this)),
       weak_ptr_factory_(this) {
   DCHECK(render_widget_host_);
   DCHECK(!render_widget_host_->GetView());
@@ -238,10 +240,10 @@ CefRenderWidgetHostViewOSR::CefRenderWidgetHostViewOSR(
       AllocateFrameSinkId(), delegated_frame_host_client_.get(),
       false /* should_register_frame_sink_id */);
 
-  root_layer_ = std::make_unique<ui::Layer>(ui::LAYER_SOLID_COLOR);
+  root_layer_ = std::make_unique<ui::LayerSurface>();
 
-  // Opacity of SOLID_COLOR layer is determined by the color's alpha channel.
-  GetRootLayer()->SetColor(background_color_);
+  root_layer_->SetFallbackBackgroundColor(
+      SkColor4f::FromColor(background_color_));
 
   external_begin_frame_enabled_ = use_external_begin_frame;
 
@@ -379,19 +381,28 @@ void CefRenderWidgetHostViewOSR::ShowWithVisibility(
     return;
   }
 
+  const bool has_browser =
+      browser_impl_ || (parent_host_view_ && parent_host_view_->browser_impl_);
   if (!content::GpuDataManagerImpl::GetInstance()->IsGpuCompositingDisabled() &&
-      !browser_impl_ &&
-      (!parent_host_view_ || !parent_host_view_->browser_impl_)) {
+      !has_browser) {
     return;
   }
 
   is_showing_ = true;
 
   // If the viz::LocalSurfaceId is invalid, we may have been evicted,
-  // and no other visual properties have since been changed. Allocate a new id
-  // and start synchronizing.
-  if (!GetLocalSurfaceId().is_valid()) {
+  // and no other visual properties have since been changed. Allocate a new id.
+  const bool needs_surface_id = !GetLocalSurfaceId().is_valid();
+  if (needs_surface_id) {
     AllocateLocalSurfaceId();
+  }
+
+  // Refresh the embedder's bounds before showing. A view restored from
+  // BackForwardCache may still have a valid surface ID but have missed resize
+  // notifications while another view was active. Software-rendered popups can
+  // be shown before their browser is attached, so defer the refresh in that
+  // case.
+  if (needs_surface_id || has_browser) {
     SynchronizeVisualProperties(cc::DeadlinePolicy::UseDefaultDeadline(),
                                 GetLocalSurfaceId());
   }
@@ -628,7 +639,7 @@ void CefRenderWidgetHostViewOSR::ResetFallbackToFirstNavigationSurface() {
 }
 
 void CefRenderWidgetHostViewOSR::OnUnconfirmedTapConvertedToTap() {
-  gesture_provider_.OnUnconfirmedTapConvertedToTap();
+  gesture_provider_->OnUnconfirmedTapConvertedToTap();
 }
 
 void CefRenderWidgetHostViewOSR::InitAsPopup(
@@ -682,7 +693,7 @@ void CefRenderWidgetHostViewOSR::SetIsLoading(bool is_loading) {
     return;
   }
   // Make sure gesture detection is fresh.
-  gesture_provider_.ResetDetection();
+  gesture_provider_->ResetDetection();
   forward_touch_to_popup_ = false;
 }
 
@@ -794,7 +805,7 @@ display::ScreenInfos CefRenderWidgetHostViewOSR::GetNewScreenInfosForUpdate() {
 void CefRenderWidgetHostViewOSR::TransformPointToRootSurface(
     gfx::PointF* point) {}
 
-gfx::Rect CefRenderWidgetHostViewOSR::GetBoundsInRootWindow() {
+gfx::Rect CefRenderWidgetHostViewOSR::GetBoundsInScreen() {
   if (!browser_impl_.get()) {
     return gfx::Rect();
   }
@@ -809,7 +820,6 @@ gfx::Rect CefRenderWidgetHostViewOSR::GetBoundsInRootWindow() {
   return GetViewBounds();
 }
 
-#if !BUILDFLAG(IS_MAC)
 viz::ScopedSurfaceIdAllocator
 CefRenderWidgetHostViewOSR::DidUpdateVisualProperties(
     const cc::RenderFrameMetadata& metadata) {
@@ -818,7 +828,6 @@ CefRenderWidgetHostViewOSR::DidUpdateVisualProperties(
       weak_ptr_factory_.GetWeakPtr(), metadata);
   return viz::ScopedSurfaceIdAllocator(std::move(allocation_task));
 }
-#endif
 
 viz::SurfaceId CefRenderWidgetHostViewOSR::GetCurrentSurfaceId() const {
   return delegated_frame_host_ ? delegated_frame_host_->GetCurrentSurfaceId()
@@ -1195,7 +1204,7 @@ void CefRenderWidgetHostViewOSR::SendExternalBeginFrame() {
 
   if (compositor_) {
     compositor_->IssueExternalBeginFrame(
-        begin_frame_args, /* force= */ true,
+        begin_frame_args,
         base::BindOnce(&CefRenderWidgetHostViewOSR::OnFrameComplete,
                        weak_ptr_factory_.GetWeakPtr()));
   } else {
@@ -1416,7 +1425,7 @@ void CefRenderWidgetHostViewOSR::SendTouchEvent(const CefTouchEvent& event) {
   }
 
   ui::FilteredGestureProvider::TouchHandlingResult result =
-      gesture_provider_.OnTouchEvent(pointer_state_);
+      gesture_provider_->OnTouchEvent(pointer_state_);
 
   blink::WebTouchEvent touch_event = ui::CreateWebTouchEventFromMotionEvent(
       pointer_state_, result.moved_beyond_slop_region, false);
@@ -1527,8 +1536,8 @@ void CefRenderWidgetHostViewOSR::ProcessAckedTouchEvent(
     blink::mojom::InputEventResultState ack_result) {
   const bool event_consumed =
       ack_result == blink::mojom::InputEventResultState::kConsumed;
-  gesture_provider_.OnTouchEventAck(touch.event.unique_touch_event_id,
-                                    event_consumed, false);
+  gesture_provider_->OnTouchEventAck(touch.event.unique_touch_event_id,
+                                     event_consumed, false);
 }
 
 void CefRenderWidgetHostViewOSR::OnGestureEvent(
@@ -1678,7 +1687,7 @@ void CefRenderWidgetHostViewOSR::OnAcceleratedPaint(
   }
 }
 
-ui::Layer* CefRenderWidgetHostViewOSR::GetRootLayer() const {
+ui::LayerSurface* CefRenderWidgetHostViewOSR::GetRootLayer() const {
   return root_layer_.get();
 }
 
@@ -1931,5 +1940,5 @@ void CefRenderWidgetHostViewOSR::UpdateBackgroundColorFromRenderer(
 
   bool opaque = SkColorGetA(color) == SK_AlphaOPAQUE;
   GetRootLayer()->SetFillsBoundsOpaquely(opaque);
-  GetRootLayer()->SetColor(color);
+  root_layer_->SetFallbackBackgroundColor(SkColor4f::FromColor(color));
 }

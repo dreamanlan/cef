@@ -763,12 +763,7 @@ bool CefWindowView::CanMaximize() const {
 
 void CefWindowView::WindowClosing() {
   // Close any overlays now, before the Widget is destroyed.
-  // Use a copy of the array because the original may be modified while
-  // iterating.
-  std::vector<raw_ptr<CefOverlayViewHost>> overlay_hosts = overlay_hosts_;
-  for (auto& overlay_host : overlay_hosts) {
-    overlay_host->Close();
-  }
+  CloseOverlayViews();
 
 #if BUILDFLAG(IS_LINUX)
 #if BUILDFLAG(SUPPORTS_OZONE_X11)
@@ -959,6 +954,15 @@ void CefWindowView::RemoveOverlayView(CefOverlayViewHost* host,
       [host](CefOverlayViewHost* current) { return current == host; });
   DCHECK(it != overlay_hosts_.end());
   overlay_hosts_.erase(it);
+}
+
+void CefWindowView::CloseOverlayViews() {
+  // Use a copy of the array because the original may be modified while
+  // iterating.
+  std::vector<raw_ptr<CefOverlayViewHost>> overlay_hosts = overlay_hosts_;
+  for (auto& overlay_host : overlay_hosts) {
+    overlay_host->Close();
+  }
 }
 
 void CefWindowView::MoveOverlaysIfNecessary() {

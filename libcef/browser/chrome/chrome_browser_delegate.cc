@@ -10,30 +10,23 @@
 #include "cef/libcef/browser/browser_host_base.h"
 #include "cef/libcef/browser/browser_info_manager.h"
 #include "cef/libcef/browser/browser_platform_delegate.h"
+#include "cef/libcef/browser/chrome/browser_util.h"
 #include "cef/libcef/browser/chrome/chrome_browser_context.h"
 #include "cef/libcef/browser/chrome/chrome_browser_host_impl.h"
 #include "cef/libcef/browser/chrome/views/chrome_browser_view.h"
 #include "cef/libcef/browser/chrome/views/chrome_child_window.h"
 #include "cef/libcef/browser/devtools/devtools_window_runner.h"
-#include "cef/libcef/browser/hang_monitor.h"
-#include "cef/libcef/browser/media_access_query.h"
 #include "cef/libcef/browser/request_context_impl.h"
 #include "cef/libcef/browser/views/browser_view_impl.h"
 #include "cef/libcef/browser/views/window_impl.h"
 #include "cef/libcef/common/app_manager.h"
-#include "cef/libcef/common/frame_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_tabstrip.h"
-#include "components/input/native_web_keyboard_event.h"
+#include "chrome/browser/ui/browser_web_contents_delegate/browser_web_contents_delegate.h"
+#include "chrome/browser/ui/window_feature_controller/window_feature_controller.h"
 #include "content/public/browser/global_routing_id.h"
-#include "content/public/browser/keyboard_event_processing_result.h"
-#include "content/public/browser/navigation_handle.h"
-#include "content/public/browser/render_widget_host.h"
-#include "content/public/browser/render_widget_host_view.h"
 #include "third_party/blink/public/mojom/page/draggable_region.mojom.h"
-
-using content::KeyboardEventProcessingResult;
 
 ChromeBrowserDelegate::ChromeBrowserDelegate(
     Browser* browser,
@@ -43,8 +36,9 @@ ChromeBrowserDelegate::ChromeBrowserDelegate(
   DCHECK(browser_);
 
   if (opener) {
-    DCHECK(browser->is_type_picture_in_picture() ||
-           browser->is_type_devtools());
+    DCHECK(browser->GetType() ==
+               BrowserWindowInterface::TYPE_PICTURE_IN_PICTURE ||
+           browser->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS);
     auto opener_host = ChromeBrowserHostImpl::GetBrowserForBrowser(opener);
     DCHECK(opener_host);
     if (opener_host) {
@@ -58,7 +52,7 @@ ChromeBrowserDelegate::~ChromeBrowserDelegate() = default;
 // static
 Browser* ChromeBrowserDelegate::CreateDevToolsBrowser(
     Profile* profile,
-    Browser* opener,
+    BrowserWindowInterface* opener,
     content::WebContents* inspected_web_contents,
     std::unique_ptr<content::WebContents>& devtools_contents) {
   // |opener| is the same value that will be passed to the ChromeBrowserDelegate
@@ -87,7 +81,7 @@ Browser* ChromeBrowserDelegate::CreateDevToolsBrowser(
       CefRequestContextImpl::GetProfile(opener_browser_host->request_context()),
       profile);
   if (opener) {
-    CHECK_EQ(opener->profile(), profile);
+    CHECK_EQ(opener->GetProfile(), profile);
   }
 
   //
@@ -165,7 +159,7 @@ Browser* ChromeBrowserDelegate::CreateDevToolsBrowser(
 
   //
   // 2. Create the new browser host. Logical equivalent of
-  // WebContentsCreated() for normal popups.
+  // OnPopupWebContentsCreated() for normal popups.
   //
 
   // Create a new browser host that remains alive until the associated
@@ -183,7 +177,7 @@ Browser* ChromeBrowserDelegate::CreateDevToolsBrowser(
   //
 
   // Use Browser creation params specific to DevTools popups.
-  auto chrome_params = Browser::CreateParams::CreateForDevTools(profile);
+  auto chrome_params = BrowserWindowCreateParams::CreateForDevTools(profile);
 
   // Pass |opener| to the ChromeBrowserDelegate constructor for the new popup
   // Browser.
@@ -210,7 +204,7 @@ std::unique_ptr<content::WebContents> ChromeBrowserDelegate::AddWebContents(
     std::unique_ptr<content::WebContents> new_contents) {
   if (CefBrowserInfoManager::GetInstance()->AddWebContents(
           new_contents.get())) {
-    // The browser host should have been created in WebContentsCreated().
+    // The browser host should have been created in OnPopupWebContentsCreated().
     auto new_browser =
         ChromeBrowserHostImpl::GetBrowserForContents(new_contents.get());
     if (new_browser) {
@@ -232,7 +226,7 @@ void ChromeBrowserDelegate::OnWebContentsCreated(
   // Necessary to receive LoadingStateChanged calls during initial navigation.
   // This will be called again in Browser::SetAsDelegate, which should be
   // fine.
-  new_contents->SetDelegate(browser_);
+  new_contents->SetDelegate(BrowserWebContentsDelegate::From(browser_.get()));
 
   SetAsDelegate(new_contents, /*set_delegate=*/true);
 }
@@ -252,7 +246,8 @@ void ChromeBrowserDelegate::SetAsDelegate(content::WebContents* web_contents,
     return;
   }
 
-  const bool is_devtools_popup = browser_->is_type_devtools();
+  const bool is_devtools_popup =
+      browser_->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS;
 
   // We should never reach here for DevTools popups that have an opener, as
   // CreateDevToolsBrowser should have already created the browser host.
@@ -384,41 +379,8 @@ void ChromeBrowserDelegate::UpdateDialogTopInset(int* dialog_top_y) {
   }
 }
 
-content::MediaResponseCallback
-ChromeBrowserDelegate::RequestMediaAccessPermissionEx(
-    content::WebContents* web_contents,
-    const content::MediaStreamRequest& request,
-    content::MediaResponseCallback callback) {
-  if (auto browser = ChromeBrowserHostImpl::GetBrowserForBrowser(browser_)) {
-    return media_access_query::RequestMediaAccessPermission(
-        browser.get(), request, std::move(callback),
-        /*default_disallow=*/false);
-  }
-  return callback;
-}
-
-bool ChromeBrowserDelegate::RendererUnresponsiveEx(
-    content::WebContents* source,
-    content::RenderWidgetHost* render_widget_host,
-    base::RepeatingClosure hang_monitor_restarter) {
-  if (auto browser = ChromeBrowserHostImpl::GetBrowserForBrowser(browser_)) {
-    return hang_monitor::RendererUnresponsive(browser.get(), render_widget_host,
-                                              hang_monitor_restarter);
-  }
-  return false;
-}
-
-bool ChromeBrowserDelegate::RendererResponsiveEx(
-    content::WebContents* source,
-    content::RenderWidgetHost* render_widget_host) {
-  if (auto browser = ChromeBrowserHostImpl::GetBrowserForBrowser(browser_)) {
-    return hang_monitor::RendererResponsive(browser.get(), render_widget_host);
-  }
-  return false;
-}
-
 bool ChromeBrowserDelegate::SupportsFramelessPictureInPicture() const {
-  if (!browser_->is_type_picture_in_picture()) {
+  if (browser_->GetType() != BrowserWindowInterface::TYPE_PICTURE_IN_PICTURE) {
     return false;
   }
 
@@ -444,9 +406,9 @@ std::optional<bool> ChromeBrowserDelegate::SupportsWindowFeature(
     int feature) const {
   // Override the default value from
   // Browser::PictureInPictureBrowserSupportsWindowFeature.
-  if (static_cast<Browser::WindowFeature>(feature) ==
-          Browser::WindowFeature::kFeatureTitleBar &&
-      browser_->is_type_picture_in_picture()) {
+  if (static_cast<WindowFeatureController::WindowFeature>(feature) ==
+          WindowFeatureController::WindowFeature::kFeatureTitleBar &&
+      browser_->GetType() == BrowserWindowInterface::TYPE_PICTURE_IN_PICTURE) {
     // Return false to hide titlebar and enable draggable regions.
     return !SupportsFramelessPictureInPicture();
   }
@@ -463,7 +425,7 @@ const std::optional<SkRegion> ChromeBrowserDelegate::GetDraggableRegion()
   return draggable_region_;
 }
 
-void ChromeBrowserDelegate::DraggableRegionsChanged(
+void ChromeBrowserDelegate::UpdateDraggableRegions(
     const std::vector<blink::mojom::DraggableRegionPtr>& regions,
     content::WebContents* contents) {
   if (SupportsDraggableRegion()) {
@@ -477,42 +439,11 @@ void ChromeBrowserDelegate::DraggableRegionsChanged(
     }
 
     draggable_region_ = sk_region;
-  } else if (auto delegate = GetDelegateForWebContents(contents)) {
-    delegate->DraggableRegionsChanged(regions, contents);
-  }
-}
-
-bool ChromeBrowserDelegate::TakeFocus(content::WebContents* source,
-                                      bool reverse) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    return delegate->TakeFocus(source, reverse);
-  }
-  return false;
-}
-
-void ChromeBrowserDelegate::FindReply(content::WebContents* web_contents,
-                                      int request_id,
-                                      int number_of_matches,
-                                      const gfx::Rect& selection_rect,
-                                      int active_match_ordinal,
-                                      bool final_update) {
-  if (auto delegate = GetDelegateForWebContents(web_contents)) {
-    delegate->FindReply(web_contents, request_id, number_of_matches,
-                        selection_rect, active_match_ordinal, final_update);
-  }
-}
-
-void ChromeBrowserDelegate::UpdatePreferredSize(content::WebContents* source,
-                                                const gfx::Size& pref_size) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    delegate->UpdatePreferredSize(source, pref_size);
-  }
-}
-
-void ChromeBrowserDelegate::ResizeDueToAutoResize(content::WebContents* source,
-                                                  const gfx::Size& new_size) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    delegate->ResizeDueToAutoResize(source, new_size);
+  } else if (auto browser_host =
+                 ChromeBrowserHostImpl::GetBrowserForContents(contents)) {
+    if (auto* delegate = browser_host->contents_delegate()) {
+      delegate->DraggableRegionsChanged(regions, contents);
+    }
   }
 }
 
@@ -531,15 +462,15 @@ void ChromeBrowserDelegate::WindowFullscreenStateChanged() {
 }
 
 bool ChromeBrowserDelegate::HasViewsHostedOpener() const {
-  DCHECK(browser_->is_type_picture_in_picture() ||
-         browser_->is_type_devtools());
+  DCHECK(browser_->GetType() ==
+             BrowserWindowInterface::TYPE_PICTURE_IN_PICTURE ||
+         browser_->GetType() == BrowserWindowInterface::TYPE_DEVTOOLS);
   return opener_host_ && opener_host_->is_views_hosted();
 }
 
-void ChromeBrowserDelegate::WebContentsCreated(
+void ChromeBrowserDelegate::OnPopupWebContentsCreated(
     content::WebContents* source_contents,
-    int opener_render_process_id,
-    int opener_render_frame_id,
+    const content::GlobalRenderFrameHostId& opener_id,
     const std::string& frame_name,
     const GURL& target_url,
     content::WebContents* new_contents) {
@@ -549,10 +480,8 @@ void ChromeBrowserDelegate::WebContentsCreated(
   CefRefPtr<CefDictionaryValue> extra_info;
 
   CefBrowserInfoManager::GetInstance()->WebContentsCreated(
-      target_url,
-      frame_util::MakeGlobalId(opener_render_process_id,
-                               opener_render_frame_id),
-      settings, client, platform_delegate, extra_info, new_contents);
+      target_url, opener_id, settings, client, platform_delegate, extra_info,
+      new_contents);
 
   auto opener = ChromeBrowserHostImpl::GetBrowserForContents(source_contents);
   if (!opener) {
@@ -567,148 +496,6 @@ void ChromeBrowserDelegate::WebContentsCreated(
   CreateBrowserHostForPopup(new_contents, settings, client, extra_info,
                             std::move(platform_delegate),
                             /*is_devtools_popup=*/false, opener);
-}
-
-bool ChromeBrowserDelegate::OpenURLFromTabEx(
-    content::WebContents* source,
-    const content::OpenURLParams& params,
-    base::OnceCallback<void(content::NavigationHandle&)>&
-        navigation_handle_callback) {
-  // |source| may be nullptr when opening a link from chrome UI such as the
-  // Reading List sidebar. In that case we default to using the Browser's
-  // currently active WebContents.
-  if (!source) {
-    // GetActiveWebContents() may return nullptr if we're in a new Browser
-    // created using ScopedTabbedBrowserDisplayer. This new Browser does
-    // not have a WebContents yet.
-    source = browser_->tab_strip_model()->GetActiveWebContents();
-  }
-  if (!source) {
-    LOG(WARNING) << "Failed to identify target browser for "
-                 << params.url.spec();
-    // Proceed with default chrome handling.
-    return true;
-  }
-
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    // Returns nullptr to cancel the navigation.
-    const bool cancel =
-        delegate->OpenURLFromTabEx(source, params,
-                                   navigation_handle_callback) == nullptr;
-    if (cancel) {
-      // Cancel the navigation.
-      return false;
-    }
-  }
-
-  // Proceed with default chrome handling.
-  return true;
-}
-
-bool ChromeBrowserDelegate::SetContentsBoundsEx(content::WebContents* source,
-                                                const gfx::Rect& bounds) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    return delegate->SetContentsBoundsEx(source, bounds);
-  }
-  return false;
-}
-
-void ChromeBrowserDelegate::LoadingStateChanged(content::WebContents* source,
-                                                bool should_show_loading_ui) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    delegate->LoadingStateChanged(source, should_show_loading_ui);
-  }
-}
-
-void ChromeBrowserDelegate::UpdateTargetURL(content::WebContents* source,
-                                            const GURL& url) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    delegate->UpdateTargetURL(source, url);
-  }
-}
-
-bool ChromeBrowserDelegate::DidAddMessageToConsole(
-    content::WebContents* source,
-    blink::mojom::ConsoleMessageLevel log_level,
-    const std::u16string& message,
-    int32_t line_no,
-    const std::u16string& source_id) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    return delegate->DidAddMessageToConsole(source, log_level, message, line_no,
-                                            source_id);
-  }
-  return false;
-}
-
-void ChromeBrowserDelegate::EnterFullscreenModeForTab(
-    content::RenderFrameHost* requesting_frame,
-    const blink::mojom::FullscreenOptions& options) {
-  auto web_contents =
-      content::WebContents::FromRenderFrameHost(requesting_frame);
-  if (!web_contents) {
-    return;
-  }
-
-  if (auto delegate = GetDelegateForWebContents(web_contents)) {
-    delegate->EnterFullscreenModeForTab(requesting_frame, options);
-  }
-}
-
-void ChromeBrowserDelegate::ExitFullscreenModeForTab(
-    content::WebContents* web_contents) {
-  if (auto delegate = GetDelegateForWebContents(web_contents)) {
-    delegate->ExitFullscreenModeForTab(web_contents);
-  }
-
-  // Workaround for https://crbug.com/1500371. Ensure WebContents exits
-  // fullscreen state by explicitly sending a resize message.
-  if (auto* rwhv = web_contents->GetRenderWidgetHostView()) {
-    if (auto* render_widget_host = rwhv->GetRenderWidgetHost()) {
-      render_widget_host->SynchronizeVisualProperties();
-    }
-  }
-}
-
-void ChromeBrowserDelegate::CanDownload(
-    const GURL& url,
-    const std::string& request_method,
-    base::OnceCallback<void(bool)> callback) {
-  auto source = browser_->tab_strip_model()->GetActiveWebContents();
-  DCHECK(source);
-
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    delegate->CanDownload(url, request_method, std::move(callback));
-    return;
-  }
-  std::move(callback).Run(true);
-}
-
-content::JavaScriptDialogManager*
-ChromeBrowserDelegate::GetJavaScriptDialogManager(
-    content::WebContents* source) {
-  auto browser_host = ChromeBrowserHostImpl::GetBrowserForContents(source);
-  if (browser_host) {
-    return browser_host->GetJavaScriptDialogManager();
-  }
-  return nullptr;
-}
-
-KeyboardEventProcessingResult ChromeBrowserDelegate::PreHandleKeyboardEvent(
-    content::WebContents* source,
-    const input::NativeWebKeyboardEvent& event) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    return delegate->PreHandleKeyboardEvent(source, event);
-  }
-  return KeyboardEventProcessingResult::NOT_HANDLED;
-}
-
-bool ChromeBrowserDelegate::HandleKeyboardEvent(
-    content::WebContents* source,
-    const input::NativeWebKeyboardEvent& event) {
-  if (auto delegate = GetDelegateForWebContents(source)) {
-    return delegate->HandleKeyboardEvent(source, event);
-  }
-  return false;
 }
 
 // static
@@ -745,7 +532,7 @@ CefRefPtr<ChromeBrowserHostImpl> ChromeBrowserDelegate::CreateBrowserHost(
   }
 
   Profile* profile =
-      browser ? browser->profile()
+      browser ? browser->GetProfile()
               : Profile::FromBrowserContext(web_contents->GetBrowserContext());
 
   // Get or create a ChromeBrowserContext for the browser Profile. Creation
@@ -813,16 +600,6 @@ ChromeBrowserDelegate::CreateBrowserHostForPopup(
                            is_devtools_popup, opener, request_context_impl);
 }
 
-CefBrowserContentsDelegate* ChromeBrowserDelegate::GetDelegateForWebContents(
-    content::WebContents* web_contents) const {
-  auto browser_host =
-      ChromeBrowserHostImpl::GetBrowserForContents(web_contents);
-  if (browser_host) {
-    return browser_host->contents_delegate();
-  }
-  return nullptr;
-}
-
 bool ChromeBrowserDelegate::IsViewsHosted() const {
   return create_params_.browser_view != nullptr ||
          create_params_.popup_with_views_hosted_opener;
@@ -830,8 +607,8 @@ bool ChromeBrowserDelegate::IsViewsHosted() const {
 
 CefWindowImpl* ChromeBrowserDelegate::GetCefWindowImpl() const {
   if (IsViewsHosted()) {
-    if (auto chrome_browser_view =
-            static_cast<ChromeBrowserView*>(browser_->window())) {
+    if (auto* chrome_browser_view = static_cast<ChromeBrowserView*>(
+            BrowserView::GetBrowserViewForBrowser(browser_))) {
       return chrome_browser_view->cef_browser_view()->cef_window_impl();
     }
   }
@@ -866,13 +643,9 @@ std::unique_ptr<BrowserDelegate> BrowserDelegate::Create(
     params->create_params_.browser_view = nullptr;
   }
 
-  // We could just `static_cast<Browser*>(opener)`, but we follow the
-  // recommended approach instead.
-  Browser* opener_browser = nullptr;
+  const Browser* opener_browser = nullptr;
   if (opener) {
-    auto* browser_view = BrowserView::GetBrowserViewForBrowser(opener);
-    CHECK(browser_view);
-    opener_browser = browser_view->browser();
+    opener_browser = cef::BrowserForBWI(opener);
   }
 
   return std::make_unique<ChromeBrowserDelegate>(browser, create_params,
@@ -882,7 +655,7 @@ std::unique_ptr<BrowserDelegate> BrowserDelegate::Create(
 // static
 Browser* BrowserDelegate::CreateDevToolsBrowser(
     Profile* profile,
-    Browser* opener,
+    BrowserWindowInterface* opener,
     content::WebContents* inspected_web_contents,
     std::unique_ptr<content::WebContents>& devtools_contents) {
   return ChromeBrowserDelegate::CreateDevToolsBrowser(

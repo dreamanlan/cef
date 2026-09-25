@@ -32,7 +32,7 @@ index daecebb5070705c1eb5281a3a7df4ace6b89c119..aed51c2e6b06e3527bd6c2003e4b6a82
    return (dark_mode_support.allow_dark_mode_for_app ||
            dark_mode_support.set_preferred_app_mode) &&
 diff --git chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
-index 094551c9feac29138113464a50be115126ed05d9..0f47eaacd2947cbbb78bd710b736c9c9f4efcbc3 100644
+index 83d1f694eaf78e97c32054d4a71744d7f0f2b6b3..98de79083632c364309ae00e58ac4207a2d15589 100644
 --- chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
 +++ chrome/browser/ui/views/chrome_browser_main_extra_parts_views_linux.cc
 @@ -66,7 +66,10 @@ void ChromeBrowserMainExtraPartsViewsLinux::ToolkitInitialized() {
@@ -48,10 +48,10 @@ index 094551c9feac29138113464a50be115126ed05d9..0f47eaacd2947cbbb78bd710b736c9c9
  }
  
 diff --git ui/native_theme/native_theme.cc ui/native_theme/native_theme.cc
-index 5a97a6ccc5addca55b33f423d594a83550bf7185..1c7b37559f856e117b487d412a865fbfe3b0798f 100644
+index 049cbdd2000458534dca9b08c02264661b75f4ca..1248babf31411463c5539abf056952ae01e6acc7 100644
 --- ui/native_theme/native_theme.cc
 +++ ui/native_theme/native_theme.cc
-@@ -284,6 +284,8 @@ void NativeTheme::NotifyOnNativeThemeUpdated() {
+@@ -297,6 +297,8 @@ void NativeTheme::NotifyOnNativeThemeUpdated() {
  
    NotifyOnNativeThemeUpdatedImpl();
  
@@ -60,7 +60,7 @@ index 5a97a6ccc5addca55b33f423d594a83550bf7185..1c7b37559f856e117b487d412a865fbf
    RecordNumColorProvidersInitializedDuringOnNativeThemeUpdated(
        color_provider_manager.num_providers_initialized() -
        initial_providers_initialized);
-@@ -364,6 +366,13 @@ bool NativeTheme::IsForcedDarkMode() {
+@@ -378,6 +380,13 @@ bool NativeTheme::IsForcedDarkMode() {
    return kIsForcedDarkMode;
  }
  
@@ -74,7 +74,7 @@ index 5a97a6ccc5addca55b33f423d594a83550bf7185..1c7b37559f856e117b487d412a865fbf
  bool NativeTheme::IsForcedHighContrast() {
    static bool kIsForcedHighContrast =
        base::CommandLine::ForCurrentProcess()->HasSwitch(
-@@ -577,8 +586,13 @@ ColorProviderKey::ForcedColors NativeTheme::CalculateForcedColors() const {
+@@ -594,8 +603,13 @@ ColorProviderKey::ForcedColors NativeTheme::CalculateForcedColors() const {
  
  NativeTheme::PreferredColorScheme NativeTheme::CalculatePreferredColorScheme()
      const {
@@ -91,12 +91,12 @@ index 5a97a6ccc5addca55b33f423d594a83550bf7185..1c7b37559f856e117b487d412a865fbf
  
  NativeTheme::PreferredContrast NativeTheme::CalculatePreferredContrast() const {
 diff --git ui/native_theme/native_theme.h ui/native_theme/native_theme.h
-index 309670548557055c2cccdc424bf3ac91330d541a..7aa2376171516e10752db1a79448ed043ac96b2d 100644
+index e131113a7d5eeea02929ff037d898f1c2f281a43..0327964801b17658f08f1ac8c4f74032bb951c85 100644
 --- ui/native_theme/native_theme.h
 +++ ui/native_theme/native_theme.h
-@@ -536,13 +536,16 @@ class COMPONENT_EXPORT(NATIVE_THEME) NativeTheme {
-     caret_blink_interval_ = caret_blink_interval;
-   }
+@@ -539,13 +539,16 @@ class COMPONENT_EXPORT(NATIVE_THEME) NativeTheme {
+   size_t system_color_version() const { return system_color_version_; }
+   void IncrementSystemColorVersion() { ++system_color_version_; }
  
 - protected:
 -  explicit NativeTheme(SystemTheme system_theme = SystemTheme::kDefault);

@@ -1,10 +1,10 @@
 diff --git ui/base/resource/resource_bundle.cc ui/base/resource/resource_bundle.cc
-index 73e2f1e74967f6f71062363adb7d48e17c21cfe6..02d171bc4f25e7d5b6067acd6c5f3c7218fd0c57 100644
+index d1ee6814618c7cdcdb7fda0faa57a94a75dd7c98..e047d2c3bc63b8503eb448f0c2e194d71e7147e7 100644
 --- ui/base/resource/resource_bundle.cc
 +++ ui/base/resource/resource_bundle.cc
-@@ -1014,6 +1014,12 @@ ResourceBundle::ResourceBundle(Delegate* delegate)
-     : delegate_(delegate),
-       locale_resources_data_lock_(new base::Lock),
+@@ -1022,6 +1022,12 @@ ResourceBundle::ResourceBundle(Delegate* delegate)
+       locale_resources_data_lock_(std::make_unique<base::Lock>()),
+       resource_handles_lock_(std::make_unique<base::Lock>()),
        max_scale_factor_(k100Percent) {
 +  // With CEF's multi-threaded mode the ResourceBundle may be created on the
 +  // main thread and then accessed on the UI thread. Allow the SequenceChecker
@@ -15,7 +15,7 @@ index 73e2f1e74967f6f71062363adb7d48e17c21cfe6..02d171bc4f25e7d5b6067acd6c5f3c72
    mangle_localized_strings_ = base::CommandLine::ForCurrentProcess()->HasSwitch(
        switches::kMangleLocalizedStrings);
  }
-@@ -1023,6 +1029,11 @@ ResourceBundle::~ResourceBundle() {
+@@ -1031,6 +1037,11 @@ ResourceBundle::~ResourceBundle() {
    UnloadLocaleResources();
  }
  
@@ -28,10 +28,10 @@ index 73e2f1e74967f6f71062363adb7d48e17c21cfe6..02d171bc4f25e7d5b6067acd6c5f3c72
  void ResourceBundle::InitSharedInstance(Delegate* delegate) {
    DCHECK(g_shared_instance_ == nullptr) << "ResourceBundle initialized twice";
 diff --git ui/base/resource/resource_bundle.h ui/base/resource/resource_bundle.h
-index cb3cb9ae8c0c01d59ac4035e5a9603eab65c1ed1..fc0b4c11d588ddf66695e2552f425fa9999de387 100644
+index 5b0e6cea9c6206526c11af155a26c8c2477690c4..63da981b5350d6b36afd84cd4c85e1cb6eb7efd3 100644
 --- ui/base/resource/resource_bundle.h
 +++ ui/base/resource/resource_bundle.h
-@@ -263,6 +263,11 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
+@@ -266,6 +266,11 @@ class COMPONENT_EXPORT(UI_BASE) ResourceBundle {
    ResourceBundle(const ResourceBundle&) = delete;
    ResourceBundle& operator=(const ResourceBundle&) = delete;
  

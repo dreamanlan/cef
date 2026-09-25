@@ -18,10 +18,13 @@
 #include "cef/libcef/common/cef_switches.h"
 #include "cef/libcef/common/frame_util.h"
 #include "cef/libcef/common/values_impl.h"
+#include "chrome/browser/ui/webui/top_chrome/webui_contents_preload_state.h"
 #include "content/public/browser/child_process_host.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_process_host.h"
 #include "content/public/browser/web_contents.h"
+#include "content/public/browser/web_ui.h"
+#include "content/public/browser/web_ui_controller.h"
 #include "content/public/common/url_constants.h"
 
 namespace {
@@ -403,7 +406,7 @@ void CefBrowserInfoManager::OnGetNewBrowserInfo(
         kNewBrowserInfoResponseTimeoutMs);
   }
 
-  // Check for excluded content (PDF viewer or print preview).
+  // Check for excluded content (Chrome UI, PDF viewer or print preview).
   CEF_POST_TASK(
       CEF_UIT,
       base::BindOnce(
@@ -434,12 +437,16 @@ void CefBrowserInfoManager::CheckExcludedNewBrowserInfoOnUIThread(
     return;
   }
 
-  // PDF viewer and print preview create multiple renderer processes. These
-  // excluded processes are not tracked by CefBrowserInfo.
+  // Chrome UI, PDF viewer and print preview create excluded frames that are
+  // not tracked by CefBrowserInfo.
   CefBrowserInfo* browser_info;
   bool is_excluded;
   GetFrameHost(rfh, /*prefer_speculative=*/true, &browser_info, &is_excluded);
-  if (browser_info && is_excluded) {
+  // Don't require browser_info: Chrome UI contents have no owning CefBrowser.
+  // With nullptr, SendNewBrowserInfoResponse sends browser_id = -1 and no
+  // config, which the renderer handles by creating a CefExcludedView. When
+  // browser_info is available, its configuration is still sent.
+  if (is_excluded) {
     g_info_manager->ContinueNewBrowserInfo(global_token, browser_info,
                                            /*is_excluded=*/true);
   }
@@ -565,13 +572,7 @@ CefRefPtr<CefFrameHostImpl> CefBrowserInfoManager::GetFrameHost(
   CEF_REQUIRE_UIT();
   DCHECK(rfh);
 
-  const bool is_pdf_process = rfh->GetProcess()->IsPdf();
-  auto* web_contents = content::WebContents::FromRenderFrameHost(rfh);
-  const bool is_browser_process_guest = IsBrowserPluginGuest(web_contents);
-  const bool is_print_preview_dialog = IsPrintPreviewDialog(web_contents);
-
-  bool excluded =
-      is_pdf_process || is_browser_process_guest || is_print_preview_dialog;
+  const bool excluded = IsExcludedFrameHost(rfh);
 
   CefRefPtr<CefFrameHostImpl> frame;
 
@@ -592,6 +593,10 @@ CefRefPtr<CefFrameHostImpl> CefBrowserInfoManager::GetFrameHost(
   }
 
   if (VLOG_IS_ON(1)) {
+    const bool is_pdf_process = rfh->GetProcess()->IsPdf();
+    auto* web_contents = content::WebContents::FromRenderFrameHost(rfh);
+    const bool is_browser_process_guest = IsBrowserPluginGuest(web_contents);
+    const bool is_print_preview_dialog = IsPrintPreviewDialog(web_contents);
     const std::string& debug_string =
         frame_util::GetFrameDebugString(rfh->GetGlobalFrameToken());
     const bool is_main = rfh->GetParent() == nullptr;
@@ -599,7 +604,8 @@ CefRefPtr<CefFrameHostImpl> CefBrowserInfoManager::GetFrameHost(
     VLOG(1) << "frame " << debug_string << ", pdf_process=" << is_pdf_process
             << ", browser_process_guest=" << is_browser_process_guest
             << ", print_preview_dialog=" << is_print_preview_dialog
-            << ", main=" << is_main << (browser ? "" : ", has no BrowserHost")
+            << ", excluded=" << excluded << ", main=" << is_main
+            << (browser ? "" : ", has no BrowserHost")
             << (frame ? "" : ", has no FrameHost");
   }
 
@@ -617,6 +623,24 @@ bool CefBrowserInfoManager::IsExcludedFrameHost(content::RenderFrameHost* rfh) {
   }
 
   auto* web_contents = content::WebContents::FromRenderFrameHost(rfh);
+  if (WebUIContentsPreloadState::FromWebContents(web_contents)) {
+    // WebUIContentsPreloadManager creates non-tab contents for Chrome UI
+    // (omnibox popups, side panels, etc). The marker is set before navigation,
+    // including when the contents are created on demand rather than preloaded.
+    return true;
+  }
+
+  // Standalone Chrome UI windows (e.g. the profile picker) create their
+  // contents without the preload marker. Use the main frame's controller
+  // to also cover subframes, but keep WebUI pages owned by a CefBrowser.
+  auto* web_ui = rfh->GetMainFrame()->GetWebUI();
+  if (web_ui && web_ui->GetController() &&
+      web_ui->GetController()->GetDisplayDisposition() ==
+          content::WebUIController::DisplayDisposition::kUIElement &&
+      !CefBrowserHostBase::GetBrowserForHost(rfh)) {
+    return true;
+  }
+
   const bool is_browser_process_guest = IsBrowserPluginGuest(web_contents);
   if (is_browser_process_guest) {
     return true;
@@ -808,7 +832,8 @@ void CefBrowserInfoManager::SendNewBrowserInfoResponse(
       params->extra_info = std::move(extra_info_value.GetDict());
     }
   } else {
-    // The new browser info response has timed out.
+    // The contents are excluded without an owning browser, or the new
+    // browser info request was canceled or timed out.
     params->browser_id = -1;
   }
 

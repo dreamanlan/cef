@@ -1,8 +1,8 @@
 diff --git base/command_line.cc base/command_line.cc
-index 8325518cc9785297d47446123a001001e1412f5f..333c88f392ba15a58153091df6ff1b75832d2205 100644
+index 3a95f227d419ebe02319c065f3cdedf2a65c69a4..6fe016791119ee1e4a05d0b84462a16ae85de130 100644
 --- base/command_line.cc
 +++ base/command_line.cc
-@@ -435,11 +435,10 @@ void CommandLine::AppendSwitchNative(std::string_view switch_string,
+@@ -438,11 +438,10 @@ void CommandLine::AppendSwitchNative(std::string_view switch_string,
  #if BUILDFLAG(ENABLE_COMMANDLINE_SEQUENCE_CHECKS)
    sequence_checker_.Check();
  #endif

@@ -28,7 +28,10 @@
 #include "base/auto_reset.h"
 #include "base/functional/bind.h"
 #include "base/lazy_instance.h"
+#include "base/notimplemented.h"
 #include "base/strings/string_number_conversions.h"
+#include "cef/include/cef_api_hash.h"
+#include "cef/libcef/common/api_version_util.h"
 #include "cef/libcef/common/app_manager.h"
 #include "cef/libcef/common/cef_switches.h"
 #include "cef/libcef/common/task_runner_impl.h"
@@ -42,7 +45,6 @@
 #include "third_party/blink/public/web/blink.h"
 #include "third_party/blink/public/web/web_frame.h"
 #include "third_party/blink/public/web/web_local_frame.h"
-#include "third_party/blink/public/web/web_script_controller.h"
 #include "url/gurl.h"
 
 namespace {
@@ -551,7 +553,7 @@ void AccessorNameGetterCallbackImpl(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Local<v8::Object> obj = info.HolderV2();
+  v8::Local<v8::Object> obj = info.Holder();
 
   CefRefPtr<CefV8Accessor> accessorPtr;
 
@@ -584,18 +586,19 @@ void AccessorNameGetterCallbackImpl(
 }
 
 // See explanation in https://crbug.com/336325111.
-void EmptySetterCallbackImpl(v8::Local<v8::Name> property,
-                             v8::Local<v8::Value> value,
-                             const v8::PropertyCallbackInfo<void>& info) {}
+void EmptySetterCallbackImpl(
+    v8::Local<v8::Name> property,
+    v8::Local<v8::Value> value,
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {}
 
 void AccessorNameSetterCallbackImpl(
     v8::Local<v8::Name> property,
     v8::Local<v8::Value> value,
-    const v8::PropertyCallbackInfo<void>& info) {
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Local<v8::Object> obj = info.HolderV2();
+  v8::Local<v8::Object> obj = info.Holder();
 
   CefRefPtr<CefV8Accessor> accessorPtr;
 
@@ -640,7 +643,7 @@ v8::Intercepted InterceptorGetterCallbackImpl(
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
 
-  v8::Handle<v8::Object> obj = info.HolderV2();
+  v8::Handle<v8::Object> obj = info.Holder();
   CefRefPtr<CefV8Interceptor> interceptorPtr;
 
   V8TrackObject* tracker = V8TrackObject::Unwrap(context, obj);
@@ -674,10 +677,10 @@ template <typename T>
 v8::Intercepted InterceptorSetterCallbackImpl(
     T property,
     v8::Local<v8::Value> value,
-    const v8::PropertyCallbackInfo<void>& info) {
+    const v8::PropertyCallbackInfo<v8::Boolean>& info) {
   v8::Isolate* isolate = info.GetIsolate();
   v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Handle<v8::Object> obj = info.HolderV2();
+  v8::Handle<v8::Object> obj = info.Holder();
   CefRefPtr<CefV8Interceptor> interceptorPtr;
 
   V8TrackObject* tracker = V8TrackObject::Unwrap(context, obj);
@@ -702,36 +705,6 @@ v8::Intercepted InterceptorSetterCallbackImpl(
   // returning a bool value.
   return v8::Intercepted::kNo;
 }
-
-// V8 extension registration.
-
-class ExtensionWrapper : public v8::Extension {
- public:
-  ExtensionWrapper(const char* extension_name,
-                   const char* javascript_code,
-                   CefV8Handler* handler)
-      : v8::Extension(extension_name, javascript_code), handler_(handler) {}
-
-  v8::Handle<v8::FunctionTemplate> GetNativeFunctionTemplate(
-      v8::Isolate* isolate,
-      v8::Handle<v8::String> name) override {
-    if (!handler_) {
-      return v8::Local<v8::FunctionTemplate>();
-    }
-
-    CefString func_name;
-    GetCefString(isolate, name, func_name);
-
-    v8::Local<v8::External> function_data =
-        V8FunctionData::Create(isolate, func_name, handler_);
-
-    return v8::FunctionTemplate::New(isolate, FunctionCallbackImpl,
-                                     function_data);
-  }
-
- private:
-  CefV8Handler* handler_;
-};
 
 class CefV8ExceptionImpl : public CefV8Exception {
  public:
@@ -850,31 +823,12 @@ void CefV8SetWorkerAttributes(int worker_id, const GURL& worker_url) {
   CefV8IsolateManager::Get()->SetWorkerAttributes(worker_id, worker_url);
 }
 
-bool CefRegisterExtension(const CefString& extension_name,
-                          const CefString& javascript_code,
-                          CefRefPtr<CefV8Handler> handler) {
-  // Verify that this method was called on the correct thread.
-  CEF_REQUIRE_RT_RETURN(false);
-
-  auto* isolate_manager = CefV8IsolateManager::Get();
-
-  V8TrackString* name = new V8TrackString(extension_name);
-  isolate_manager->AddGlobalTrackObject(name);
-  V8TrackString* code = new V8TrackString(javascript_code);
-  isolate_manager->AddGlobalTrackObject(code);
-
-  if (handler.get()) {
-    // The reference will be released when the process exits.
-    V8TrackObject* object = new V8TrackObject(isolate_manager->isolate());
-    object->SetHandler(handler);
-    isolate_manager->AddGlobalTrackObject(object);
-  }
-
-  auto wrapper = std::make_unique<ExtensionWrapper>(
-      name->GetString(), code->GetString(), handler.get());
-
-  blink::WebScriptController::RegisterExtension(std::move(wrapper));
-  return true;
+bool CefRegisterExtension(const CefString& /*extension_name*/,
+                          const CefString& /*javascript_code*/,
+                          CefRefPtr<CefV8Handler> /*handler*/) {
+  CEF_API_REQUIRE_REMOVED(15400);
+  NOTIMPLEMENTED();
+  return false;
 }
 
 // Helper macros
@@ -1044,8 +998,8 @@ bool CefV8ContextImpl::Enter() {
 
   if (!microtasks_scope_) {
     // Increment the MicrotasksScope recursion level.
-    microtasks_scope_ = std::make_unique<v8::MicrotasksScope>(
-        isolate, microtask_queue_, v8::MicrotasksScope::kRunMicrotasks);
+    microtasks_scope_.emplace(isolate, microtask_queue_,
+                              v8::MicrotasksScope::kRunMicrotasks);
   }
 
   ++enter_count_;
@@ -1073,7 +1027,7 @@ bool CefV8ContextImpl::Exit() {
 
   if (--enter_count_ == 0) {
     // Decrement the MicrotasksScope recursion level.
-    microtasks_scope_.reset(nullptr);
+    microtasks_scope_.reset();
   }
 
   return true;
@@ -2300,7 +2254,7 @@ bool CefV8ValueImpl::SetValue(const CefString& key,
   }
 
   v8::AccessorNameGetterCallback getter = AccessorNameGetterCallbackImpl;
-  v8::AccessorNameSetterCallback setter =
+  v8::AccessorNameSetterCallbackV2 setter =
       (attribute & V8_PROPERTY_ATTRIBUTE_READONLY)
           ? EmptySetterCallbackImpl
           : AccessorNameSetterCallbackImpl;

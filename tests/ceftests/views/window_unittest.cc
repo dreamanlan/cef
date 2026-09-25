@@ -739,6 +739,7 @@ class OverlayTestWindowDelegate : public TestWindowDelegate {
 
     // View is still visible but no longer drawn (because it no longer belongs
     // to the controller).
+    EXPECT_TRUE(view_->IsValid());
     EXPECT_EQ(nullptr, view_->GetWindow());
     EXPECT_TRUE(view_->IsVisible());
     EXPECT_FALSE(view_->IsDrawn());

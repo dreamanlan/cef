@@ -1,10 +1,10 @@
 diff --git base/task/thread_pool/thread_pool_impl.cc base/task/thread_pool/thread_pool_impl.cc
-index 4a934c05c7bb03646b8636c7ad12ebd76fe37791..2176dba3bc01a99a9dd7eff87d2ff6b60ffece7f 100644
+index 5595dc92ec6d0420feb0a5c9161531e3eccd1f6e..6beffec7d0e0e4169daf247765c42c57c2b1ef29 100644
 --- base/task/thread_pool/thread_pool_impl.cc
 +++ base/task/thread_pool/thread_pool_impl.cc
-@@ -122,6 +122,10 @@ ThreadPoolImpl::ThreadPoolImpl(std::string_view histogram_label,
-         ThreadGroupType::BACKGROUND, task_tracker_->GetTrackedRef(),
-         tracked_ref_factory_.GetTrackedRef(), monitor_worker_thread_priorities);
+@@ -115,6 +115,10 @@ ThreadPoolImpl::ThreadPoolImpl(
+         tracked_ref_factory_.GetTrackedRef(), monitor_worker_thread_priorities,
+         record_lock_contention);
    }
 +
 +  // After https://crrev.com/e2e090c363 the ThreadPool is being created earlier

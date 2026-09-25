@@ -11,8 +11,8 @@
 #include "cef/libcef/browser/chrome/views/toolbar_view_view.h"
 #include "cef/libcef/browser/views/view_impl.h"
 
-class Browser;
 class BrowserView;
+class BrowserWindowInterface;
 
 class CefToolbarViewImpl
     : public CefViewImpl<CefToolbarViewView, CefView, CefViewDelegate> {
@@ -27,7 +27,7 @@ class CefToolbarViewImpl
   // Create a new CefToolbarViewImpl instance. |delegate| may be nullptr.
   static CefRefPtr<CefToolbarViewImpl> Create(
       CefRefPtr<CefViewDelegate> delegate,
-      Browser* browser,
+      BrowserWindowInterface* browser,
       BrowserView* browser_view,
       std::optional<ToolbarView::DisplayMode> display_mode);
 
@@ -41,7 +41,7 @@ class CefToolbarViewImpl
   // Always call Initialize() after creation.
   // |delegate| may be nullptr.
   CefToolbarViewImpl(CefRefPtr<CefViewDelegate> delegate,
-                     Browser* browser,
+                     BrowserWindowInterface* browser,
                      BrowserView* browser_view,
                      std::optional<ToolbarView::DisplayMode> display_mode);
 
@@ -49,7 +49,7 @@ class CefToolbarViewImpl
   CefToolbarViewView* CreateRootView() override;
   void InitializeRootView() override;
 
-  raw_ptr<Browser> browser_;
+  raw_ptr<BrowserWindowInterface> browser_;
   raw_ptr<BrowserView> browser_view_;
   std::optional<ToolbarView::DisplayMode> const display_mode_;
 

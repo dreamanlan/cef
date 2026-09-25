@@ -1,8 +1,8 @@
 diff --git chrome/browser/ui/permission_bubble/permission_prompt.h chrome/browser/ui/permission_bubble/permission_prompt.h
-index fbce13c16ad10420f3f8e0df521e3be6979271d1..0512b2f09937ed0410f23d321b57f77d200cde74 100644
+index 6e9bba3c993b0c3c3ce71851b45e4316c5673d77..26f4c4771f9b7817fdd92e42b410c7abc6a0b4ea 100644
 --- chrome/browser/ui/permission_bubble/permission_prompt.h
 +++ chrome/browser/ui/permission_bubble/permission_prompt.h
-@@ -11,6 +11,13 @@ namespace content {
+@@ -12,6 +12,13 @@ namespace content {
  class WebContents;
  }
  
@@ -17,10 +17,10 @@ index fbce13c16ad10420f3f8e0df521e3be6979271d1..0512b2f09937ed0410f23d321b57f77d
  std::unique_ptr<permissions::PermissionPrompt> CreatePermissionPrompt(
      content::WebContents* web_contents,
 diff --git chrome/browser/ui/views/permissions/permission_prompt_factory.cc chrome/browser/ui/views/permissions/permission_prompt_factory.cc
-index a614311803c0a5c69f1f4b7ba27a4faa6036a5f6..257507250c2ad46aaf0579d12c04b8071d86101e 100644
+index 0c03be841cac2008e2ec8d0610337ca3e39e8d37..f13e680a2828eb9de558df65ee122045c808703e 100644
 --- chrome/browser/ui/views/permissions/permission_prompt_factory.cc
 +++ chrome/browser/ui/views/permissions/permission_prompt_factory.cc
-@@ -250,11 +250,28 @@ std::unique_ptr<permissions::PermissionPrompt> CreateQuietPrompt(
+@@ -250,6 +250,8 @@ std::unique_ptr<permissions::PermissionPrompt> CreateQuietPrompt(
    }
  }
  
@@ -28,8 +28,12 @@ index a614311803c0a5c69f1f4b7ba27a4faa6036a5f6..257507250c2ad46aaf0579d12c04b807
 +
  }  // namespace
  
-+void SetCreatePermissionPromptFunction(
-+    CreatePermissionPromptFunctionPtr ptr) {
+ bool ShouldShowPermissionPromptEvenIfOmniboxEditedOrEmpty(
+@@ -281,9 +283,25 @@ bool ShouldShowPermissionPromptEvenIfOmniboxEditedOrEmpty(
+   return false;
+ }
+ 
++void SetCreatePermissionPromptFunction(CreatePermissionPromptFunctionPtr ptr) {
 +  g_create_permission_prompt_ptr = ptr;
 +}
 +
@@ -40,12 +44,14 @@ index a614311803c0a5c69f1f4b7ba27a4faa6036a5f6..257507250c2ad46aaf0579d12c04b807
 +    bool default_handling = true;
 +    auto prompt = g_create_permission_prompt_ptr(web_contents, delegate,
 +                                                 &default_handling);
-+    if (prompt)
++    if (prompt) {
 +      return prompt;
-+    if (!default_handling)
++    }
++    if (!default_handling) {
 +      return nullptr;
++    }
 +  }
 +
-   BrowserWindowInterface* browser_window_interface =
-       GlobalBrowserCollection::GetInstance()->FindBrowserWithTab(web_contents);
-   if (!browser_window_interface) {
+   if (delegate->ShouldDropCurrentRequestIfCannotShowQuietly() &&
+       IsFullScreenMode(web_contents)) {
+     return nullptr;

@@ -12,6 +12,7 @@
 #include "base/command_line.h"
 #include "base/lazy_instance.h"
 #include "base/path_service.h"
+#include "base/strings/string_split.h"
 #include "base/threading/threading_features.h"
 #include "cef/libcef/browser/chrome/chrome_browser_context.h"
 #include "cef/libcef/browser/chrome/chrome_content_browser_client_cef.h"

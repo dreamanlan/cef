@@ -88,29 +88,27 @@ index db8209bbcc2142734d2870ac8174a9b78c60f784..b50bce7fae5b58a8e9f06d7499ec4b80
  HICON GetAppIcon();
  HICON GetSmallAppIcon();
  
-diff --git chrome/common/chrome_constants.cc chrome/common/chrome_constants.cc
-index 6e30ef11474c457acf1bca690c6a310afb11d751..69121ac0ebfc800d505665da95cc63e703b8f247 100644
---- chrome/common/chrome_constants.cc
-+++ chrome/common/chrome_constants.cc
-@@ -5,6 +5,7 @@
- #include "chrome/common/chrome_constants.h"
+diff --git chrome/common/chrome_constants.h chrome/common/chrome_constants.h
+index 464a435a50d51f6a3d100c74645d8b48e010c1cc..f9cea6ee23ccbe10a1c1a26dc149102ec523d492 100644
+--- chrome/common/chrome_constants.h
++++ chrome/common/chrome_constants.h
+@@ -9,6 +9,7 @@
  
+ #include "base/files/file_path.h"
  #include "build/build_config.h"
 +#include "cef/libcef/features/features.h"
- #include "chrome/common/chrome_version.h"
  
- #define FPL FILE_PATH_LITERAL
-@@ -88,7 +89,12 @@ const char kMacHelperSuffixAlerts[] = " (Alerts)";
- #endif  // BUILDFLAG(IS_MAC)
+ namespace chrome {
+ 
+@@ -36,7 +37,11 @@ extern const char kMacHelperSuffixAlerts[];
  
  #if BUILDFLAG(IS_WIN)
--const base::FilePath::CharType kBrowserResourcesDll[] = FPL("chrome.dll");
-+const base::FilePath::CharType kBrowserResourcesDll[] =
+ inline constexpr base::FilePath::CharType kBrowserResourcesDll[] =
 +#if BUILDFLAG(ENABLE_CEF)
-+    FPL("libcef.dll");
++    FILE_PATH_LITERAL("libcef.dll");
 +#else
-+    FPL("chrome.dll");
+     FILE_PATH_LITERAL("chrome.dll");
 +#endif
- const base::FilePath::CharType kElfDll[] = FPL("chrome_elf.dll");
- const base::FilePath::CharType kStatusTrayWindowClass[] =
-     FPL("Chrome_StatusTrayWindow");
+ inline constexpr base::FilePath::CharType kElfDll[] =
+     FILE_PATH_LITERAL("chrome_elf.dll");
+ inline constexpr base::FilePath::CharType kRendererDll[] =

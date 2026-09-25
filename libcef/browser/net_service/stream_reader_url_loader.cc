@@ -518,11 +518,11 @@ void StreamReaderURLLoader::Start() {
 
   if (header_client_.is_bound()) {
     header_client_->OnBeforeSendHeaders(
-        request_.headers,
+        request_.url, request_.headers,
         base::BindOnce(&StreamReaderURLLoader::ContinueWithRequestHeaders,
                        weak_factory_.GetWeakPtr()));
   } else {
-    ContinueWithRequestHeaders(net::OK, std::nullopt);
+    ContinueWithRequestHeaders(net::OK, std::nullopt, std::nullopt);
   }
 }
 
@@ -551,7 +551,8 @@ void StreamReaderURLLoader::Cancel() {
 
 void StreamReaderURLLoader::ContinueWithRequestHeaders(
     int32_t result,
-    const std::optional<net::HttpRequestHeaders>& headers) {
+    const std::optional<net::HttpRequestHeaders>& headers,
+    std::optional<base::DictValue> extended_net_log_events) {
   if (result != net::OK) {
     RequestComplete(result);
     return;
@@ -821,10 +822,13 @@ void StreamReaderURLLoader::RequestComplete(int status_code) {
 
   auto status = network::URLLoaderCompletionStatus(status_code);
   status.completion_time = base::TimeTicks::Now();
-  status.encoded_data_length = total_bytes_read_ + header_length_;
-  status.encoded_body_length = total_bytes_read_;
+  status.encoded_data_length = base::ByteSize(
+      static_cast<uint64_t>(total_bytes_read_) + header_length_);
+  status.encoded_body_length =
+      base::ByteSize(static_cast<uint64_t>(total_bytes_read_));
   // We don't support decoders, so use the same value.
-  status.decoded_body_length = total_bytes_read_;
+  status.decoded_body_length =
+      base::ByteSize(static_cast<uint64_t>(total_bytes_read_));
 
   CleanUp();
 

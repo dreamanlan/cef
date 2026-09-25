@@ -1,8 +1,8 @@
 diff --git ui/views/controls/textfield/textfield.cc ui/views/controls/textfield/textfield.cc
-index fa33742286aa3f60186cc1a5032df92906fdfbff..13d44c43fe5b66950e782a6dad9d72a7f703cf78 100644
+index 67061f8ed25119c92df7ad20d4284d1e1163cbe2..ead99d7842f1f51c1384a1d3ee31be4346d587ea 100644
 --- ui/views/controls/textfield/textfield.cc
 +++ ui/views/controls/textfield/textfield.cc
-@@ -3300,6 +3300,10 @@ void Textfield::OnEnabledChanged() {
+@@ -3329,6 +3329,10 @@ void Textfield::OnEnabledChanged() {
    if (GetInputMethod()) {
      GetInputMethod()->OnTextInputTypeChanged(this);
    }
@@ -12,4 +12,4 @@ index fa33742286aa3f60186cc1a5032df92906fdfbff..13d44c43fe5b66950e782a6dad9d72a7
 +  }
    UpdateDefaultBorder();
  
-   // Only expose readonly if enabled. Don't overwrite the disabled restriction.
+   if (GetWidget()) {

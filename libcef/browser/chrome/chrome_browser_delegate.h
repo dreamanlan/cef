@@ -14,7 +14,6 @@
 #include "cef/libcef/browser/browser_info.h"
 #include "cef/libcef/browser/chrome/browser_delegate.h"
 
-class CefBrowserContentsDelegate;
 class CefRequestContextImpl;
 class CefWindowImpl;
 class CefWindowView;
@@ -30,11 +29,10 @@ class ChromeBrowserHostImpl;
 // dragging a tab out of an existing window. New or existing tabs can also be
 // added to an already existing Browser object.
 //
-// The Browser object acts as the WebContentsDelegate for all attached tabs. CEF
-// integration requires WebContentsDelegate callbacks and notification of tab
-// attach/detach. To support this integration a cef::BrowserDelegate
-// (ChromeBrowserDelegate) member is created in the Browser constructor and
-// receives delegation for the Browser callbacks. ChromeBrowserDelegate creates
+// ChromeBrowserWebContentsDelegate acts as the WebContentsDelegate for all
+// attached tabs, using this object for popup-host creation and shared window
+// state. Browser forwards tab attach/detach notifications to this object, which
+// is created earlier in the Browser constructor. ChromeBrowserDelegate creates
 // a new ChromeBrowserHostImpl when a tab is added to a Browser for the first
 // time, and that ChromeBrowserHostImpl continues to exist until the tab's
 // WebContents is destroyed. The associated WebContents object does not change,
@@ -55,7 +53,7 @@ class ChromeBrowserDelegate : public cef::BrowserDelegate {
 
   static Browser* CreateDevToolsBrowser(
       Profile* profile,
-      Browser* opener,
+      BrowserWindowInterface* opener,
       content::WebContents* inspected_web_contents,
       std::unique_ptr<content::WebContents>& devtools_contents);
 
@@ -63,6 +61,12 @@ class ChromeBrowserDelegate : public cef::BrowserDelegate {
   std::unique_ptr<content::WebContents> AddWebContents(
       std::unique_ptr<content::WebContents> new_contents) override;
   void OnWebContentsCreated(content::WebContents* new_contents) override;
+  void OnPopupWebContentsCreated(
+      content::WebContents* source_contents,
+      const content::GlobalRenderFrameHostId& opener_id,
+      const std::string& frame_name,
+      const GURL& target_url,
+      content::WebContents* new_contents) override;
   void SetAsDelegate(content::WebContents* web_contents,
                      bool set_delegate) override;
   bool ShowStatusBubble(bool show_by_default) override;
@@ -74,73 +78,15 @@ class ChromeBrowserDelegate : public cef::BrowserDelegate {
   bool IsToolbarButtonVisible(ToolbarButtonType button_type) override;
   void UpdateFindBarBoundingBox(gfx::Rect* bounds) override;
   void UpdateDialogTopInset(int* dialog_top_y) override;
-  [[nodiscard]] content::MediaResponseCallback RequestMediaAccessPermissionEx(
-      content::WebContents* web_contents,
-      const content::MediaStreamRequest& request,
-      content::MediaResponseCallback callback) override;
-  bool RendererUnresponsiveEx(
-      content::WebContents* source,
-      content::RenderWidgetHost* render_widget_host,
-      base::RepeatingClosure hang_monitor_restarter) override;
-  bool RendererResponsiveEx(
-      content::WebContents* source,
-      content::RenderWidgetHost* render_widget_host) override;
   std::optional<bool> SupportsWindowFeature(int feature) const override;
   bool SupportsDraggableRegion() const override;
+  void UpdateDraggableRegions(
+      const std::vector<blink::mojom::DraggableRegionPtr>& regions,
+      content::WebContents* contents) override;
   const std::optional<SkRegion> GetDraggableRegion() const override;
   void WindowFullscreenStateChanged() override;
   bool IsViewsHosted() const override;
   bool HasViewsHostedOpener() const override;
-  bool OpenURLFromTabEx(content::WebContents* source,
-                        const content::OpenURLParams& params,
-                        base::OnceCallback<void(content::NavigationHandle&)>&
-                            navigation_handle_callback) override;
-  bool SetContentsBoundsEx(content::WebContents* source,
-                           const gfx::Rect& bounds) override;
-
-  // WebContentsDelegate methods:
-  void WebContentsCreated(content::WebContents* source_contents,
-                          int opener_render_process_id,
-                          int opener_render_frame_id,
-                          const std::string& frame_name,
-                          const GURL& target_url,
-                          content::WebContents* new_contents) override;
-  void LoadingStateChanged(content::WebContents* source,
-                           bool should_show_loading_ui) override;
-  void UpdateTargetURL(content::WebContents* source, const GURL& url) override;
-  bool DidAddMessageToConsole(content::WebContents* source,
-                              blink::mojom::ConsoleMessageLevel log_level,
-                              const std::u16string& message,
-                              int32_t line_no,
-                              const std::u16string& source_id) override;
-  void EnterFullscreenModeForTab(
-      content::RenderFrameHost* requesting_frame,
-      const blink::mojom::FullscreenOptions& options) override;
-  void ExitFullscreenModeForTab(content::WebContents* web_contents) override;
-  void CanDownload(const GURL& url,
-                   const std::string& request_method,
-                   base::OnceCallback<void(bool)> callback) override;
-  content::JavaScriptDialogManager* GetJavaScriptDialogManager(
-      content::WebContents* source) override;
-  content::KeyboardEventProcessingResult PreHandleKeyboardEvent(
-      content::WebContents* source,
-      const input::NativeWebKeyboardEvent& event) override;
-  bool HandleKeyboardEvent(content::WebContents* source,
-                           const input::NativeWebKeyboardEvent& event) override;
-  void DraggableRegionsChanged(
-      const std::vector<blink::mojom::DraggableRegionPtr>& regions,
-      content::WebContents* contents) override;
-  bool TakeFocus(content::WebContents* source, bool reverse) override;
-  void FindReply(content::WebContents* web_contents,
-                 int request_id,
-                 int number_of_matches,
-                 const gfx::Rect& selection_rect,
-                 int active_match_ordinal,
-                 bool final_update) override;
-  void UpdatePreferredSize(content::WebContents* source,
-                           const gfx::Size& pref_size) override;
-  void ResizeDueToAutoResize(content::WebContents* source,
-                             const gfx::Size& new_size) override;
 
   Browser* browser() const { return browser_; }
 
@@ -164,9 +110,6 @@ class ChromeBrowserDelegate : public cef::BrowserDelegate {
       std::unique_ptr<CefBrowserPlatformDelegate> platform_delegate,
       bool is_devtools_popup,
       CefRefPtr<CefBrowserHostBase> opener);
-
-  CefBrowserContentsDelegate* GetDelegateForWebContents(
-      content::WebContents* web_contents) const;
 
   bool SupportsFramelessPictureInPicture() const;
 

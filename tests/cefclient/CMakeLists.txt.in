@@ -52,6 +52,8 @@
   'set': 'CEFCLIENT_MAC_SRCS',
   'includes': [
     'shared_sources_mac',
+    'shared_sources_osr_mac',
+    'shared_sources_osr_accessibility',
     'cefclient_sources_mac',
   ],
 }}
@@ -71,6 +73,7 @@
   'set': 'CEFCLIENT_WINDOWS_SRCS',
   'includes': [
     'shared_sources_win',
+    'shared_sources_osr_accessibility',
     'cefclient_sources_win',
     'cefclient_sources_resources_win_rc',
   ],
@@ -193,7 +196,7 @@ if(OS_MAC)
   add_executable(${CEF_TARGET} MACOSX_BUNDLE ${CEFCLIENT_RESOURCES_SRCS} ${CEFCLIENT_SRCS})
   SET_EXECUTABLE_TARGET_PROPERTIES(${CEF_TARGET})
   add_dependencies(${CEF_TARGET} libcef_dll_wrapper)
-  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework OpenGL")
+  target_link_libraries(${CEF_TARGET} libcef_dll_wrapper ${CEF_STANDARD_LIBS} "-framework Metal" "-framework QuartzCore")
   set_target_properties(${CEF_TARGET} PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/mac/Info.plist.in
     )
@@ -284,6 +287,20 @@ if(OS_WINDOWS)
     )
 
   if(USE_SANDBOX)
+    # Add installer config resource (embedded in client DLL, read by bootstrap.exe).
+    if(USE_INSTALLER)
+      set(CEFCLIENT_INSTALLER_CONFIG
+        ${CMAKE_CURRENT_SOURCE_DIR}/win/installer_config_managed.rc
+        )
+    else()
+      set(CEFCLIENT_INSTALLER_CONFIG
+        ${CMAKE_CURRENT_SOURCE_DIR}/win/installer_config.rc
+        )
+    endif()
+    list(APPEND CEFCLIENT_SRCS
+      ${CEFCLIENT_INSTALLER_CONFIG}
+      )
+
     # Shared library (DLL) target.
     list(APPEND CEF_SHARED_LINKER_FLAGS
       ${ADDITIONAL_DELAYLOAD_FLAGS}
@@ -320,9 +337,14 @@ if(OS_WINDOWS)
     target_link_libraries(${CEF_TARGET} oleacc.lib)
   endif()
 
-  # Copy CEF binary and resource files to the target output directory.
-  COPY_FILES("${CEF_TARGET}" "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${CEF_TARGET_OUT_DIR}")
-  COPY_FILES("${CEF_TARGET}" "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${CEF_TARGET_OUT_DIR}")
+  if(USE_INSTALLER)
+    # Only chrome_elf.dll is adjacent to the installer-managed client.
+    COPY_SINGLE_FILE(${CEF_TARGET} ${CEF_BINARY_DIR}/chrome_elf.dll ${CEF_TARGET_OUT_DIR}/chrome_elf.dll)
+  else()
+    # Copy CEF binary and resource files to the target output directory.
+    COPY_FILES("${CEF_TARGET}" "${CEF_BINARY_FILES}" "${CEF_BINARY_DIR}" "${CEF_TARGET_OUT_DIR}")
+    COPY_FILES("${CEF_TARGET}" "${CEF_RESOURCE_FILES}" "${CEF_RESOURCE_DIR}" "${CEF_TARGET_OUT_DIR}")
+  endif()
 
   if(USE_SANDBOX)
     # Set LPAC ACLs required for Windows sandbox support.

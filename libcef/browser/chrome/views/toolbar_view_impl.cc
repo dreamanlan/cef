@@ -7,7 +7,7 @@
 // static
 CefRefPtr<CefToolbarViewImpl> CefToolbarViewImpl::Create(
     CefRefPtr<CefViewDelegate> delegate,
-    Browser* browser,
+    BrowserWindowInterface* browser,
     BrowserView* browser_view,
     std::optional<ToolbarView::DisplayMode> display_mode) {
   CEF_REQUIRE_UIT_RETURN(nullptr);
@@ -22,7 +22,7 @@ const char* const CefToolbarViewImpl::kTypeString = "ToolbarView";
 
 CefToolbarViewImpl::CefToolbarViewImpl(
     CefRefPtr<CefViewDelegate> delegate,
-    Browser* browser,
+    BrowserWindowInterface* browser,
     BrowserView* browser_view,
     std::optional<ToolbarView::DisplayMode> display_mode)
     : ParentClass(delegate),

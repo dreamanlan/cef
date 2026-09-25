@@ -13,6 +13,8 @@
 
 #include "include/base/cef_callback.h"
 #include "include/base/cef_callback_helpers.h"
+#include "include/cef_devtools_message_observer.h"
+#include "include/cef_parser.h"
 #include "include/cef_request_context.h"
 #include "include/cef_scheme.h"
 #include "include/cef_values.h"
@@ -37,6 +39,78 @@ const char kTestMimeType[] = "text/plain";
 const char kTestContent[] = "Download test text";
 
 using DelayCallback = base::OnceCallback<void(base::OnceClosure /*callback*/)>;
+
+// These tests exercise downloads, not Chrome's automatic download bubble.
+// Building the bubble from retained downloads makes repeated tests slower.
+// Save and restore the preference because some tests share a request context.
+class DownloadBubblePreference {
+ public:
+  ~DownloadBubblePreference() { EXPECT_FALSE(context_); }
+
+  void Disable(CefRefPtr<CefRequestContext> context) {
+    EXPECT_UI_THREAD();
+    ASSERT_FALSE(context_);
+    context_ = context ? context : CefRequestContext::GetGlobalContext();
+    previous_value_ = context_->GetPreference(kPreferenceName);
+    ASSERT_TRUE(previous_value_);
+    auto value = CefValue::Create();
+    value->SetBool(false);
+    CefString error;
+    EXPECT_TRUE(context_->SetPreference(kPreferenceName, value, error))
+        << error.ToString();
+  }
+
+  void Restore() {
+    EXPECT_UI_THREAD();
+    if (context_ && previous_value_) {
+      CefString error;
+      EXPECT_TRUE(
+          context_->SetPreference(kPreferenceName, previous_value_, error))
+          << error.ToString();
+    }
+    previous_value_ = nullptr;
+    context_ = nullptr;
+  }
+
+ private:
+  static constexpr char kPreferenceName[] =
+      "download_bubble.partial_view_enabled";
+  CefRefPtr<CefRequestContext> context_;
+  CefRefPtr<CefValue> previous_value_;
+};
+
+// Cancel() posts to the UI thread even when called there. Queue cleanup behind
+// it before switching to the FILE thread.
+void PostDownloadCleanupTask(base::OnceClosure task) {
+  EXPECT_UI_THREAD();
+  CefPostTask(TID_UI, base::BindOnce(
+                          [](base::OnceClosure task) {
+                            CefPostTask(TID_FILE_USER_VISIBLE, std::move(task));
+                          },
+                          std::move(task)));
+}
+
+// |done| retains the handler owning |temp_dir| until cleanup finishes.
+void DeleteDownloadTestDirectory(CefScopedTempDir* temp_dir,
+                                 base::OnceClosure done,
+                                 int retries_remaining = 10) {
+  EXPECT_TRUE(CefCurrentlyOn(TID_FILE_USER_VISIBLE));
+  // Cancellation notifies observers before Chromium's independent download
+  // task runner finishes closing and deleting the intermediate file. Retry for
+  // up to one second to allow pending file cleanup on Windows.
+  if (!temp_dir->IsEmpty() && !temp_dir->Delete()) {
+    if (retries_remaining > 0) {
+      CefPostDelayedTask(TID_FILE_USER_VISIBLE,
+                         base::BindOnce(&DeleteDownloadTestDirectory, temp_dir,
+                                        std::move(done), retries_remaining - 1),
+                         100);
+      return;
+    }
+    ADD_FAILURE() << "Failed to delete download directory after retries: "
+                  << temp_dir->GetPath().ToString();
+  }
+  CefPostTask(TID_UI, std::move(done));
+}
 
 class DownloadSchemeHandler : public CefResourceHandler {
  public:
@@ -228,6 +302,9 @@ class DownloadTestHandler : public TestHandler {
 
   void RunTestContinue(CefRefPtr<CefRequestContext> request_context) {
     EXPECT_UI_THREAD();
+    if (!use_alloy_style_browser()) {
+      bubble_preference_.Disable(request_context);
+    }
 
     DelayCallbackVendor delay_callback_vendor;
     if (test_mode_ == NAVIGATED || test_mode_ == PENDING) {
@@ -336,7 +413,7 @@ class DownloadTestHandler : public TestHandler {
 
   void ContinuePendingIfReady() {
     EXPECT_EQ(test_mode_, PENDING);
-    if (got_delay_callback_ && got_on_before_download_ &&
+    if (!destroyed_ && got_delay_callback_ && got_on_before_download_ &&
         got_on_download_updated_) {
       // Destroy the test without waiting for the download to complete.
       DestroyTest();
@@ -373,6 +450,9 @@ class DownloadTestHandler : public TestHandler {
       const CefString& suggested_name,
       CefRefPtr<CefBeforeDownloadCallback> callback) override {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
+    if (destroyed_) {
+      return true;
+    }
     EXPECT_FALSE(got_on_before_download_);
 
     if (is_clicked()) {
@@ -427,9 +507,11 @@ class DownloadTestHandler : public TestHandler {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
 
     if (destroyed_) {
+      callback->Cancel();
       return;
     }
 
+    download_item_callback_ = callback;
     got_on_download_updated_.yes();
 
     EXPECT_TRUE(browser->IsSame(GetBrowser()));
@@ -477,7 +559,6 @@ class DownloadTestHandler : public TestHandler {
     }
 
     if (test_mode_ == PENDING) {
-      download_item_callback_ = callback;
       ContinuePendingIfReady();
     }
   }
@@ -485,31 +566,23 @@ class DownloadTestHandler : public TestHandler {
   void VerifyResultsOnFileThread() {
     EXPECT_TRUE(CefCurrentlyOn(TID_FILE_USER_VISIBLE));
 
-    if (test_mode_ != PENDING) {
+    if (is_downloaded()) {
       // Verify the file contents.
       std::string contents;
       EXPECT_TRUE(client::file_util::ReadFileToString(test_path_, &contents));
       EXPECT_STREQ(kTestContent, contents.c_str());
     }
 
-    EXPECT_TRUE(temp_dir_.Delete());
-    EXPECT_TRUE(temp_dir_.IsEmpty());
-
-    CefPostTask(TID_UI,
-                base::BindOnce(&DownloadTestHandler::DestroyTest, this));
+    DeleteDownloadTestDirectory(
+        &temp_dir_,
+        base::BindOnce(&DownloadTestHandler::FinishDestroyTest, this));
   }
 
   void DestroyTest() override {
-    if (!verified_results_ && !temp_dir_.IsEmpty()) {
-      // Avoid an endless failure loop.
-      verified_results_ = true;
-      // Clean up temp_dir_ on the FILE thread before destroying the test.
-      CefPostTask(TID_FILE_USER_VISIBLE,
-                  base::BindOnce(
-                      &DownloadTestHandler::VerifyResultsOnFileThread, this));
+    EXPECT_UI_THREAD();
+    if (destroyed_) {
       return;
     }
-
     destroyed_ = true;
 
     if (download_item_callback_) {
@@ -518,6 +591,13 @@ class DownloadTestHandler : public TestHandler {
       download_item_callback_ = nullptr;
     }
 
+    PostDownloadCleanupTask(
+        base::BindOnce(&DownloadTestHandler::VerifyResultsOnFileThread, this));
+  }
+
+  void FinishDestroyTest() {
+    EXPECT_UI_THREAD();
+    bubble_preference_.Restore();
     if (request_context_) {
       request_context_->RegisterSchemeHandlerFactory("https", kTestDomain,
                                                      nullptr);
@@ -580,6 +660,7 @@ class DownloadTestHandler : public TestHandler {
   }
 
   const TestMode test_mode_;
+  DownloadBubblePreference bubble_preference_;
   const TestRequestContextMode rc_mode_;
   const std::string rc_cache_path_;
 
@@ -595,7 +676,6 @@ class DownloadTestHandler : public TestHandler {
   CefScopedTempDir temp_dir_;
   std::string test_path_;
   uint32_t download_id_ = 0;
-  bool verified_results_ = false;
   bool destroyed_ = false;
 
   TrackCallback got_download_request_;
@@ -637,6 +717,317 @@ DOWNLOAD_TEST_GROUP(Pending, PENDING)
 
 namespace {
 
+// Regression coverage for default handling (issue #4236). Page notifications
+// observe downloads even when GetDownloadHandler returns nullptr. Unlike
+// Browser.setDownloadBehavior, Page.enable does not replace the download
+// manager delegate or change download decisions.
+class DownloadDefaultTestHandler : public TestHandler,
+                                   public CefDevToolsMessageObserver {
+ public:
+  enum CallbackMode {
+    DEFAULT,
+    DROP,
+    DROP_ON_FILE_THREAD,
+    CONTINUE_ON_FILE_THREAD,
+  };
+
+  DownloadDefaultTestHandler(bool has_handler,
+                             bool clicked,
+                             CallbackMode callback_mode = DEFAULT)
+      : has_handler_(has_handler),
+        clicked_(clicked),
+        callback_mode_(callback_mode) {}
+
+  bool ShouldCancel() const {
+    return callback_mode_ == DROP || callback_mode_ == DROP_ON_FILE_THREAD ||
+           (callback_mode_ == DEFAULT && use_alloy_style_browser());
+  }
+
+  void RunTest() override {
+    EXPECT_TRUE(temp_dir_.CreateUniqueTempDir());
+    test_path_ =
+        client::file_util::JoinPath(temp_dir_.GetPath(), kTestFileName);
+    CreateTestRequestContext(
+        TEST_RC_MODE_CUSTOM_WITH_HANDLER, "",
+        base::BindOnce(&DownloadDefaultTestHandler::RunTestContinue, this));
+    SetTestTimeout();
+  }
+
+  void RunTestContinue(CefRefPtr<CefRequestContext> context) {
+    request_context_ = context;
+    if (!use_alloy_style_browser()) {
+      bubble_preference_.Disable(context);
+    }
+    CefString error;
+    auto path = CefValue::Create();
+    path->SetString(temp_dir_.GetPath());
+    EXPECT_TRUE(
+        context->SetPreference("download.default_directory", path, error))
+        << error.ToString();
+    auto prompt = CefValue::Create();
+    prompt->SetBool(false);
+    EXPECT_TRUE(
+        context->SetPreference("download.prompt_for_download", prompt, error))
+        << error.ToString();
+    context->RegisterSchemeHandlerFactory(
+        "https", kTestDomain,
+        new DownloadSchemeHandlerFactory(base::NullCallback(),
+                                         &got_download_request_));
+    AddResource(kTestStartUrl,
+                "<html><body><a href=\"" + std::string(kTestDownloadUrl) +
+                    "\">CLICK ME</a></body></html>",
+                "text/html");
+    CreateBrowser(kTestStartUrl, context);
+  }
+
+  CefRefPtr<CefDownloadHandler> GetDownloadHandler() override {
+    return has_handler_ ? this : nullptr;
+  }
+
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                            bool isLoading,
+                            bool canGoBack,
+                            bool canGoForward) override {
+    if (!isLoading && !registration_ && !destroy_pending_) {
+      registration_ = browser->GetHost()->AddDevToolsMessageObserver(this);
+      EXPECT_EQ(1, browser->GetHost()->ExecuteDevToolsMethod(1, "Page.enable",
+                                                             nullptr));
+    }
+  }
+
+  void OnDevToolsMethodResult(CefRefPtr<CefBrowser> browser,
+                              int message_id,
+                              bool success,
+                              const void* result,
+                              size_t result_size) override {
+    ASSERT_EQ(1, message_id);
+    ASSERT_TRUE(success);
+    if (clicked_) {
+      CefMouseEvent event;
+      event.x = 20;
+      event.y = 20;
+      SendJavaScriptClickEvent(browser, event);
+    } else {
+      browser->GetHost()->StartDownload(kTestDownloadUrl);
+    }
+  }
+
+  bool CanDownload(CefRefPtr<CefBrowser> browser,
+                   const CefString& url,
+                   const CefString& request_method) override {
+    EXPECT_TRUE(has_handler_);
+    EXPECT_TRUE(clicked_);
+    EXPECT_FALSE(got_can_download_);
+    got_can_download_.yes();
+    return true;
+  }
+
+  bool OnFileDialog(CefRefPtr<CefBrowser> browser,
+                    FileDialogMode mode,
+                    const CefString& title,
+                    const CefString& default_file_path,
+                    const std::vector<CefString>& accept_filters,
+                    const std::vector<CefString>& accept_extensions,
+                    const std::vector<CefString>& accept_descriptions,
+                    CefRefPtr<CefFileDialogCallback> callback) override {
+    // Default Chrome handling may request a path. Select it without showing
+    // native UI. Alloy must cancel before requesting a file dialog.
+    EXPECT_FALSE(ShouldCancel());
+    callback->Continue({test_path_});
+    return true;
+  }
+
+  bool OnBeforeDownload(
+      CefRefPtr<CefBrowser> browser,
+      CefRefPtr<CefDownloadItem> item,
+      const CefString& suggested_name,
+      CefRefPtr<CefBeforeDownloadCallback> callback) override {
+    if (destroy_pending_) {
+      return true;
+    }
+    EXPECT_TRUE(has_handler_);
+    EXPECT_FALSE(got_before_download_);
+    got_before_download_.yes();
+    if (callback_mode_ == DROP_ON_FILE_THREAD ||
+        callback_mode_ == CONTINUE_ON_FILE_THREAD) {
+      // Wait for OnBeforeDownload to return before moving the last callback
+      // reference to the FILE thread.
+      CefPostTask(TID_UI,
+                  base::BindOnce(&DownloadDefaultTestHandler::UseCallbackLater,
+                                 this, callback));
+    }
+    return callback_mode_ != DEFAULT;
+  }
+
+  void UseCallbackLater(CefRefPtr<CefBeforeDownloadCallback> callback) {
+    EXPECT_UI_THREAD();
+    EXPECT_FALSE(got_terminal_);
+    CefPostTask(TID_FILE_USER_VISIBLE,
+                base::BindOnce(
+                    [](CefRefPtr<CefBeforeDownloadCallback> callback,
+                       bool continue_it, const std::string& path) {
+                      EXPECT_TRUE(CefCurrentlyOn(TID_FILE_USER_VISIBLE));
+                      if (continue_it) {
+                        callback->Continue(path, false);
+                      }
+                      // Otherwise, release the unexecuted callback on this
+                      // thread.
+                    },
+                    std::move(callback),
+                    callback_mode_ == CONTINUE_ON_FILE_THREAD, test_path_));
+  }
+
+  void OnDownloadUpdated(CefRefPtr<CefBrowser> browser,
+                         CefRefPtr<CefDownloadItem> item,
+                         CefRefPtr<CefDownloadItemCallback> callback) override {
+    if (destroy_pending_) {
+      callback->Cancel();
+      return;
+    }
+    EXPECT_TRUE(has_handler_);
+    EXPECT_FALSE(item->IsInterrupted());
+    item_callback_ = callback;
+    if (item->IsCanceled() || item->IsComplete()) {
+      EXPECT_EQ(ShouldCancel(), item->IsCanceled());
+      EXPECT_EQ(!ShouldCancel(), item->IsComplete());
+      got_handler_terminal_.yes();
+    }
+  }
+
+  void OnDevToolsEvent(CefRefPtr<CefBrowser> browser,
+                       const CefString& method,
+                       const void* params,
+                       size_t params_size) override {
+    if (method != "Page.downloadWillBegin" &&
+        method != "Page.downloadProgress") {
+      return;
+    }
+    auto value = CefParseJSON(params, params_size, JSON_PARSER_RFC);
+    ASSERT_TRUE(value && value->GetType() == VTYPE_DICTIONARY);
+    auto dict = value->GetDictionary();
+    if (method == "Page.downloadWillBegin") {
+      EXPECT_TRUE(download_guid_.empty());
+      EXPECT_EQ(kTestDownloadUrl, dict->GetString("url").ToString());
+      download_guid_ = dict->GetString("guid");
+      return;
+    }
+    EXPECT_FALSE(download_guid_.empty());
+    EXPECT_EQ(download_guid_, dict->GetString("guid").ToString());
+    const auto state = dict->GetString("state").ToString();
+    if (state != "inProgress") {
+      // The protocol groups interrupted and canceled items together. The
+      // handler-present cases above additionally assert true cancellation.
+      EXPECT_EQ(ShouldCancel() ? "canceled" : "completed", state);
+      EXPECT_FALSE(got_terminal_);
+      got_terminal_.yes();
+      // Let all observers see this update before verifying callback counts.
+      CefPostTask(TID_UI, base::BindOnce(
+                              &DownloadDefaultTestHandler::DestroyTest, this));
+    }
+  }
+
+  void DestroyTest() override {
+    if (destroy_pending_) {
+      return;
+    }
+    destroy_pending_ = true;
+    EXPECT_TRUE(got_download_request_);
+    EXPECT_TRUE(got_terminal_);
+    EXPECT_EQ(has_handler_ && clicked_, !!got_can_download_);
+    EXPECT_EQ(has_handler_, !!got_before_download_);
+    EXPECT_EQ(has_handler_, !!got_handler_terminal_);
+    if (!got_terminal_ && item_callback_) {
+      // Clean up a pending download when the test fails by timing out.
+      item_callback_->Cancel();
+    }
+    item_callback_ = nullptr;
+    registration_ = nullptr;
+    if (request_context_) {
+      request_context_->ClearSchemeHandlerFactories();
+    }
+    PostDownloadCleanupTask(
+        base::BindOnce(&DownloadDefaultTestHandler::VerifyFiles, this));
+  }
+
+  void VerifyFiles() {
+    EXPECT_TRUE(CefCurrentlyOn(TID_FILE_USER_VISIBLE));
+    std::string contents;
+    const bool downloaded =
+        client::file_util::ReadFileToString(test_path_, &contents);
+    if (ShouldCancel()) {
+      EXPECT_FALSE(downloaded) << "Canceled download created " << test_path_;
+    } else {
+      EXPECT_TRUE(downloaded);
+      EXPECT_EQ(kTestContent, contents);
+    }
+    DeleteDownloadTestDirectory(
+        &temp_dir_,
+        base::BindOnce(&DownloadDefaultTestHandler::FinishDestroy, this));
+  }
+
+  void FinishDestroy() {
+    bubble_preference_.Restore();
+    request_context_ = nullptr;
+    TestHandler::DestroyTest();
+  }
+
+ private:
+  const bool has_handler_;
+  const bool clicked_;
+  const CallbackMode callback_mode_;
+  DownloadBubblePreference bubble_preference_;
+  CefScopedTempDir temp_dir_;
+  std::string test_path_;
+  std::string download_guid_;
+  CefRefPtr<CefRequestContext> request_context_;
+  CefRefPtr<CefRegistration> registration_;
+  CefRefPtr<CefDownloadItemCallback> item_callback_;
+  bool destroy_pending_ = false;
+  TrackCallback got_download_request_;
+  TrackCallback got_can_download_;
+  TrackCallback got_before_download_;
+  TrackCallback got_handler_terminal_;
+  TrackCallback got_terminal_;
+
+  IMPLEMENT_REFCOUNTING(DownloadDefaultTestHandler);
+};
+
+}  // namespace
+
+#define DOWNLOAD_DEFAULT_TEST(name, handler, clicked)     \
+  TEST(DownloadTest, Default##name) {                     \
+    CefRefPtr<DownloadDefaultTestHandler> test =          \
+        new DownloadDefaultTestHandler(handler, clicked); \
+    test->ExecuteTest();                                  \
+    ReleaseAndWaitForDestructor(test);                    \
+  }
+
+DOWNLOAD_DEFAULT_TEST(FalseProgrammatic, true, false)
+DOWNLOAD_DEFAULT_TEST(FalseClicked, true, true)
+DOWNLOAD_DEFAULT_TEST(NoHandlerProgrammatic, false, false)
+DOWNLOAD_DEFAULT_TEST(NoHandlerClicked, false, true)
+
+#undef DOWNLOAD_DEFAULT_TEST
+
+#define DOWNLOAD_CALLBACK_TEST(name, mode)                                \
+  TEST(DownloadTest, name) {                                              \
+    CefRefPtr<DownloadDefaultTestHandler> test =                          \
+        new DownloadDefaultTestHandler(true, false,                       \
+                                       DownloadDefaultTestHandler::mode); \
+    test->ExecuteTest();                                                  \
+    ReleaseAndWaitForDestructor(test);                                    \
+  }
+
+DOWNLOAD_CALLBACK_TEST(DropBeforeDownloadCallback, DROP)
+DOWNLOAD_CALLBACK_TEST(DropBeforeDownloadCallbackOnFileThread,
+                       DROP_ON_FILE_THREAD)
+DOWNLOAD_CALLBACK_TEST(ContinueBeforeDownloadCallbackOnFileThread,
+                       CONTINUE_ON_FILE_THREAD)
+
+#undef DOWNLOAD_CALLBACK_TEST
+
+namespace {
+
 // Test handler for Pause/Resume functionality
 class DownloadPauseResumeTestHandler : public TestHandler {
  public:
@@ -666,6 +1057,9 @@ class DownloadPauseResumeTestHandler : public TestHandler {
   void RunTestContinue(CefRefPtr<CefRequestContext> request_context) {
     EXPECT_UI_THREAD();
     EXPECT_TRUE(request_context);
+    if (!use_alloy_style_browser()) {
+      bubble_preference_.Disable(request_context);
+    }
 
     request_context_ = request_context;
 
@@ -705,6 +1099,9 @@ class DownloadPauseResumeTestHandler : public TestHandler {
       const CefString& suggested_name,
       CefRefPtr<CefBeforeDownloadCallback> callback) override {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
+    if (destroy_pending_) {
+      return true;
+    }
     EXPECT_FALSE(got_on_before_download_);
     got_on_before_download_.yes();
 
@@ -718,8 +1115,7 @@ class DownloadPauseResumeTestHandler : public TestHandler {
     // Continue the download
     callback->Continue(test_path_, false);
 
-    // Immediately pause the download (it hasn't started receiving data yet)
-    // This will be saved as the callback from the first OnDownloadUpdated
+    // OnDownloadUpdated will pause the download before receiving data.
     return true;
   }
 
@@ -728,6 +1124,11 @@ class DownloadPauseResumeTestHandler : public TestHandler {
                          CefRefPtr<CefDownloadItemCallback> callback) override {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
 
+    if (destroy_pending_) {
+      callback->Cancel();
+      return;
+    }
+    download_item_callback_ = callback;
     got_on_download_updated_.yes();
 
     EXPECT_TRUE(browser->IsSame(GetBrowser()));
@@ -742,13 +1143,6 @@ class DownloadPauseResumeTestHandler : public TestHandler {
     if (!got_paused_ && download_item->IsInProgress()) {
       got_paused_.yes();
       callback->Pause();
-
-      // Resume after a short delay
-      CefPostDelayedTask(
-          TID_UI,
-          base::BindOnce(&DownloadPauseResumeTestHandler::ResumeDownload, this,
-                         callback),
-          50);
       return;
     }
 
@@ -757,6 +1151,12 @@ class DownloadPauseResumeTestHandler : public TestHandler {
       got_paused_confirmed_.yes();
       // Continue the delayed download now that pause has taken effect.
       ContinueDelayedDownloadIfReady();
+
+      // Pause may be deferred while the download target is determined. Only
+      // resume after observing the paused state; a timer can fire before Pause
+      // takes effect, causing Resume to do nothing and leaving us paused.
+      got_resumed_.yes();
+      callback->Resume();
       return;
     }
 
@@ -786,31 +1186,36 @@ class DownloadPauseResumeTestHandler : public TestHandler {
     EXPECT_TRUE(client::file_util::ReadFileToString(test_path_, &contents));
     EXPECT_STREQ(kTestContent, contents.c_str());
 
-    EXPECT_TRUE(temp_dir_.Delete());
-    EXPECT_TRUE(temp_dir_.IsEmpty());
-
-    CefPostTask(
-        TID_UI,
-        base::BindOnce(&DownloadPauseResumeTestHandler::DestroyTest, this));
+    DeleteDownloadTestDirectory(
+        &temp_dir_,
+        base::BindOnce(&DownloadPauseResumeTestHandler::FinishDestroyTest,
+                       this));
   }
 
   void DestroyTest() override {
-    if (!verified_results_ && !temp_dir_.IsEmpty()) {
-      // Avoid an endless failure loop.
-      verified_results_ = true;
-      // Clean up temp_dir_ on the FILE thread before destroying the test.
-      CefPostTask(
-          TID_FILE_USER_VISIBLE,
-          base::BindOnce(
-              &DownloadPauseResumeTestHandler::VerifyResultsOnFileThread,
-              this));
+    EXPECT_UI_THREAD();
+    if (destroy_pending_) {
       return;
     }
+    destroy_pending_ = true;
+    if (download_item_callback_) {
+      download_item_callback_->Cancel();
+      download_item_callback_ = nullptr;
+    }
+    delay_callback_.Reset();
+    PostDownloadCleanupTask(base::BindOnce(
+        &DownloadPauseResumeTestHandler::VerifyResultsOnFileThread, this));
+  }
 
+  void FinishDestroyTest() {
+    EXPECT_UI_THREAD();
     EXPECT_TRUE(request_context_);
-    request_context_->RegisterSchemeHandlerFactory("https", kTestDomain,
-                                                   nullptr);
-    request_context_ = nullptr;
+    bubble_preference_.Restore();
+    if (request_context_) {
+      request_context_->RegisterSchemeHandlerFactory("https", kTestDomain,
+                                                     nullptr);
+      request_context_ = nullptr;
+    }
 
     EXPECT_TRUE(got_on_before_download_);
     EXPECT_TRUE(got_on_download_updated_);
@@ -832,6 +1237,9 @@ class DownloadPauseResumeTestHandler : public TestHandler {
       return;
     }
 
+    if (destroy_pending_) {
+      return;
+    }
     // Store the callback and wait for the pause to be initiated before
     // continuing the download.
     delay_callback_ = std::move(callback);
@@ -845,16 +1253,14 @@ class DownloadPauseResumeTestHandler : public TestHandler {
     }
   }
 
-  void ResumeDownload(CefRefPtr<CefDownloadItemCallback> callback) {
-    got_resumed_.yes();
-    callback->Resume();
-  }
-
   CefRefPtr<CefRequestContext> request_context_;
+  CefRefPtr<CefDownloadItemCallback> download_item_callback_;
   CefScopedTempDir temp_dir_;
   std::string test_path_;
   uint32_t download_id_ = 0;
-  bool verified_results_ = false;
+  bool destroy_pending_ = false;
+
+  DownloadBubblePreference bubble_preference_;
 
   // Used to delay the download response until pause is initiated.
   base::OnceClosure delay_callback_;
@@ -880,7 +1286,7 @@ TEST(DownloadTest, PauseResume) {
   ReleaseAndWaitForDestructor(handler);
 }
 
-#if CEF_API_ADDED(CEF_EXPERIMENTAL)
+#if CEF_API_ADDED(15100)
 
 namespace {
 
@@ -1005,6 +1411,9 @@ class DownloadGbkFilenameTestHandler : public TestHandler {
 
   void StartServer() {
     EXPECT_UI_THREAD();
+    if (!use_alloy_style_browser()) {
+      bubble_preference_.Disable(CefRequestContext::GetGlobalContext());
+    }
 
     if (mode_ == Mode::DEFAULT_CHARSET_PREF) {
       // Set the default charset preference on the global request context
@@ -1051,6 +1460,9 @@ class DownloadGbkFilenameTestHandler : public TestHandler {
       const CefString& suggested_name,
       CefRefPtr<CefBeforeDownloadCallback> callback) override {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
+    if (destroy_pending_) {
+      return true;
+    }
     EXPECT_FALSE(got_on_before_download_);
     got_on_before_download_.yes();
 
@@ -1066,9 +1478,11 @@ class DownloadGbkFilenameTestHandler : public TestHandler {
                          CefRefPtr<CefDownloadItem> download_item,
                          CefRefPtr<CefDownloadItemCallback> callback) override {
     EXPECT_TRUE(CefCurrentlyOn(TID_UI));
-    if (got_download_complete_) {
+    if (destroy_pending_) {
+      callback->Cancel();
       return;
     }
+    download_item_callback_ = callback;
     if (download_item->IsComplete()) {
       got_download_complete_.yes();
       DestroyTest();
@@ -1084,6 +1498,11 @@ class DownloadGbkFilenameTestHandler : public TestHandler {
       return;
     }
     destroy_pending_ = true;
+
+    if (download_item_callback_) {
+      download_item_callback_->Cancel();
+      download_item_callback_ = nullptr;
+    }
 
     if (server_) {
       // Stop must be called on the same thread as CreateAndStart (the UI
@@ -1107,33 +1526,33 @@ class DownloadGbkFilenameTestHandler : public TestHandler {
     // handler's destruction). |temp_dir_| is created in RunTest() before any
     // cross-thread access and only deleted here, so task-post ordering avoids
     // a data race. DeleteTempDir reposts to the UI thread to finish teardown.
-    CefPostTask(
-        TID_FILE_USER_VISIBLE,
+    PostDownloadCleanupTask(
         base::BindOnce(&DownloadGbkFilenameTestHandler::DeleteTempDir, this));
   }
 
   void DeleteTempDir() {
     EXPECT_TRUE(CefCurrentlyOn(TID_FILE_USER_VISIBLE));
-    if (!temp_dir_.IsEmpty()) {
-      EXPECT_TRUE(temp_dir_.Delete());
-    }
-    CefPostTask(TID_UI,
-                base::BindOnce(
-                    &DownloadGbkFilenameTestHandler::FinishDestroyTest, this));
+    DeleteDownloadTestDirectory(
+        &temp_dir_,
+        base::BindOnce(&DownloadGbkFilenameTestHandler::FinishDestroyTest,
+                       this));
   }
 
   void FinishDestroyTest() {
     EXPECT_UI_THREAD();
     EXPECT_TRUE(got_on_before_download_);
+    bubble_preference_.Restore();
     EXPECT_TRUE(got_download_complete_);
     TestHandler::DestroyTest();
   }
 
  private:
   const Mode mode_;
+  DownloadBubblePreference bubble_preference_;
 
   CefRefPtr<CefTestServer> server_;
   CefRefPtr<GbkFilenameServerHandler> server_handler_;
+  CefRefPtr<CefDownloadItemCallback> download_item_callback_;
   CefRefPtr<CefValue> previous_charset_pref_;
   CefScopedTempDir temp_dir_;
   std::string download_url_;
@@ -1176,4 +1595,4 @@ TEST(DownloadTest, GbkFilenameDefaultCharsetPref) {
   ReleaseAndWaitForDestructor(handler);
 }
 
-#endif  // CEF_API_ADDED(CEF_EXPERIMENTAL)
+#endif  // CEF_API_ADDED(15100)

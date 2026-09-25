@@ -77,6 +77,8 @@ Window bindings are reloaded each time a frame is reloaded giving the client app
 
 # Extensions
 
+**Extension support is deprecated in M154.**
+
 Extensions are like window bindings except they are loaded into the context for every frame and cannot be modified once loaded. The DOM does not exist when an extension is loaded and attempts to access the DOM during extension loading will result in a crash. Extensions are registered using the CefRegisterExtension() function which should be called from the CefRenderProcessHandler::OnWebKitInitialized() method.
 
 ```cpp

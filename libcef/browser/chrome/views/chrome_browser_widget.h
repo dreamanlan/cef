@@ -8,6 +8,7 @@
 
 #include <map>
 
+#include "base/callback_list.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
 #include "cef/libcef/browser/views/color_provider_tracker.h"
@@ -146,6 +147,7 @@ class ChromeBrowserWidget : public BrowserWidget,
   void Activate() override;
 
   // NativeWidgetDelegate methods:
+  void OnNativeWidgetDestroying() override;
   void OnNativeWidgetDestroyed() override;
 
   // ui::NativeThemeObserver methods:
@@ -159,6 +161,8 @@ class ChromeBrowserWidget : public BrowserWidget,
   // CefColorProviderTracker::Observer methods:
   void OnColorProviderCacheResetMissed() override;
 
+  void OnBrowserDidClose(BrowserWindowInterface* browser);
+  void CloseOwnedWidgets();
   void NotifyThemeColorsChanged(bool chrome_theme);
 
   raw_ptr<CefWindowView> window_view_;
@@ -172,6 +176,7 @@ class ChromeBrowserWidget : public BrowserWidget,
   ProfileMap associated_profiles_;
 
   CefColorProviderTracker color_provider_tracker_{this};
+  base::CallbackListSubscription browser_close_subscription_;
 
   base::WeakPtrFactory<ChromeBrowserWidget> weak_ptr_factory_{this};
 };

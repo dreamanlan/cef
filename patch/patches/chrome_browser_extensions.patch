@@ -1,5 +1,5 @@
 diff --git chrome/browser/extensions/api/chrome_extensions_api_client.cc chrome/browser/extensions/api/chrome_extensions_api_client.cc
-index 368d0d7dcbf15b5cc277fae9844d88df00fdf423..0c67d9b5c17e1ddd46f10e13d29bd49b13e51f78 100644
+index 2d73f4cf7e49380c9793751b24ceab848d753e6c..2e95396a5fd514d2953234ca6f57a3f482e23bd5 100644
 --- chrome/browser/extensions/api/chrome_extensions_api_client.cc
 +++ chrome/browser/extensions/api/chrome_extensions_api_client.cc
 @@ -16,6 +16,7 @@
@@ -10,7 +10,7 @@ index 368d0d7dcbf15b5cc277fae9844d88df00fdf423..0c67d9b5c17e1ddd46f10e13d29bd49b
  #include "chrome/browser/extensions/api/automation_internal/chrome_automation_internal_api_delegate.h"
  #include "chrome/browser/extensions/api/declarative_content/chrome_content_rules_registry.h"
  #include "chrome/browser/extensions/api/declarative_content/default_content_predicate_evaluators.h"
-@@ -101,6 +102,10 @@
+@@ -102,6 +103,10 @@
  #include "chromeos/ash/components/settings/cros_settings.h"
  #endif
  
@@ -21,7 +21,7 @@ index 368d0d7dcbf15b5cc277fae9844d88df00fdf423..0c67d9b5c17e1ddd46f10e13d29bd49b
  #if BUILDFLAG(ENABLE_PRINTING)
  #include "chrome/browser/printing/printing_init.h"
  #endif
-@@ -361,7 +366,11 @@ ChromeExtensionsAPIClient::CreateGuestViewManagerDelegate() const {
+@@ -364,7 +369,11 @@ ChromeExtensionsAPIClient::CreateGuestViewManagerDelegate() const {
  std::unique_ptr<MimeHandlerViewGuestDelegate>
  ChromeExtensionsAPIClient::CreateMimeHandlerViewGuestDelegate(
      MimeHandlerViewGuest* guest) const {
@@ -34,10 +34,10 @@ index 368d0d7dcbf15b5cc277fae9844d88df00fdf423..0c67d9b5c17e1ddd46f10e13d29bd49b
  #endif
  
 diff --git chrome/browser/extensions/api/tabs/tabs_api.cc chrome/browser/extensions/api/tabs/tabs_api.cc
-index 6a7780c3cedfa6a97cdba5808b01e811e2fe66bb..c59cf94b59fee3a52ef0581569d251a777f233f2 100644
+index d225b3926e66808ba3f78ed9b654517d9fec4b1d..a6b39be6be391e2ec72bc79bdf80efee7c6cbe1a 100644
 --- chrome/browser/extensions/api/tabs/tabs_api.cc
 +++ chrome/browser/extensions/api/tabs/tabs_api.cc
-@@ -2533,31 +2533,31 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+@@ -2593,31 +2593,31 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
    }
  
    // tabs_internal::GetTabById may return a null window for prerender tabs.
@@ -90,7 +90,50 @@ index 6a7780c3cedfa6a97cdba5808b01e811e2fe66bb..c59cf94b59fee3a52ef0581569d251a7
  
    if (params->update_properties.muted &&
        !SetTabAudioMuted(contents, *params->update_properties.muted,
-@@ -2598,7 +2598,7 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+@@ -2627,6 +2627,10 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+   }
+ 
+   if (params->update_properties.opener_tab_id) {
++    if (!target_tab) {
++      return RespondNow(Error(ExtensionTabUtil::kNoCurrentWindowError));
++    }
++
+     int opener_id = *params->update_properties.opener_tab_id;
+     content::WebContents* opener_contents = nullptr;
+     if (opener_id == tab_id) {
+@@ -2642,8 +2646,13 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+ 
+     ::tabs::TabInterface* opener_tab =
+         ::tabs::TabInterface::GetFromContents(opener_contents);
+-    CHECK(opener_tab);
+-    if (!SetOpenerOfTab(*window->profile(), *target_tab, *opener_tab, error)) {
++    if (!opener_tab) {
++      return RespondNow(
++          Error("Tab opener must be in the same window as the updated tab."));
++    }
++
++    auto* profile = Profile::FromBrowserContext(browser_context());
++    if (!SetOpenerOfTab(*profile, *target_tab, *opener_tab, error)) {
+       return RespondNow(Error(std::move(error)));
+     }
+   }
+@@ -2651,14 +2660,19 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+   // TODO(https://crbug.com/505306735): Support on desktop android.
+ #if !BUILDFLAG(IS_ANDROID)
+   if (params->update_properties.auto_discardable) {
+-    bool state = *params->update_properties.auto_discardable;
+-    resource_coordinator::TabLifecycleUnitExternal::FromWebContents(
+-        original_contents)
+-        ->SetAutoDiscardable(state);
++    auto* lifecycle_unit =
++        resource_coordinator::TabLifecycleUnitExternal::FromWebContents(
++            original_contents);
++    if (!lifecycle_unit) {
++      return RespondNow(Error(ExtensionTabUtil::kNoCurrentWindowError));
++    }
++
++    lifecycle_unit->SetAutoDiscardable(
++        *params->update_properties.auto_discardable);
    }
  #endif
  
@@ -99,7 +142,7 @@ index 6a7780c3cedfa6a97cdba5808b01e811e2fe66bb..c59cf94b59fee3a52ef0581569d251a7
      bool pinned = *params->update_properties.pinned;
  
      if (target_tab->IsPinned() != pinned) {
-@@ -2628,7 +2628,8 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
+@@ -2688,7 +2702,8 @@ ExtensionFunction::ResponseAction TabsUpdateFunction::Run() {
    // Navigate the tab to a new location if the url is different.
    if (params->update_properties.url) {
      std::string updated_url = *params->update_properties.url;
@@ -110,7 +153,7 @@ index 6a7780c3cedfa6a97cdba5808b01e811e2fe66bb..c59cf94b59fee3a52ef0581569d251a7
        return RespondNow(Error(ErrorUtils::FormatErrorMessage(
            tabs_constants::kURLsNotAllowedInIncognitoError, updated_url)));
 diff --git chrome/browser/extensions/extension_tab_util.cc chrome/browser/extensions/extension_tab_util.cc
-index 6238051f9a21504d35957c0208da8e60f5dbb43f..312e80e4165bcd0d69b961cfd3aec14c08b23f1a 100644
+index 285481f45a49b82ba50e9b5b0df33519add40a7d..da312fc7869222d7e88963a02b51d0185cf6c9ad 100644
 --- chrome/browser/extensions/extension_tab_util.cc
 +++ chrome/browser/extensions/extension_tab_util.cc
 @@ -70,6 +70,7 @@
@@ -119,7 +162,7 @@ index 6238051f9a21504d35957c0208da8e60f5dbb43f..312e80e4165bcd0d69b961cfd3aec14c
  #else
 +#include "cef/libcef/features/features.h"
  #include "chrome/browser/resource_coordinator/tab_lifecycle_unit_external.h"
- #include "chrome/browser/ui/browser.h"                             // nogncheck
+ // nogncheck
  #include "chrome/browser/ui/navigator/browser_navigator_params.h"  // nogncheck
 @@ -86,6 +87,10 @@
  
@@ -132,7 +175,7 @@ index 6238051f9a21504d35957c0208da8e60f5dbb43f..312e80e4165bcd0d69b961cfd3aec14c
  using content::NavigationEntry;
  using content::WebContents;
  using extensions::mojom::APIPermissionID;
-@@ -665,6 +670,14 @@ bool ExtensionTabUtil::GetTabById(int tab_id,
+@@ -671,6 +676,14 @@ bool ExtensionTabUtil::GetTabById(int tab_id,
      }
    }
  
@@ -148,7 +191,7 @@ index 6238051f9a21504d35957c0208da8e60f5dbb43f..312e80e4165bcd0d69b961cfd3aec14c
    // tab id exists as a prerendering tab, and the API will returns
    // `api::tabs::TAB_INDEX_NONE` for `out_tab_index` and a valid `WebContents`.
 diff --git chrome/browser/ui/tab_helpers.h chrome/browser/ui/tab_helpers.h
-index ec26ac19c07801af29e8f755fcbc9f71be17dee1..928536d17dbb15cee42aacc2bac5a57576514109 100644
+index d80eafa666b384cf1ec16ebc638456b570ca4e79..bff4d77829ad5875518b8c9434e00fba69833cf8 100644
 --- chrome/browser/ui/tab_helpers.h
 +++ chrome/browser/ui/tab_helpers.h
 @@ -6,6 +6,7 @@
