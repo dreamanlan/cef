@@ -1,5 +1,5 @@
 diff --git a/BUILD.gn b/BUILD.gn
-index ae04ae3bb..90797be7a 100644
+index 92c540976..ccb96ed9e 100644
 --- a/BUILD.gn
 +++ b/BUILD.gn
 @@ -306,6 +306,14 @@ includes_mac = gypi_paths2.includes_mac + gypi_paths2.includes_mac_capi
@@ -17,7 +17,7 @@ index ae04ae3bb..90797be7a 100644
  # CAPI-only includes for pure C implementations.
  includes_common_capi = gypi_paths2.includes_common_capi + gypi_paths2.includes_capi
  includes_mac_capi = gypi_paths2.includes_mac_capi
-@@ -1979,6 +1987,10 @@ if (is_mac) {
+@@ -2086,6 +2094,10 @@ if (is_mac) {
            cflags_c = invoker.helper_cflags_c
          }
  
@@ -28,7 +28,7 @@ index ae04ae3bb..90797be7a 100644
          # Disable clang modules for this target (see issue #3611).
          use_libcxx_modules = false
        }
-@@ -2015,6 +2027,9 @@ if (is_mac) {
+@@ -2122,6 +2134,9 @@ if (is_mac) {
          if (defined(invoker.helper_cflags_c)) {
            helper_cflags_c = invoker.helper_cflags_c
          }
@@ -38,7 +38,7 @@ index ae04ae3bb..90797be7a 100644
  
          helper_name_suffix = _helper_suffix
          helper_bundle_id_suffix = _helper_bundle_id
-@@ -2079,6 +2094,10 @@ if (is_mac) {
+@@ -2186,6 +2201,10 @@ if (is_mac) {
          cflags_c = invoker.cflags_c
        }
  
@@ -49,7 +49,7 @@ index ae04ae3bb..90797be7a 100644
        info_plist_target = ":${app_name}_plist"
  
        # Disable clang modules for this target (see issue #3611).
-@@ -2239,6 +2258,173 @@ if (is_mac) {
+@@ -2349,6 +2368,173 @@ if (is_mac) {
    }
  
  
@@ -223,7 +223,7 @@ index ae04ae3bb..90797be7a 100644
    #
    # cefsimple_capi app targets (Pure C API implementation).
    #
-@@ -2713,6 +2899,223 @@ if (is_mac) {
+@@ -2835,6 +3021,223 @@ if (is_mac) {
    }
  
  

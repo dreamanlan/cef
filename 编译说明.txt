@@ -23,16 +23,16 @@
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --x64-build --branch=7871 --no-distrib --no-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --x64-build --branch=8037 --no-distrib --no-build
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、对cef源码修改后，新建chromium_git\rebuild.bat，内容如下（不更新、不删除out目录直接重新编译。dcheck_is_configurable用于开启dcheck并以记日志代替crash，只需要debug开启，所以分2次构建，每次gn定义不同。use_siso=false用于避免siso在windows SDK路径上的反斜杠转义问题）
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
   set GN_DEFINES=is_official_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2 dcheck_is_configurable=true
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --x64-build --build-target="webagent websimple" --no-release-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=8037 --no-distrib --no-update --force-build --x64-build --build-target="webagent websimple" --no-release-build
   set GN_DEFINES=is_official_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --x64-build --build-target="webagent websimple" --no-debug-build
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=8037 --no-distrib --no-update --force-build --x64-build --build-target="webagent websimple" --no-debug-build
 6、编译都需要很长时间（8小时以上）与大量磁盘空间（x64-build情形，out目录主要生成了x64的debug与release版本[目录结构是所有版本的，实际只有2个目录有生成内容]，约150GB，带git源码与编译工具整个目录220GB空间，剩余磁盘至少300GB空间可能是必要的）
 7、上面的批处理都需要在命令行chromium_git目录为当前目录时执行
 8、第2步文档里的1~5步的下载与更新depot_tools的操作可以不执行，或者更新到chromium_git/depot_tools目录，我们在编译cef时没有使用文档说的这个目录的depot_tools，也没有配置到path环境变量里，会额外再下一份到chromium_git/depot_tools
@@ -41,13 +41,13 @@
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  set GYP_MSVS_VERSION=2022
  set CEF_ARCHIVE_FORMAT=tar.bz2
- python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --no-debug-build --x64-build --build-target="webagent websimple"
+ python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=8037 --no-distrib --no-update --force-build --no-debug-build --x64-build --build-target="webagent websimple"
 也可再建一个chromium_git\rebuild_debug.bat将--no-debug-build换成--no-release-build来专门编译debug版本（debug版本加上dcheck_is_configurable定义以开启dcheck并以记日志代替crash）
  set GN_DEFINES=is_official_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2 dcheck_is_configurable=true
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  set GYP_MSVS_VERSION=2022
  set CEF_ARCHIVE_FORMAT=tar.bz2
- python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --no-update --force-build --no-release-build --x64-build --build-target="webagent websimple"
+ python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=8037 --no-distrib --no-update --force-build --no-release-build --x64-build --build-target="webagent websimple"
 10、如果出现siso构建报错并且是windows SDK路径出现重复反斜杠转义问题，可以改bat里的宏定义使用ninja构建：
  set GN_DEFINES=is_official_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2 dcheck_is_configurable=true
 
@@ -60,7 +60,7 @@ export GN_ARGUMENTS="--filters=//cef/*"
 export CEF_ARCHIVE_FORMAT=tar.bz2
 export PATH=/Users/lanxiang/CEF_BUILD/depot_tools:$PATH
 alias python=python3
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --arm64-build --branch=7871 --no-distrib --no-build
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --arm64-build --branch=8037 --no-distrib --no-build
 
 [rebuild.sh]:
 #!/bin/bash
@@ -72,9 +72,9 @@ export NINJA_CORE_ADDITION=0
 export PATH=/Users/lanxiang/CEF_BUILD/depot_tools:$PATH
 alias python=python3
 export GN_DEFINES="is_official_build=true chrome_pgo_phase=0 symbol_level=2 dcheck_is_configurable=true"
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7871 --no-distrib --no-update --force-build --arm64-build --build-target="webagent websimple" --no-release-build
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=8037 --no-distrib --no-update --force-build --arm64-build --build-target="webagent websimple" --no-release-build
 export GN_DEFINES="is_official_build=true chrome_pgo_phase=0 symbol_level=2"
-python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=7871 --no-distrib --no-update --force-build --arm64-build --build-target="webagent websimple" --no-debug-build
+python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=8037 --no-distrib --no-update --force-build --arm64-build --build-target="webagent websimple" --no-debug-build
 
 
 ## 实测运行时依赖的文件:
@@ -96,12 +96,12 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
   set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
   set GYP_MSVS_VERSION=2022
   set CEF_ARCHIVE_FORMAT=tar.bz2
-  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=7871 --no-distrib --x64-build --build-target="webagent websimple"
+  python ../automate/automate-git.py --download-dir=../chromium_git --depot-tools-dir=../depot_tools --branch=8037 --no-distrib --x64-build --build-target="webagent websimple"
 4、执行update.bat，将会更新depot_tools、chromium与cef源码并编译，时间会很长
 5、后续构建需要将depot_tools目录加到path环境变量里，之后按官方文档7~9操作即可。为避免分步操作，可写成一个批处理完成所有工作，6~8分别是不同类型构建的批处理
 6、创建批处理chromium_git\rebuild.bat，分别构建64位Debug与Release版本(注意：这里cef源码又会拷一份在chromium源码目录里面，所以我们同步cef的修改时要同步到这里才对)
  @echo off
- path=%path%;D:\GitHub\CEF_Src_Build\chromium_git\depot_tools
+ path=%path%;E:\GitHub\CEF_Src_Build\chromium_git\depot_tools
  set GN_DEFINES=is_component_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2 dcheck_is_configurable=true
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  cd chromium\src\cef
@@ -115,7 +115,7 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
  autoninja -C out\Release_GN_x64 cef
 7、创建chromium_git\rebuild_debug.bat
  @echo off
- path=%path%;D:\GitHub\CEF_Src_Build\chromium_git\depot_tools
+ path=%path%;E:\GitHub\CEF_Src_Build\chromium_git\depot_tools
  set GN_DEFINES=is_component_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2 dcheck_is_configurable=true
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  cd chromium\src\cef
@@ -124,13 +124,56 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
  autoninja -C out\Debug_GN_x64 cef
 8、创建chromium_git\rebuild_release.bat
  @echo off
- path=%path%;D:\GitHub\CEF_Src_Build\chromium_git\depot_tools
+ path=%path%;E:\GitHub\CEF_Src_Build\chromium_git\depot_tools
  set GN_DEFINES=is_component_build=true chrome_pgo_phase=0 use_siso=false symbol_level=2
  set GN_ARGUMENTS=--ide=vs2022 --sln=cef --filters=//cef/*
  cd chromium\src\cef
  call cef_create_projects.bat
  cd ..
  autoninja -C out\Release_GN_x64 cef
+
+------------
+
+命令行参数：
+cefclient --no-sandbox --no-proxy-server --disable-features=ServiceWorker --url=http://localhost:8080/agent.html --projectidentity=aiclaw
+
+支持CDP调试再加下面命令行参数：（端口可调，chromium默认CDP端口是9222）
+--remote-debugging-port=9228 --remote-allow-origins=*
+
+根据本地 CEF 8037 源码（cef/tests/shared/common/client_switches.{h,cc} + tests/cefclient/browser/views_window.cc）整理。这些是 cefclient 自己的开关（与 CEF/Chromium 内部开关区分开），且只在 Views 模式下（默认或显式 --use-views）才生效；native 窗口模式（--use-native）下不显示这些 Views 菜单/工具栏。
+
+菜单相关
+参数	作用
+--hide-top-menu	不显示顶部菜单栏（File / Tests 菜单）。Mac 本来就没顶部菜单，此开关只对 Windows/Linux 生效。views_window.cc:1274
+--hide-controls	隐藏整个控件区（含菜单 + 工具栏 + overlay 控件），只留纯 browser view。with_controls_=false。root_window.cc:19
+--hide-overlays	配合 --hide-frame 使用时，不显示 overlay 控件（自定义窗口控件层）。views_window.cc:1232
+工具栏相关
+参数	作用
+--show-chrome-toolbar[=location|none]	控制 Chrome 风格工具栏类型。不带值 = NORMAL（完整工具栏含导航按钮+地址栏）；=location 仅地址栏；=none 无工具栏。在 alloy 风格或 hide_toolbar 条件下强制为 NONE。views_window.cc:1264 CalculateChromeToolbarType 117:131
+--hide-frame	隐藏窗口边框（frameless）。与 --hide-top-menu 同时使用（且有 controls 时）在 Windows 上启用自定义 titlebar。views_window.cc:1240,1248
+--show-window-buttons	frameless 时仍显示窗口按钮（最小化/关闭等）。views_window.cc:1234,1253
+--use-bottom-controls	把控件区（菜单/工具栏）放到底部。views_window.cc:1269
+--use-alloy-style	整体切到 Alloy 风格 → 工具栏强制 NONE（非 Chrome 风格）。views_window.cc:122
+--use-chrome-style-window	显式覆盖 alloy，使用 Chrome 风格窗口（与 --use-alloy-style 互斥）。views_window.cc:1222
+--hide-chrome-bubbles	隐藏 Chrome 风格的气泡（info bubble）。
+--show-overlay-browser	使用 overlay 浏览器布局（影响工具栏布局计算）。views_window.cc:158
+几个组合效果（来自 views_window.cc:1226:1285）
+with_controls_ = is_normal_type && WithControls()    # 默认 true，--hide-controls 关掉
+hide_frame     = --hide-frame && is_normal_type
+show_overlays  = hide_frame && !with_controls_ && !--hide-overlays
+hide_toolbar   = !show_overlays && !with_controls_   # 无控件区时工具栏一并隐藏
+典型组合：
+默认：菜单栏 + Chrome 工具栏（NORMAL）全显示
+--hide-controls：菜单、工具栏、overlay 全无
+--hide-frame --hide-top-menu（Windows）：frameless + 自定义 titlebar + Chrome 工具栏
+--hide-frame --hide-controls：frameless + 全无控件（纯网页）
+--show-chrome-toolbar=location：只显示地址栏，无导航按钮
+--use-alloy-style：无 Chrome 工具栏（Alloy 风格由应用自己画 UI）
+注意
+这些开关只影响 cefclient 的 Views 窗口；OSR 模式（--off-screen-rendering-enabled）或 native 模式（--use-native）不适用。
+CEF/Chromium 自带的 --hide-toolbar、--no-proxy-server 等是 Chromium 开关，不在这个文件里；要查那些得看 cef/libcef/common/cef_switches.cc 和 chrome/common/chrome_switches.cc。
+完整列表见本地 cef/tests/shared/common/client_switches.cc，共 55 个开关（不是全部都和菜单/工具栏相关）。
+
 
 <<<<<<======
 注意：在mac上，如果使用打开了chrome风格的窗口（非cefclient root窗口），关闭这个窗口或退出cefclient时会crash，修复方法如下：
@@ -177,57 +220,46 @@ index aaaaaaa..bbbbbbb 100644
 
 7871分支引入一个新问题：
 WebUIToolbarWebView的创建与初始化条件不一致导致cefclient启动时崩溃，为此修改创建时的条件判断与初始化时加判空（cefclient不使用这个工具栏，但chrome默认使用），涉及2个文件patch，其中一个是独立patch，一个是己有patch，独立patch需要修改patch.cfg加到patch列表。
-/Users/lanxiang/Documents/GitHub/cef/patch/patches/fix_webui_toolbar_only_for_normal_browser.patch
-/Users/lanxiang/Documents/GitHub/cef/patch/patches/fix_webui_toolbar_null_initial_webui_manager.patch
+d:/GitHub/cef/patch/patches/fix_webui_toolbar_only_for_normal_browser.patch
+d:/GitHub/cef/patch/patches/fix_webui_toolbar_null_initial_webui_manager.patch
 
 patch更新方法：
-1、先应用 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
+1、先应用 E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
 2、手动合入或apply_diff fix_tab_search_bubble_host_dangling_ptr.patch
 3、手动合入或apply_diff fix_webui_toolbar_only_for_normal_browser.patch
-4、重新生成 D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
-5、手动合入D:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\fix_webui_toolbar_null_initial_webui_manager.patch并重新生成新patch
+4、重新生成 E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
+5、手动合入E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\fix_webui_toolbar_null_initial_webui_manager.patch并重新生成新patch
 6、手动合入patch.cfg(新增patch文件)
 7、重新构建
 8、注：patch fix_tab_search_bubble_host_dangling_ptr.patch与fix_webui_toolbar_only_for_normal_browser.patch只用于手动合入，不用更新；但fix_webui_toolbar_null_initial_webui_manager.patch需要更新，主要是patch操作需要幂等性
 
-------------
+================ 8037 迁移状态（2026-09-26 已完成，未构建） ================
+以上 7871 流程在 8037（Chromium 154.0.8037.58，e72305f54）的校验与执行结果：
+- fix_tab_search_bubble_host_dangling_ptr.patch：仍需要，已手动合入 browser_view.cc（析构函数删 tab_search_bubble_host_.reset()，WillDestroyToolbar 开头加回）。
+- fix_webui_toolbar_only_for_normal_browser.patch：仍需要，已手动合入 toolbar_view.cc。注意 8037 上下文漂移：构造参数由 browser_->command_controller() 变为 chrome::BrowserCommandController::From(browser_)，合入时已适配。
+- fix_webui_toolbar_null_initial_webui_manager.patch：不再需要。上游提交 6fd0481bbcf93（M154，2026-06-04，"Webium product: improve the state management of WebUI tool bar"）已在 OnPageInitialized 自带完全相同的 InitialWebUIManager::From 判空。该 patch 文件与 patch.cfg 条目已从 d:/GitHub/cef 与 e: 构建树两处删除，上游步骤 5/6 作废。
 
-命令行参数：
-cefclient --no-sandbox --no-proxy-server --disable-features=ServiceWorker --url=http://localhost:8080/agent.html --projectidentity=aiclaw
+8037 的 patch 更新流程（下次升级可参考）：
+1、把 cef/patch/patches/chrome_runtime_views.patch 以 git apply -p0 --ignore-whitespace 应用到 chromium src（需先做 CRLF 转 LF 归一化，与 cef/tools/git_util.py 行为一致；patcher 构建时对已应用的 patch 会自动跳过，幂等）。
+2、手动合入 fix_tab_search_bubble_host_dangling_ptr.patch（d:/GitHub/cef/patch/patches/，仅手动合入用）。
+3、手动合入 fix_webui_toolbar_only_for_normal_browser.patch（同上，注意适配上下文漂移）。
+4、在 chromium src 根用 git diff --no-prefix --relative --full-index -- <patch 涉及的文件清单> 重新生成 chrome_runtime_views.patch（与 cef/tools/patch_updater.py 的再生成命令一致，输出 LF 行尾），同步回 e: 构建树与 d:/GitHub/cef 两处。
+5、验证：git apply -p0 --ignore-whitespace --reverse --check 必须通过（幂等性）；新旧 patch 对比确认差异仅为本次合入内容与行号平移。
+6、重新构建。
 
-支持CDP调试再加下面命令行参数：（端口可调，chromium默认CDP端口是9222）
---remote-debugging-port=9228 --remote-allow-origins=*
-
-根据本地 CEF 7871 源码（cef/tests/shared/common/client_switches.{h,cc} + tests/cefclient/browser/views_window.cc）整理。这些是 cefclient 自己的开关（与 CEF/Chromium 内部开关区分开），且只在 Views 模式下（默认或显式 --use-views）才生效；native 窗口模式（--use-native）下不显示这些 Views 菜单/工具栏。
-
-菜单相关
-参数	作用
---hide-top-menu	不显示顶部菜单栏（File / Tests 菜单）。Mac 本来就没顶部菜单，此开关只对 Windows/Linux 生效。views_window.cc:1274
---hide-controls	隐藏整个控件区（含菜单 + 工具栏 + overlay 控件），只留纯 browser view。with_controls_=false。root_window.cc:19
---hide-overlays	配合 --hide-frame 使用时，不显示 overlay 控件（自定义窗口控件层）。views_window.cc:1232
-工具栏相关
-参数	作用
---show-chrome-toolbar[=location|none]	控制 Chrome 风格工具栏类型。不带值 = NORMAL（完整工具栏含导航按钮+地址栏）；=location 仅地址栏；=none 无工具栏。在 alloy 风格或 hide_toolbar 条件下强制为 NONE。views_window.cc:1264 CalculateChromeToolbarType 117:131
---hide-frame	隐藏窗口边框（frameless）。与 --hide-top-menu 同时使用（且有 controls 时）在 Windows 上启用自定义 titlebar。views_window.cc:1240,1248
---show-window-buttons	frameless 时仍显示窗口按钮（最小化/关闭等）。views_window.cc:1234,1253
---use-bottom-controls	把控件区（菜单/工具栏）放到底部。views_window.cc:1269
---use-alloy-style	整体切到 Alloy 风格 → 工具栏强制 NONE（非 Chrome 风格）。views_window.cc:122
---use-chrome-style-window	显式覆盖 alloy，使用 Chrome 风格窗口（与 --use-alloy-style 互斥）。views_window.cc:1222
---hide-chrome-bubbles	隐藏 Chrome 风格的气泡（info bubble）。
---show-overlay-browser	使用 overlay 浏览器布局（影响工具栏布局计算）。views_window.cc:158
-几个组合效果（来自 views_window.cc:1226:1285）
-with_controls_ = is_normal_type && WithControls()    # 默认 true，--hide-controls 关掉
-hide_frame     = --hide-frame && is_normal_type
-show_overlays  = hide_frame && !with_controls_ && !--hide-overlays
-hide_toolbar   = !show_overlays && !with_controls_   # 无控件区时工具栏一并隐藏
-典型组合：
-默认：菜单栏 + Chrome 工具栏（NORMAL）全显示
---hide-controls：菜单、工具栏、overlay 全无
---hide-frame --hide-top-menu（Windows）：frameless + 自定义 titlebar + Chrome 工具栏
---hide-frame --hide-controls：frameless + 全无控件（纯网页）
---show-chrome-toolbar=location：只显示地址栏，无导航按钮
---use-alloy-style：无 Chrome 工具栏（Alloy 风格由应用自己画 UI）
-注意
-这些开关只影响 cefclient 的 Views 窗口；OSR 模式（--off-screen-rendering-enabled）或 native 模式（--use-native）不适用。
-CEF/Chromium 自带的 --hide-toolbar、--no-proxy-server 等是 Chromium 开关，不在这个文件里；要查那些得看 cef/libcef/common/cef_switches.cc 和 chrome/common/chrome_switches.cc。
-完整列表见本地 cef/tests/shared/common/client_switches.cc，共 55 个开关（不是全部都和菜单/工具栏相关）。
+================ 8037 SDK_VERSION 坑（2026-09-26 已修，未构建验证） ================
+现象：gn gen（cef_create_projects / gclient_hook.py）报
+  Exception: Path "C:\Program Files (x86)\Windows Kits\10\include\10.0.28000.0\um" from
+  environment variable "include" does not exist.
+根因：8037 上游工具链按 depot_tools 打包的 VS2026 + Win11 SDK 10.0.28000.0 配置，两处硬编码：
+  build/vs_toolchain.py:63                SDK_VERSION = '10.0.28000.0'
+  build/toolchain/win/setup_toolchain.py  SDK_VERSION = '10.0.28000.0'
+setup_toolchain.py 会把该版本显式传给 vcvarsall.bat；本机 VS 2022 Community 只装了
+10.0.26100.0（Windows Kits\10\Include 下有 10240/19041/22621/26100），故 vcvarsall 产出的
+include 指向不存在的目录。7871 时代 SDK_VERSION 恰好是本机装过的版本，升级后才暴露。
+修复（已完成）：把两处 SDK_VERSION 都改为 '10.0.26100.0' 并加英文注释，与这两个文件既有的
+本地修改同类。已手动跑 setup_toolchain.py（DEPOT_TOOLS_WIN_TOOLCHAIN=0）验证 include/lib
+全部指向 26100，退出码 0。
+注意：这两处是构建树工作区改动，gclient sync 更新源码后会被还原，需重新修改；下次 Chromium
+大版本升级后 SDK_VERSION 数值会再变，同样按本机已装 SDK 改。备选正道是用 VS Installer 装上
+上游指定的 SDK 版本（当前 10.0.28000.0，Win11 26H2），装上后可还原这两处改动。

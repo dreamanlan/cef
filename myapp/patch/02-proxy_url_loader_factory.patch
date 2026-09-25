@@ -1,8 +1,8 @@
 diff --git a/libcef/browser/net_service/proxy_url_loader_factory.cc b/libcef/browser/net_service/proxy_url_loader_factory.cc
-index b339c6e30..011e332d9 100644
+index b8207e0bc..763d8a810 100644
 --- a/libcef/browser/net_service/proxy_url_loader_factory.cc
 +++ b/libcef/browser/net_service/proxy_url_loader_factory.cc
-@@ -962,10 +962,14 @@ void InterceptedRequest::ContinueResponseOrRedirect(
+@@ -973,10 +973,14 @@ void InterceptedRequest::ContinueResponseOrRedirect(
  
    override_headers_ = override_headers;
    if (override_headers_) {
