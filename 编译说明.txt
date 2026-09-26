@@ -233,10 +233,15 @@ patch更新方法：
 7、重新构建
 8、注：patch fix_tab_search_bubble_host_dangling_ptr.patch与fix_webui_toolbar_only_for_normal_browser.patch只用于手动合入，不用更新；但fix_webui_toolbar_null_initial_webui_manager.patch需要更新，主要是patch操作需要幂等性
 
+Mac相应路径：
+/Users/lanxiang/Documents/GitHub/cef
+/Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef
+
 ================ 8037 迁移状态（2026-09-26 已完成，未构建） ================
 以上 7871 流程在 8037（Chromium 154.0.8037.58，e72305f54）的校验与执行结果：
 - fix_tab_search_bubble_host_dangling_ptr.patch：仍需要，已手动合入 browser_view.cc（析构函数删 tab_search_bubble_host_.reset()，WillDestroyToolbar 开头加回）。
 - fix_webui_toolbar_only_for_normal_browser.patch：仍需要，已手动合入 toolbar_view.cc。注意 8037 上下文漂移：构造参数由 browser_->command_controller() 变为 chrome::BrowserCommandController::From(browser_)，合入时已适配。
+- 2026-09-26 补充：Mac arm64 首次构建又发现一处漂移——ToolbarView 的 browser_ 成员类型已是 BrowserWindowInterface*，browser_->type() 不存在，改为 browser_->GetType() == BrowserWindowInterface::TYPE_NORMAL（与上游 browser_window_features.cc 守卫写法一致）。已按流程重新生成 chrome_runtime_views.patch（git diff --no-prefix --relative --full-index，reverse-check 幂等验证通过）并同步构建树与备份仓库（Mac 路径：/Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef 与 /Users/lanxiang/Documents/GitHub/cef）两处。
 - fix_webui_toolbar_null_initial_webui_manager.patch：不再需要。上游提交 6fd0481bbcf93（M154，2026-06-04，"Webium product: improve the state management of WebUI tool bar"）已在 OnPageInitialized 自带完全相同的 InitialWebUIManager::From 判空。该 patch 文件与 patch.cfg 条目已从 d:/GitHub/cef 与 e: 构建树两处删除，上游步骤 5/6 作废。
 
 8037 的 patch 更新流程（下次升级可参考）：

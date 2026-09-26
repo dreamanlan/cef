@@ -1081,7 +1081,7 @@ index 57d2e49e599ffb409d566a27a29ef9431557fea0..c8aaf3fd1d78d803de138e8c7936e5d0
      CHECK(location_bar);
      if (location_bar->ShouldCloseOmniboxPopup(event)) {
 diff --git chrome/browser/ui/views/toolbar/toolbar_view.cc chrome/browser/ui/views/toolbar/toolbar_view.cc
-index c824f203b2cb5851f61e8a2f6045fa946b3d542f..eb0d14dd24483a69d097c70f03c5f88daa7fff46 100644
+index c824f203b2cb5851f61e8a2f6045fa946b3d542f..74bd7b45464ffe3b287c1dafb28abda406b76f25 100644
 --- chrome/browser/ui/views/toolbar/toolbar_view.cc
 +++ chrome/browser/ui/views/toolbar/toolbar_view.cc
 @@ -43,6 +43,7 @@
@@ -1167,7 +1167,7 @@ index c824f203b2cb5851f61e8a2f6045fa946b3d542f..eb0d14dd24483a69d097c70f03c5f88d
      media_button = std::make_unique<MediaToolbarButtonView>(
          browser_view_, std::make_unique<MediaToolbarButtonContextualMenu>(
                             browser_->GetProfile()));
-@@ -430,12 +452,25 @@ void ToolbarView::Init() {
+@@ -430,12 +452,26 @@ void ToolbarView::Init() {
          base::BindRepeating(callback, browser_, IDC_FORWARD), browser_));
    }
  
@@ -1183,7 +1183,8 @@ index c824f203b2cb5851f61e8a2f6045fa946b3d542f..eb0d14dd24483a69d097c70f03c5f88d
 +  // BrowserWindowFeatures registration guard so the new WebUI toolbar is
 +  // only instantiated when the surrounding infrastructure is guaranteed to
 +  // exist.
-+  const bool is_normal_browser = browser_->type() == Browser::TYPE_NORMAL;
++  const bool is_normal_browser =
++      browser_->GetType() == BrowserWindowInterface::TYPE_NORMAL;
 +  if (is_normal_browser &&
 +      base::FeatureList::IsEnabled(
            features::kWebUIToolbarProcessOverheadExperiment)) {
@@ -1195,7 +1196,7 @@ index c824f203b2cb5851f61e8a2f6045fa946b3d542f..eb0d14dd24483a69d097c70f03c5f88d
      toolbar_webview_ = AddChildView(std::make_unique<WebUIToolbarWebView>(
          browser_, chrome::BrowserCommandController::From(browser_),
          std::move(webui_location_bar)));
-@@ -540,7 +575,8 @@ void ToolbarView::Init() {
+@@ -540,7 +576,8 @@ void ToolbarView::Init() {
    // Only show the Battery Saver button when it is not controlled by the OS. On
    // ChromeOS the battery icon in the shelf shows the same information.
    if (!performance_manager::user_tuning::IsBatterySaverModeManagedByOS() &&
@@ -1205,7 +1206,7 @@ index c824f203b2cb5851f61e8a2f6045fa946b3d542f..eb0d14dd24483a69d097c70f03c5f88d
      battery_saver_button_ =
          AddChildView(std::make_unique<BatterySaverButton>(browser_));
    }
-@@ -592,7 +628,7 @@ void ToolbarView::Init() {
+@@ -592,7 +629,7 @@ void ToolbarView::Init() {
      avatar_ = AddChildView(std::make_unique<AvatarToolbarButton>(browser_));
      bool show_avatar_toolbar_button =
          AvatarToolbarButtonInterface::CanShowForProfile(browser_->GetProfile());
