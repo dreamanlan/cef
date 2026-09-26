@@ -242,6 +242,18 @@ Mac相应路径：
 - fix_tab_search_bubble_host_dangling_ptr.patch：仍需要，已手动合入 browser_view.cc（析构函数删 tab_search_bubble_host_.reset()，WillDestroyToolbar 开头加回）。
 - fix_webui_toolbar_only_for_normal_browser.patch：仍需要，已手动合入 toolbar_view.cc。注意 8037 上下文漂移：构造参数由 browser_->command_controller() 变为 chrome::BrowserCommandController::From(browser_)，合入时已适配。
 - 2026-09-26 补充：Mac arm64 首次构建又发现一处漂移——ToolbarView 的 browser_ 成员类型已是 BrowserWindowInterface*，browser_->type() 不存在，改为 browser_->GetType() == BrowserWindowInterface::TYPE_NORMAL（与上游 browser_window_features.cc 守卫写法一致）。已按流程重新生成 chrome_runtime_views.patch（git diff --no-prefix --relative --full-index，reverse-check 幂等验证通过）并同步构建树与备份仓库（Mac 路径：/Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef 与 /Users/lanxiang/Documents/GitHub/cef）两处。
+
+================ 8037 新标签页 CHECK 崩溃修复（2026-09-26，改 chrome_browser_browser.patch） ================
+现象：chrome 风格窗口点击"+"新开标签页时 debug 版窗口卡死（实为 SIGILL），崩溃报告在 ~/Library/Logs/DiagnosticReports/webagent-*.ips。
+根因（四因叠加）：
+1. CEF 的 ChromeBrowserDelegate::OnWebContentsCreated 在 WebContents 创建时（插表前）就 SetDelegate（chrome_browser_delegate.cc，为接收初始导航的 LoadingStateChanged）。
+2. 上游 NavigateImpl 中 LoadURLWithParams（browser_navigator.cc:929）先于 AddTab（:994）执行，同步触发 loading 通知。
+3. 原 CEF 补丁在 BrowserUiController::ScheduleUIUpdate 的防护只判 GetActiveWebContents() 非空——第二张表起失效。
+4. 上游 b505afe3b7dbc（M154，2026-08-04）移除 OnTabChangedAt 的索引参数后，ToEvent→GetTabStates→TabModel::IsSelected() 无 kNoTab 防护，IsTabSelected(-1) 的 CHECK(ContainsIndex) 崩溃。
+修复：双层防护（①+②）：
+①（源头拦截，并入 chrome_browser_browser.patch）：把 browser_ui_controller.cc 该处防护改为 tab_strip_model_->GetIndexOfTab(tab) != TabStripModel::kNoTab（tab 真正在 model 中才通知）。UpdateWindowForLoadingStateChanged 只对 active tab 生效，无需防护。
+②（底层兜底，独立 patch）：新增 cef/patch/patches/fix_tab_model_is_selected_no_tab_guard.patch（tab_model.cc IsSelected 加 kNoTab 判空返回 false，与 IsActivated 的防护模式一致），并在 patch.cfg 注册（位于 chrome_browser_browser 条目之后）。②防御未来上游在 ScheduleUIUpdate 新增其他同步通知分支绕过①的情况。
+流程：改工作区 → git diff --no-prefix --relative --full-index -- <18 个文件清单> 重新生成 chrome_browser_browser.patch → reverse-check 幂等验证通过 → 同步构建树与备份仓库两处。修复属 CEF patch 层，官方 CEF 8037 分支同样存在此问题（上游 b505afe3b7dbc + CEF 提前 SetDelegate 叠加），值得反馈给 CEF 社区。
 - fix_webui_toolbar_null_initial_webui_manager.patch：不再需要。上游提交 6fd0481bbcf93（M154，2026-06-04，"Webium product: improve the state management of WebUI tool bar"）已在 OnPageInitialized 自带完全相同的 InitialWebUIManager::From 判空。该 patch 文件与 patch.cfg 条目已从 d:/GitHub/cef 与 e: 构建树两处删除，上游步骤 5/6 作废。
 
 8037 的 patch 更新流程（下次升级可参考）：

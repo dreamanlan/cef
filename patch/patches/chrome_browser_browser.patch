@@ -395,7 +395,7 @@ index bccf4c6a0c037ad620eaf30340c0b6688fa81afd..23c97d79c4be50b7372f7c5e367c4799
    }
  
 diff --git chrome/browser/ui/browser_ui_controller/browser_ui_controller.cc chrome/browser/ui/browser_ui_controller/browser_ui_controller.cc
-index 60a3a7ebaa07d600ec4143736b5ceaaca01f74a9..8bd9a7eede20d81dab9bcf3fcef40c2e09a1902e 100644
+index 60a3a7ebaa07d600ec4143736b5ceaaca01f74a9..a7e0ed8140bba558eae1c52e309826e23d79fd68 100644
 --- chrome/browser/ui/browser_ui_controller/browser_ui_controller.cc
 +++ chrome/browser/ui/browser_ui_controller/browser_ui_controller.cc
 @@ -11,8 +11,10 @@
@@ -409,20 +409,25 @@ index 60a3a7ebaa07d600ec4143736b5ceaaca01f74a9..8bd9a7eede20d81dab9bcf3fcef40c2e
  #include "chrome/browser/ui/browser_command_controller.h"
  #include "chrome/browser/ui/browser_window.h"
  #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
-@@ -141,7 +143,11 @@ void BrowserUiController::ScheduleUIUpdate(content::WebContents* source,
+@@ -141,7 +143,16 @@ void BrowserUiController::ScheduleUIUpdate(content::WebContents* source,
      // Update the loading state synchronously. This is so the throbber will
      // immediately start/stop, which gives a more snappy feel. We want to do
      // this for any tab so they start & stop quickly.
 -    NotifyTabUIChanged(tab, TabChangeType::kLoadingOnly);
 +    // Guard against notifications during tab insertion when the tab strip model
-+    // state is not yet fully consistent.
-+    if (tab_strip_model_->GetActiveWebContents()) {
++    // state is not yet fully consistent. CEF attaches the WebContentsDelegate
++    // before the tab is inserted into the model (see
++    // ChromeBrowserDelegate::OnWebContentsCreated), so LoadingStateChanged can
++    // fire synchronously for a tab that the TabStripModel does not contain yet.
++    // Observers of NotifyTabChanged (e.g. the TabStrip API event bridge) would
++    // otherwise CHECK-fail in TabModel::IsSelected() with a kNoTab index.
++    if (tab_strip_model_->GetIndexOfTab(tab) != TabStripModel::kNoTab) {
 +      NotifyTabUIChanged(tab, TabChangeType::kLoadingOnly);
 +    }
      // The status bubble needs to be updated during INVALIDATE_TYPE_LOAD too,
      // but we do that asynchronously by not stripping INVALIDATE_TYPE_LOAD from
      // changed_flags.
-@@ -257,9 +263,11 @@ void BrowserUiController::NotifyTabUIChanged(tabs::TabInterface* tab,
+@@ -257,9 +268,11 @@ void BrowserUiController::NotifyTabUIChanged(tabs::TabInterface* tab,
  }
  
  std::vector<StatusBubble*> BrowserUiController::GetStatusBubbles() {
@@ -435,7 +440,7 @@ index 60a3a7ebaa07d600ec4143736b5ceaaca01f74a9..8bd9a7eede20d81dab9bcf3fcef40c2e
    }
  
    // We hide the status bar for web apps windows as this matches native
-@@ -269,6 +277,16 @@ std::vector<StatusBubble*> BrowserUiController::GetStatusBubbles() {
+@@ -269,6 +282,16 @@ std::vector<StatusBubble*> BrowserUiController::GetStatusBubbles() {
        web_app::AppBrowserController::From(&*browser_);
    if (app_browser_controller &&
        !app_browser_controller->HasMinimalUiButtons()) {

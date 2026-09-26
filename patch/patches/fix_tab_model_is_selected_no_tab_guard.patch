@@ -1,0 +1,20 @@
+diff --git chrome/browser/ui/tabs/tab_model.cc chrome/browser/ui/tabs/tab_model.cc
+index 414b4418a6d14ae1c607e809dac5b4ec015f8ffc..b98190d352f40d4dfbd31f55bd0775666f9fc6a1 100644
+--- chrome/browser/ui/tabs/tab_model.cc
++++ chrome/browser/ui/tabs/tab_model.cc
+@@ -250,6 +250,15 @@ bool TabModel::IsVisible() const {
+ bool TabModel::IsSelected() const {
+   TabStripModel* tab_strip = GetModelForTabInterface();
+   const int index = tab_strip->GetIndexOfTab(this);
++  // The tab may not have been inserted into the tab strip model yet (e.g.
++  // when LoadingStateChanged fires during chrome::Navigate before
++  // TabStripModel::AddTab, which is reachable in CEF because the browser
++  // WebContentsDelegate is attached before insertion; see
++  // ChromeBrowserDelegate::OnWebContentsCreated). A tab that is not in the
++  // model is by definition not selected. Mirrors the guard in IsActivated().
++  if (index == TabStripModel::kNoTab) {
++    return false;
++  }
+   return GetModelForTabInterface()->IsTabSelected(index);
+ }
+ 
