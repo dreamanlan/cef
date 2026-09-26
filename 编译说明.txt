@@ -254,6 +254,19 @@ Mac相应路径：
 ①（源头拦截，并入 chrome_browser_browser.patch）：把 browser_ui_controller.cc 该处防护改为 tab_strip_model_->GetIndexOfTab(tab) != TabStripModel::kNoTab（tab 真正在 model 中才通知）。UpdateWindowForLoadingStateChanged 只对 active tab 生效，无需防护。
 ②（底层兜底，独立 patch）：新增 cef/patch/patches/fix_tab_model_is_selected_no_tab_guard.patch（tab_model.cc IsSelected 加 kNoTab 判空返回 false，与 IsActivated 的防护模式一致），并在 patch.cfg 注册（位于 chrome_browser_browser 条目之后）。②防御未来上游在 ScheduleUIUpdate 新增其他同步通知分支绕过①的情况。
 流程：改工作区 → git diff --no-prefix --relative --full-index -- <18 个文件清单> 重新生成 chrome_browser_browser.patch → reverse-check 幂等验证通过 → 同步构建树与备份仓库两处。修复属 CEF patch 层，官方 CEF 8037 分支同样存在此问题（上游 b505afe3b7dbc + CEF 提前 SetDelegate 叠加），值得反馈给 CEF 社区。
+
+================ OnBeforeResourceResponse mime 同步修复 + PR 移植（2026-09-27，改 myapp patch 02 + 新增 06/07/08） ================
+背景：CEF 官方要求为 OnBeforeResourceResponse 功能 PR 补单元测试。测试设计为：样式表以 text/plain 提供，回调中改写 Content-Type 为 text/css，页面 JS 用 getComputedStyle 验证修改生效。审查发现实现缺口：override headers 替换 response head 的 headers 后，head->mime_type/charset 不更新（Blink 的 CSS MIME 检查读 head->mime_type），导致 Content-Type 修改对渲染不可见。
+修复：新增 net_service::UpdateResponseHeadMimeType(head)（net_service_util.{h,cc}），在所有 override headers 应用点重算 mime/charset：
+1. stream_reader_url_loader.cc ContinueWithResponseHeaders（客户端 handler 路径，AddResource/GetResourceHandler 响应）
+2. proxy_url_loader_factory.cc ContinueResponseOrRedirect（current_response_ 存在时直接替换的路径）
+3. proxy_url_loader_factory.cc OnReceiveResponse/OnReceiveRedirect（header client 异步路径，用 current_headers_from_override_ 标志避免误清网络嗅探出的 mime）
+注意 3 的标志设计：只有 override 真正发生时才重算，防止 headers 无 Content-Type 时清掉网络服务嗅探的 mime_type。
+测试：tests/ceftests/resource_request_handler_unittest.cc 新增 BeforeResourceResponseTest 两个用例（NoModify/ModifyHeaders）。
+patch 变化：02 重新生成（含 mime 修复）；新增 06-net_service_util.patch、07-stream_reader_url_loader.patch、08-resource_request_handler_unittest.patch；已同步备份仓库。
+PR：worktree /Users/lanxiang/Documents/GitHub/cefpr/cef 分支 on-before-resource-response（commit c1ecdf6d7，基于 upstream/master 31eb5ac02，7 文件 +287/-6），推送需本人凭据。
+本地验证（8037 构建）：autoninja -C out/Release_GN_arm64 ceftests 后运行
+out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeResourceResponse*'
 - fix_webui_toolbar_null_initial_webui_manager.patch：不再需要。上游提交 6fd0481bbcf93（M154，2026-06-04，"Webium product: improve the state management of WebUI tool bar"）已在 OnPageInitialized 自带完全相同的 InitialWebUIManager::From 判空。该 patch 文件与 patch.cfg 条目已从 d:/GitHub/cef 与 e: 构建树两处删除，上游步骤 5/6 作废。
 
 8037 的 patch 更新流程（下次升级可参考）：

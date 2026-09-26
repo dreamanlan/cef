@@ -1,0 +1,66 @@
+diff --git a/libcef/common/net_service/net_service_util.cc b/libcef/common/net_service/net_service_util.cc
+index 2be690b99..1c887ad15 100644
+--- a/libcef/common/net_service/net_service_util.cc
++++ b/libcef/common/net_service/net_service_util.cc
+@@ -22,6 +22,7 @@
+ #include "net/url_request/referrer_policy.h"
+ #include "net/url_request/url_request.h"
+ #include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/mojom/url_response_head.mojom.h"
+ 
+ namespace net_service {
+ 
+@@ -165,6 +166,23 @@ scoped_refptr<net::HttpResponseHeaders> MakeResponseHeaders(
+   return headers;
+ }
+ 
++void UpdateResponseHeadMimeType(network::mojom::URLResponseHead* head) {
++  if (!head->headers) {
++    return;
++  }
++
++  if (head->headers->IsRedirect(nullptr)) {
++    // Don't report Content-Type header values for redirects.
++    head->mime_type = head->charset = std::string();
++    return;
++  }
++
++  std::string mime_type, charset;
++  head->headers->GetMimeTypeAndCharset(&mime_type, &charset);
++  head->mime_type = mime_type;
++  head->charset = charset;
++}
++
+ net::RedirectInfo MakeRedirectInfo(const network::ResourceRequest& request,
+                                    const net::HttpResponseHeaders* headers,
+                                    const GURL& new_location,
+diff --git a/libcef/common/net_service/net_service_util.h b/libcef/common/net_service/net_service_util.h
+index 5281d4981..873217a14 100644
+--- a/libcef/common/net_service/net_service_util.h
++++ b/libcef/common/net_service/net_service_util.h
+@@ -22,6 +22,12 @@ namespace network {
+ struct ResourceRequest;
+ }  // namespace network
+ 
++namespace network {
++namespace mojom {
++class URLResponseHead;
++}
++}  // namespace network::mojom
++
+ class GURL;
+ 
+ namespace net_service {
+@@ -55,6 +61,12 @@ scoped_refptr<net::HttpResponseHeaders> MakeResponseHeaders(
+     const std::multimap<std::string, std::string>& extra_headers,
+     bool allow_existing_header_override);
+ 
++// Update the MIME type and charset in |head| based on its response headers.
++// Called when response headers have been replaced (e.g. with override headers
++// from the CefResourceRequestHandler::OnBeforeResourceResponse callback) so
++// that the response head seen by the renderer reflects the final headers.
++void UpdateResponseHeadMimeType(network::mojom::URLResponseHead* head);
++
+ // Make a RedirectInfo structure.
+ net::RedirectInfo MakeRedirectInfo(const network::ResourceRequest& request,
+                                    const net::HttpResponseHeaders* headers,

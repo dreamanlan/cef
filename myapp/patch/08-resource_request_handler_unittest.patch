@@ -1,0 +1,273 @@
+diff --git a/tests/ceftests/resource_request_handler_unittest.cc b/tests/ceftests/resource_request_handler_unittest.cc
+index cbc59920f..67e701822 100644
+--- a/tests/ceftests/resource_request_handler_unittest.cc
++++ b/tests/ceftests/resource_request_handler_unittest.cc
+@@ -3103,6 +3103,13 @@ class RedirectResponseTest : public TestHandler {
+         return RV_CANCEL;
+       }
+ 
++      if (!browser.get()) {
++        // The browser value may be NULL for requests originating from
++        // service workers or CefURLRequest, or racing page navigation/close.
++        // See the OnBeforeResourceLoad documentation.
++        return RV_CANCEL;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+ 
+       if (request->GetURL() == kResourceTestHtml) {
+@@ -3132,6 +3139,13 @@ class RedirectResponseTest : public TestHandler {
+         CefRefPtr<CefFrame> frame,
+         CefRefPtr<CefRequest> request) override {
+       EXPECT_IO_THREAD();
++
++      if (!browser.get()) {
++        // May be NULL for requests without an associated browser. See the
++        // OnBeforeResourceLoad documentation.
++        return nullptr;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+ 
+       if (request->GetURL() == kResourceTestHtml) {
+@@ -3149,6 +3163,13 @@ class RedirectResponseTest : public TestHandler {
+                             CefRefPtr<CefResponse> response,
+                             CefString& new_url) override {
+       EXPECT_IO_THREAD();
++
++      if (!browser.get()) {
++        // May be NULL for requests without an associated browser. See the
++        // OnBeforeResourceLoad documentation.
++        return;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+       EXPECT_EQ(sub_request_id_, request->GetIdentifier());
+ 
+@@ -3161,7 +3182,13 @@ class RedirectResponseTest : public TestHandler {
+                             CefRefPtr<CefRequest> request,
+                             CefRefPtr<CefResponse> response) override {
+       EXPECT_IO_THREAD();
+-      EXPECT_TRUE(browser.get());
++
++      if (!browser.get()) {
++        // May be NULL for requests without an associated browser. See the
++        // OnBeforeResourceLoad documentation.
++        return false;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+ 
+       EXPECT_TRUE(frame.get());
+@@ -3183,7 +3210,13 @@ class RedirectResponseTest : public TestHandler {
+         CefRefPtr<CefRequest> request,
+         CefRefPtr<CefResponse> response) override {
+       EXPECT_IO_THREAD();
+-      EXPECT_TRUE(browser.get());
++
++      if (!browser.get()) {
++        // May be NULL for requests without an associated browser. See the
++        // OnBeforeResourceLoad documentation.
++        return nullptr;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+ 
+       EXPECT_TRUE(frame.get());
+@@ -3211,7 +3244,12 @@ class RedirectResponseTest : public TestHandler {
+         return;
+       }
+ 
+-      EXPECT_TRUE(browser.get());
++      if (!browser.get()) {
++        // May be NULL for requests without an associated browser. See the
++        // OnBeforeResourceLoad documentation.
++        return;
++      }
++
+       EXPECT_EQ(test_->browser_id_, browser->GetIdentifier());
+ 
+       EXPECT_TRUE(frame.get());
+@@ -3474,6 +3512,182 @@ TEST(ResourceRequestHandlerTest, BeforeResourceLoadContinueAsync) {
+ 
+ namespace {
+ 
++const char kBeforeResourceResponseMainUrl[] =
++    "https://test.com/before_resource_response.html";
++const char kBeforeResourceResponseSubUrl[] =
++    "https://test.com/before_resource_response.css";
++const char kBeforeResourceResponseDoneMsg[] = "BeforeResourceResponseDone:";
++
++// Verify the OnBeforeResourceResponse callback:
++// - Receives the response for both the main frame and subresources.
++// - Response headers can be modified, with the change observable from
++//   JavaScript. The subresource is served with a "text/plain" Content-Type
++//   and the page reads the final Content-Type header via same-origin
++//   fetch(), which reflects the headers delivered by the renderer,
++//   verifying that modified headers are used by the renderer.
++class BeforeResourceResponseTest : public RoutingTestHandler {
++ public:
++  enum TestMode {
++    // Do not modify the response; the subresource keeps its original
++    // "text/plain" Content-Type.
++    NO_MODIFY,
++    // Rewrite the response Content-Type header to "text/css".
++    MODIFY_HEADERS,
++  };
++
++  explicit BeforeResourceResponseTest(TestMode mode) : mode_(mode) {}
++
++  BeforeResourceResponseTest(const BeforeResourceResponseTest&) = delete;
++  BeforeResourceResponseTest& operator=(const BeforeResourceResponseTest&) =
++      delete;
++
++  // TestHandler:
++  void RunTest() override {
++    AddResource(kBeforeResourceResponseMainUrl, GetMainHtml(), "text/html");
++    AddResource(kBeforeResourceResponseSubUrl, "p { color: red; }",
++                "text/plain");
++    CreateBrowser(kBeforeResourceResponseMainUrl);
++    SetTestTimeout();
++  }
++
++  CefRefPtr<CefResourceRequestHandler> GetResourceRequestHandler(
++      CefRefPtr<CefBrowser> browser,
++      CefRefPtr<CefFrame> frame,
++      CefRefPtr<CefRequest> request,
++      bool is_navigation,
++      bool is_download,
++      const CefString& request_initiator,
++      bool& disable_default_handling) override {
++    EXPECT_IO_THREAD();
++
++    if (request->GetResourceType() == RT_FAVICON) {
++      // Ignore favicon requests.
++      return nullptr;
++    }
++
++    return this;
++  }
++
++  void OnBeforeResourceResponse(CefRefPtr<CefBrowser> browser,
++                                CefRefPtr<CefFrame> frame,
++                                CefRefPtr<CefRequest> request,
++                                CefRefPtr<CefResponse> response) override {
++    EXPECT_IO_THREAD();
++
++    const std::string& url = request->GetURL();
++    if (url == kBeforeResourceResponseSubUrl) {
++      EXPECT_FALSE(got_sub_callback_);
++      got_sub_callback_.yes();
++
++      EXPECT_TRUE(browser.get());
++      EXPECT_TRUE(frame.get() && frame->IsMain());
++
++      // The response is readable in this callback.
++      EXPECT_EQ(200, response->GetStatus());
++      EXPECT_STREQ("text/plain", response->GetMimeType().ToString().c_str());
++
++      if (mode_ == MODIFY_HEADERS) {
++        // Rewrite the Content-Type header so the stylesheet will be applied.
++        CefResponse::HeaderMap map;
++        response->GetHeaderMap(map);
++        map.erase("Content-Type");
++        map.insert(std::make_pair("Content-Type", "text/css"));
++        response->SetHeaderMap(map);
++      }
++    } else if (url == kBeforeResourceResponseMainUrl) {
++      EXPECT_FALSE(got_main_callback_);
++      got_main_callback_.yes();
++    } else {
++      EXPECT_TRUE(false);  // Not reached.
++    }
++  }
++
++  bool OnQuery(CefRefPtr<CefBrowser> browser,
++               CefRefPtr<CefFrame> frame,
++               int64_t query_id,
++               const CefString& request,
++               bool persistent,
++               CefRefPtr<Callback> callback) override {
++    EXPECT_UI_THREAD();
++
++    const std::string& request_str = request.ToString();
++    static_assert(sizeof(kBeforeResourceResponseDoneMsg) > 1,
++                  "kBeforeResourceResponseDoneMsg must not be empty");
++    constexpr size_t kDoneMsgLen =
++        sizeof(kBeforeResourceResponseDoneMsg) - 1;
++    if (request_str.compare(0, kDoneMsgLen, kBeforeResourceResponseDoneMsg) !=
++        0) {
++      return false;
++    }
++
++    const std::string result = request_str.substr(kDoneMsgLen);
++    if (mode_ == MODIFY_HEADERS) {
++      EXPECT_STREQ("text/css", result.c_str());
++    } else {
++      EXPECT_STREQ("text/plain", result.c_str());
++    }
++
++    got_result_.yes();
++    callback->Success("");
++
++    DestroyTest();
++    return true;
++  }
++
++  void DestroyTest() override {
++    EXPECT_TRUE(got_main_callback_);
++    EXPECT_TRUE(got_sub_callback_);
++    EXPECT_TRUE(got_result_);
++
++    TestHandler::DestroyTest();
++  }
++
++ private:
++  std::string GetMainHtml() const {
++    return "<html><head><script>"
++           "function reportCT(ct) {"
++           "window.testQuery({request:'" +
++           std::string(kBeforeResourceResponseDoneMsg) +
++           "' + ct});"
++           "}"
++           "fetch('" +
++           std::string(kBeforeResourceResponseSubUrl) +
++           "').then(function(r) {"
++           "return r.headers.get('Content-Type') || 'no-content-type';"
++           "}).then(reportCT).catch(function(e) {"
++           "reportCT('error');"
++           "});"
++           "</script></head><body>Test</body></html>";
++  }
++
++  const TestMode mode_;
++
++  TrackCallback got_main_callback_;
++  TrackCallback got_sub_callback_;
++  TrackCallback got_result_;
++
++  IMPLEMENT_REFCOUNTING(BeforeResourceResponseTest);
++};
++
++}  // namespace
++
++TEST(ResourceRequestHandlerTest, BeforeResourceResponseNoModify) {
++  CefRefPtr<BeforeResourceResponseTest> handler =
++      new BeforeResourceResponseTest(BeforeResourceResponseTest::NO_MODIFY);
++  handler->ExecuteTest();
++  ReleaseAndWaitForDestructor(handler);
++}
++
++TEST(ResourceRequestHandlerTest, BeforeResourceResponseModifyHeaders) {
++  CefRefPtr<BeforeResourceResponseTest> handler =
++      new BeforeResourceResponseTest(
++          BeforeResourceResponseTest::MODIFY_HEADERS);
++  handler->ExecuteTest();
++  ReleaseAndWaitForDestructor(handler);
++}
++
++namespace {
++
+ // For response filtering we need to test:
+ // - Passing through content unchanged.
+ // - Not reading all of the input buffer.
