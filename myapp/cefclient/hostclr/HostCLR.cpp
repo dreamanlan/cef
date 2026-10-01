@@ -1298,6 +1298,26 @@ bool browser_is_valid(void* browser)
     }
 }
 
+static CefRefPtr<CefBrowser> acquire_browser_ref(void* browser)
+{
+    if (!browser) return nullptr;
+    auto* raw = reinterpret_cast<CefBrowser*>(browser);
+    const bool browser_process = is_browser_process();
+    std::lock_guard<std::mutex> lock(GetRefContainersMutex());
+    if (browser_process) {
+        if (GetBrowserValidSet().count(raw) == 0) return nullptr;
+        for (const auto& entry : GetBrowserRefMap()) {
+            if (entry.second.first.get() == raw) return entry.second.first;
+        }
+    } else {
+        if (GetRendererValidSet().count(raw) == 0) return nullptr;
+        for (const auto& entry : GetRendererRefMap()) {
+            if (entry.second.first.get() == raw) return entry.second.first;
+        }
+    }
+    return nullptr;
+}
+
 bool get_renderer_browser_frame_by_id(int browser_id, void** out_browser, void** out_frame)
 {
     if (!out_browser || !out_frame) return false;
@@ -1439,15 +1459,16 @@ void* get_browser_by_id(int browser_id)
 
 int browser_get_id(void* browser)
 {
-    if (!browser_is_valid(browser)) return 0;
-    return reinterpret_cast<CefBrowser*>(browser)->GetIdentifier();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    return browser_ref->GetIdentifier();
 }
 
 const char* browser_get_url(void* browser)
 {
-    if (!browser_is_valid(browser)) return nullptr;
-    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
-    auto frame = pBrowser->GetMainFrame();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
+    auto frame = browser_ref->GetMainFrame();
     if (!frame) return nullptr;
     std::string url = frame->GetURL().ToString();
     if (url.empty()) return nullptr;
@@ -1456,36 +1477,40 @@ const char* browser_get_url(void* browser)
 
 bool browser_is_loading(void* browser)
 {
-    if (!browser_is_valid(browser)) return false;
-    return reinterpret_cast<CefBrowser*>(browser)->IsLoading();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return false;
+    return browser_ref->IsLoading();
 }
 
 bool browser_is_popup(void* browser)
 {
-    if (!browser_is_valid(browser)) return false;
-    return reinterpret_cast<CefBrowser*>(browser)->IsPopup();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return false;
+    return browser_ref->IsPopup();
 }
 
 bool browser_has_document(void* browser)
 {
-    if (!browser_is_valid(browser)) return false;
-    return reinterpret_cast<CefBrowser*>(browser)->HasDocument();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return false;
+    return browser_ref->HasDocument();
 }
 
 // --- Browser frame access ---
 
 int browser_get_frame_count(void* browser)
 {
-    if (!browser_is_valid(browser)) return 0;
-    return static_cast<int>(reinterpret_cast<CefBrowser*>(browser)->GetFrameCount());
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    return static_cast<int>(browser_ref->GetFrameCount());
 }
 
 const char* browser_get_frame_identifiers(void* browser)
 {
-    if (!browser_is_valid(browser)) return nullptr;
-    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
     std::vector<CefString> identifiers;
-    pBrowser->GetFrameIdentifiers(identifiers);
+    browser_ref->GetFrameIdentifiers(identifiers);
     std::string result;
     for (auto& id : identifiers) {
         if (!result.empty()) result += "\n";
@@ -1497,10 +1522,10 @@ const char* browser_get_frame_identifiers(void* browser)
 
 const char* browser_get_frame_names(void* browser)
 {
-    if (!browser_is_valid(browser)) return nullptr;
-    auto* pBrowser = reinterpret_cast<CefBrowser*>(browser);
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
     std::vector<CefString> names;
-    pBrowser->GetFrameNames(names);
+    browser_ref->GetFrameNames(names);
     std::string result;
     for (auto& name : names) {
         if (!result.empty()) result += "\n";
@@ -1553,54 +1578,65 @@ static void* browser_cache_get(const CefRefPtr<CefBrowser>& browser)
 
 void* browser_get_main_frame(void* browser)
 {
-    if (!browser_is_valid(browser)) return nullptr;
-    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetMainFrame());
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
+    return frame_cache_get_or_add(browser_ref->GetMainFrame());
 }
 
 void* browser_get_focused_frame(void* browser)
 {
-    if (!browser_is_valid(browser)) return nullptr;
-    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFocusedFrame());
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
+    return frame_cache_get_or_add(browser_ref->GetFocusedFrame());
 }
 
 void* browser_get_frame_by_identifier(void* browser, const char* identifier)
 {
-    if (!browser_is_valid(browser) || !identifier) return nullptr;
-    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFrameByIdentifier(identifier));
+    if (!identifier) return nullptr;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
+    return frame_cache_get_or_add(browser_ref->GetFrameByIdentifier(identifier));
 }
 
 void* browser_get_frame_by_name(void* browser, const char* name)
 {
-    if (!browser_is_valid(browser) || !name) return nullptr;
-    return frame_cache_get_or_add(reinterpret_cast<CefBrowser*>(browser)->GetFrameByName(name));
+    if (!name) return nullptr;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return nullptr;
+    return frame_cache_get_or_add(browser_ref->GetFrameByName(name));
 }
 
 // --- Browser actions ---
 
 void browser_reload(void* browser)
 {
-    if (!browser_is_valid(browser)) return;
-    reinterpret_cast<CefBrowser*>(browser)->Reload();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return;
+    browser_ref->Reload();
 }
 
 void browser_reload_ignore_cache(void* browser)
 {
-    if (!browser_is_valid(browser)) return;
-    reinterpret_cast<CefBrowser*>(browser)->ReloadIgnoreCache();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return;
+    browser_ref->ReloadIgnoreCache();
 }
 
 void browser_stop_load(void* browser)
 {
-    if (!browser_is_valid(browser)) return;
-    reinterpret_cast<CefBrowser*>(browser)->StopLoad();
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return;
+    browser_ref->StopLoad();
 }
 
 // --- Browser host actions (browser process only) ---
 
 void browser_close(void* browser, int force_close)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return;
+    auto host = browser_ref->GetHost();
     if (host) {
         host->CloseBrowser(force_close != 0);
     }
@@ -1608,8 +1644,10 @@ void browser_close(void* browser, int force_close)
 
 void browser_set_focus(void* browser, int focus)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return;
+    auto host = browser_ref->GetHost();
     if (host) {
         host->SetFocus(focus != 0);
     }
@@ -1617,8 +1655,10 @@ void browser_set_focus(void* browser, int focus)
 
 int browser_get_opener_id(void* browser)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (host) {
         return host->GetOpenerIdentifier();
     }
@@ -1629,8 +1669,10 @@ int browser_get_opener_id(void* browser)
 
 int browser_show_devtools(void* browser, int inspect_x, int inspect_y, int has_inspect_point)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (!host) return 0;
     CefWindowInfo window_info;
     CefBrowserSettings settings;
@@ -1641,8 +1683,10 @@ int browser_show_devtools(void* browser, int inspect_x, int inspect_y, int has_i
 
 int browser_close_devtools(void* browser)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (!host) return 0;
     host->CloseDevTools();
     return 1;
@@ -1650,24 +1694,30 @@ int browser_close_devtools(void* browser)
 
 int browser_has_devtools(void* browser)
 {
-    if (!browser_is_valid(browser) || !is_browser_process()) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process()) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (!host) return 0;
     return host->HasDevTools() ? 1 : 0;
 }
 
 int browser_send_devtools_message(void* browser, const void* message, int size)
 {
-    if (!browser_is_valid(browser) || !is_browser_process() || !message || size <= 0) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process() || !message || size <= 0) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (!host) return 0;
     return host->SendDevToolsMessage(message, static_cast<size_t>(size)) ? 1 : 0;
 }
 
 int browser_execute_devtools_method(void* browser, int message_id, const char* method, const char* params_json)
 {
-    if (!browser_is_valid(browser) || !is_browser_process() || !method) return 0;
-    auto host = reinterpret_cast<CefBrowser*>(browser)->GetHost();
+    if (!is_browser_process() || !method) return 0;
+    auto browser_ref = acquire_browser_ref(browser);
+    if (!browser_ref) return 0;
+    auto host = browser_ref->GetHost();
     if (!host) return 0;
     CefRefPtr<CefDictionaryValue> params;
     if (params_json && params_json[0] != '\0') {
