@@ -1,7 +1,7 @@
-diff --git tests/ceftests/resource_request_handler_unittest.cc tests/ceftests/resource_request_handler_unittest.cc
-index cbc59920f6b2dae045d5e22ce6a331cdaebf9af9..6adc43d8590ae8796c58db69158bcb578726ac03 100644
---- tests/ceftests/resource_request_handler_unittest.cc
-+++ tests/ceftests/resource_request_handler_unittest.cc
+diff --git a/tests/ceftests/resource_request_handler_unittest.cc b/tests/ceftests/resource_request_handler_unittest.cc
+index cbc59920f..6adc43d85 100644
+--- a/tests/ceftests/resource_request_handler_unittest.cc
++++ b/tests/ceftests/resource_request_handler_unittest.cc
 @@ -3103,6 +3103,13 @@ class RedirectResponseTest : public TestHandler {
          return RV_CANCEL;
        }
