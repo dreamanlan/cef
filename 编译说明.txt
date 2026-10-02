@@ -76,7 +76,6 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
 export GN_DEFINES="is_official_build=true chrome_pgo_phase=0 symbol_level=2"
 python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/lanxiang/CEF_BUILD/chromium_git --depot-tools-dir=/Users/lanxiang/CEF_BUILD/depot_tools --branch=8037 --no-distrib --no-update --force-build --arm64-build --build-target="webagent websimple" --no-debug-build
 
-
 ## 实测运行时依赖的文件:
 1、locales目录
 2、snapshot_blob.bin与v8_context_snapshot.bin
@@ -86,7 +85,6 @@ python /Users/lanxiang/CEF_BUILD/automate/automate-git.py --download-dir=/Users/
 6、支持WebGL需要d3dcompiler_47.dll、libEGL.dll、libGLESv2.dll、vk_swiftshader.dll、VkICD_mock_icd.dll、VkLayer_khronos_validation.dll、vulkan-1.dll
 7、运行时库dbgcore.dll、dbghelp.dll、msdia140.dll、msvcp140.dll、vccorlib140.dll、vcruntime140.dll、vcruntime140_1.dll
 8、保险一些的依赖文件包括locales目录、*.bin、icudtl.dat、*.pak与*.dll，也可以带上所有exe文件
-
 
 ## 开发版本编译方法：
 1、按照https://bitbucket.org/chromiumembedded/cef/wiki/BranchesAndBuilding的说明选择分支并准备相应编译环境
@@ -174,72 +172,12 @@ hide_toolbar   = !show_overlays && !with_controls_   # 无控件区时工具栏�
 CEF/Chromium 自带的 --hide-toolbar、--no-proxy-server 等是 Chromium 开关，不在这个文件里；要查那些得看 cef/libcef/common/cef_switches.cc 和 chrome/common/chrome_switches.cc。
 完整列表见本地 cef/tests/shared/common/client_switches.cc，共 55 个开关（不是全部都和菜单/工具栏相关）。
 
-
-<<<<<<======
-注意：在mac上，如果使用打开了chrome风格的窗口（非cefclient root窗口），关闭这个窗口或退出cefclient时会crash，修复方法如下：
-
-修改 1：析构函数中移除 tab_search_bubble_host_.reset()
-在 BrowserView::~BrowserView() 中，删掉原来的 tab_search_bubble_host_.reset();（因为它放在这里太晚了，toolbar 子 View 已经被销毁了）。
-
-修改 2：WillDestroyToolbar() 中添加 tab_search_bubble_host_.reset()
-在 BrowserView::WillDestroyToolbar() 方法中，在 autofill_bubble_handler_.reset() 之前添加 tab_search_bubble_host_.reset();，确保在 toolbar 子 View 被销毁前先释放掉持有 anchor_view_（raw_ptr<views::View>）的 WebUIBubbleManager。
-
-本质就是把 tab_search_bubble_host_.reset() 从析构函数挪到了 WillDestroyToolbar() 中，让它在正确的时机（toolbar 子 View 销毁之前）执行，从而避免 DanglingPtr 崩溃。
-
-然后 patch 文件 chrome_runtime_views.patch 需要同步更新，记录这两处对 browser_view.cc 的修改。
-
-diff --git chrome/browser/ui/views/frame/browser_view.cc chrome/browser/ui/views/frame/browser_view.cc
-index aaaaaaa..bbbbbbb 100644
---- chrome/browser/ui/views/frame/browser_view.cc
-+++ chrome/browser/ui/views/frame/browser_view.cc
-@@ -1080,8 +1080,6 @@ BrowserView::~BrowserView() {
-   // other cleanups that destroy views referenced in the layout manager.
-   SetLayoutManager(nullptr);
-
--  tab_search_bubble_host_.reset();
--
-   // Destroy the top controls slide controller first as it depends on the
-   // tabstrip model and the browser frame.
-   top_controls_slide_controller_.reset();
-@@ -1781,6 +1779,13 @@ gfx::Point BrowserView::GetThemeOffsetFromBrowserView() const {
- }
-
- void BrowserView::WillDestroyToolbar() {
-+  // Reset tab search bubble host before destroying toolbar, as its
-+  // WebUIBubbleManager holds a raw_ptr<views::View> anchor_view_ that
-+  // points to a toolbar child view (e.g. tab_search_button). This must
-+  // happen before the toolbar child views are destroyed to avoid a
-+  // dangling raw_ptr when BrowserView is destroyed later (e.g. in CEF).
-+  tab_search_bubble_host_.reset();
-+
-   // Reset autofill bubble handler to make sure it does not out-live toolbar,
-   // since it is responsible for showing autofill related bubbles from toolbar's
-   // child views and it is an observer for avatar toolbar button if any.
-
->>>>>>======
-
-7871分支引入一个新问题：
-WebUIToolbarWebView的创建与初始化条件不一致导致cefclient启动时崩溃，为此修改创建时的条件判断与初始化时加判空（cefclient不使用这个工具栏，但chrome默认使用），涉及2个文件patch，其中一个是独立patch，一个是己有patch，独立patch需要修改patch.cfg加到patch列表。
-d:/GitHub/cef/patch/patches/fix_webui_toolbar_only_for_normal_browser.patch
-d:/GitHub/cef/patch/patches/fix_webui_toolbar_null_initial_webui_manager.patch
-
-patch更新方法：
-1、先应用 E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
-2、手动合入或apply_diff fix_tab_search_bubble_host_dangling_ptr.patch
-3、手动合入或apply_diff fix_webui_toolbar_only_for_normal_browser.patch
-4、重新生成 E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\chrome_runtime_views.patch
-5、手动合入E:\GitHub\CEF_Src_Build\chromium_git\chromium\src\cef\patch\patches\fix_webui_toolbar_null_initial_webui_manager.patch并重新生成新patch
-6、手动合入patch.cfg(新增patch文件)
-7、重新构建
-8、注：patch fix_tab_search_bubble_host_dangling_ptr.patch与fix_webui_toolbar_only_for_normal_browser.patch只用于手动合入，不用更新；但fix_webui_toolbar_null_initial_webui_manager.patch需要更新，主要是patch操作需要幂等性
-
 Mac相应路径：
 /Users/lanxiang/Documents/GitHub/cef
 /Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef
 
-================ 8037 迁移状态（2026-09-26 已完成，未构建） ================
-以上 7871 流程在 8037（Chromium 154.0.8037.58，e72305f54）的校验与执行结果：
-- fix_tab_search_bubble_host_dangling_ptr.patch：仍需要，已手动合入 browser_view.cc（析构函数删 tab_search_bubble_host_.reset()，WillDestroyToolbar 开头加回）。
+================ 8037 迁移状态（2026-09-26 完成） ================
+8037（Chromium 154.0.8037.58，e72305f54）迁移记录：
 - fix_webui_toolbar_only_for_normal_browser.patch：仍需要，已手动合入 toolbar_view.cc。注意 8037 上下文漂移：构造参数由 browser_->command_controller() 变为 chrome::BrowserCommandController::From(browser_)，合入时已适配。
 - 2026-09-26 补充：Mac arm64 首次构建又发现一处漂移——ToolbarView 的 browser_ 成员类型已是 BrowserWindowInterface*，browser_->type() 不存在，改为 browser_->GetType() == BrowserWindowInterface::TYPE_NORMAL（与上游 browser_window_features.cc 守卫写法一致）。已按流程重新生成 chrome_runtime_views.patch（git diff --no-prefix --relative --full-index，reverse-check 幂等验证通过）并同步构建树与备份仓库（Mac 路径：/Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef 与 /Users/lanxiang/Documents/GitHub/cef）两处。
 
@@ -273,16 +211,12 @@ out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeR
 2、apply_cef_custom_patches.py 中 OnBeforeResourceResponse 相关的 bespoke 逻辑（header 声明插入 + API 版本号生成）一并移除。
 3、PR 进度：chromiumembedded/cef #4289（fork 分支 on-before-resource-response，最新 commit 035dc2aa3）。评审第一轮 5 条意见（1×P1 + 4×P2）已全部修复，本地回归 175 + 538 测试全绿，等第二轮。合并后删除 worktree /Users/lanxiang/Documents/GitHub/cefpr（git worktree remove cef 后 rm -rf cefpr 目录，内含 llvm-build/sandbox 符号链接，只删链接不动真实文件）与本地分支 on-before-resource-response。
 
-out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeResourceResponse*'
-- fix_webui_toolbar_null_initial_webui_manager.patch：不再需要。上游提交 6fd0481bbcf93（M154，2026-06-04，"Webium product: improve the state management of WebUI tool bar"）已在 OnPageInitialized 自带完全相同的 InitialWebUIManager::From 判空。该 patch 文件与 patch.cfg 条目已从 d:/GitHub/cef 与 e: 构建树两处删除，上游步骤 5/6 作废。
-
 8037 的 patch 更新流程（下次升级可参考）：
 1、把 cef/patch/patches/chrome_runtime_views.patch 以 git apply -p0 --ignore-whitespace 应用到 chromium src（需先做 CRLF 转 LF 归一化，与 cef/tools/git_util.py 行为一致；patcher 构建时对已应用的 patch 会自动跳过，幂等）。
-2、（已废弃 2026-10-02）fix_tab_search_bubble_host_dangling_ptr.patch 不再需要。该修复源于 7559(144) 时代的 Mac 关窗崩溃：当时 WebUIBubbleManagerImpl 持有 anchor_view_ 裸 raw_ptr，无任何保护；CEF 自 7632 起用 dangling_rawptr.patch（ViewTracker）修复同类问题（300426d4f，2026-01-20），我们的重排序自此冗余。8037 已还原 stock 析构顺序，实测关窗/退出（含 chrome 风格窗口）无崩溃，参考 patch 文件已从备份仓库删除。此变更已同步 chrome_runtime_views.patch（还原后 1220 行，reverse-check 通过）。CEF 侧对应 issue 已按此结论撤回关闭。
-3、手动合入 fix_webui_toolbar_only_for_normal_browser.patch（同上，注意适配上下文漂移）。
-4、在 chromium src 根用 git diff --no-prefix --relative --full-index -- <patch 涉及的文件清单> 重新生成 chrome_runtime_views.patch（与 cef/tools/patch_updater.py 的再生成命令一致，输出 LF 行尾），同步回 e: 构建树与 d:/GitHub/cef 两处。
-5、验证：git apply -p0 --ignore-whitespace --reverse --check 必须通过（幂等性）；新旧 patch 对比确认差异仅为本次合入内容与行号平移。
-6、重新构建。
+2、手动合入 fix_webui_toolbar_only_for_normal_browser.patch（d:/GitHub/cef/patch/patches/，仅手动合入用，注意适配上下文漂移）。
+3、在 chromium src 根用 git diff --no-prefix --relative --full-index -- <patch 涉及的文件清单> 重新生成 chrome_runtime_views.patch（与 cef/tools/patch_updater.py 的再生成命令一致，输出 LF 行尾），同步回 e: 构建树与 d:/GitHub/cef 两处。
+4、验证：git apply -p0 --ignore-whitespace --reverse --check 必须通过（幂等性）；新旧 patch 对比确认差异仅为本次合入内容与行号平移。
+5、重新构建。
 
 ================ 8037 SDK_VERSION 坑（2026-09-26 最终结论：必须装 28000 SDK） ================
 现象：gn gen（cef_create_projects / gclient_hook.py）报
