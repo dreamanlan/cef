@@ -211,6 +211,12 @@ out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeR
 2、apply_cef_custom_patches.py 中 OnBeforeResourceResponse 相关的 bespoke 逻辑（header 声明插入 + API 版本号生成）一并移除。
 3、PR 进度：chromiumembedded/cef #4289（fork 分支 on-before-resource-response，最新 commit 035dc2aa3）。评审第一轮 5 条意见（1×P1 + 4×P2）已全部修复，本地回归 175 + 538 测试全绿，等第二轮。合并后删除 worktree /Users/lanxiang/Documents/GitHub/cefpr（git worktree remove cef 后 rm -rf cefpr 目录，内含 llvm-build/sandbox 符号链接，只删链接不动真实文件）与本地分支 on-before-resource-response。
 
+issue 草稿管理（2026-10-02）：备份仓库根目录只保留仍存在问题的 issue 草稿，无编号命名，与本地 patch 对应关系如下，修复被 CEF 采纳或不再需要时同步删除草稿与对应 patch：
+- issue_new_tab_check_crash.md ↔ chrome_browser_browser.patch 的防护① + fix_tab_model_is_selected_no_tab_guard.patch（②）
+- issue_webui_toolbar_popup_hosts.md ↔ fix_webui_toolbar_only_for_normal_browser.patch
+- issue_ceftests_null_browser_crash.md ↔ patch 08 中 RedirectResponseTest 的 null browser 判空守卫
+已撤回的（tab_search 悬垂指针）与已转 PR 跟踪的（OnBeforeResourceResponse → #4289）草稿已删除，PR 状态见上面备忘。
+
 8037 的 patch 更新流程（下次升级可参考）：
 1、把 cef/patch/patches/chrome_runtime_views.patch 以 git apply -p0 --ignore-whitespace 应用到 chromium src（需先做 CRLF 转 LF 归一化，与 cef/tools/git_util.py 行为一致；patcher 构建时对已应用的 patch 会自动跳过，幂等）。
 2、手动合入 fix_webui_toolbar_only_for_normal_browser.patch（d:/GitHub/cef/patch/patches/，仅手动合入用，注意适配上下文漂移）。
