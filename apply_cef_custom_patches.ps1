@@ -15,7 +15,10 @@ param(
 #      introduce any CEF API (e.g. the use-chrome-window window.open->tab
 #      merge, the response-header override plumbing in the .cc files). These
 #      are applied with `git apply` and are idempotent: if a patch already
-#      reverse-applies cleanly it is considered applied and skipped.
+#      reverse-applies cleanly it is considered applied and skipped. When a
+#      patch is not yet applied and the tree is git-managed, the files it
+#      touches are first restored to their HEAD state, so stale working-tree
+#      edits (e.g. an older revision of the same patch) cannot block it.
 #
 # CEF has no built-in mechanism to auto-apply patches against its own source
 # (only against Chromium), so this script performs the edits directly.
@@ -133,6 +136,14 @@ function Invoke-PythonTool {
 function Test-GitApply {
     param([string[]]$ExtraArgs)
 
+    # Relax ErrorActionPreference for the git invocation below: in Windows
+    # PowerShell 5.1, redirecting a native command's stderr (2>$null) turns
+    # stderr lines into ErrorRecords, and the script-level 'Stop' preference
+    # would turn the first one into a terminating error even though a
+    # non-zero exit code is an expected outcome here. The assignment is
+    # function-local and does not leak to the caller.
+    $ErrorActionPreference = "Continue"
+
     Push-Location $script:cefRoot
     try {
         # --ignore-whitespace makes git apply tolerate line-ending (CRLF vs LF)
@@ -146,16 +157,122 @@ function Test-GitApply {
     }
 }
 
+function Test-GitWorktree {
+    Push-Location $script:cefRoot
+    try {
+        $output = & git rev-parse --is-inside-work-tree 2>$null
+        return ($LASTEXITCODE -eq 0 -and "$output" -eq "true")
+    } catch {
+        return $false
+    } finally {
+        Pop-Location
+    }
+}
+
+function Get-PatchTargetFiles {
+    # Extracts the file paths that a patch modifies from its headers.
+    # Handles both standard 'a/... b/...' prefixes and --no-prefix diffs.
+    param([string]$PatchPath)
+
+    $targets = New-Object System.Collections.Generic.List[string]
+    foreach ($line in [System.IO.File]::ReadAllLines($PatchPath)) {
+        if ($line -match '^diff --git (\S+) (\S+)$') {
+            $oldPath = $Matches[1]
+            $newPath = $Matches[2]
+            if ($oldPath.StartsWith("a/") -and $newPath.StartsWith("b/")) {
+                $oldPath = $oldPath.Substring(2)
+                $newPath = $newPath.Substring(2)
+            }
+            foreach ($path in @($oldPath, $newPath)) {
+                if ($path -ne "/dev/null" -and -not $targets.Contains($path)) {
+                    [void]$targets.Add($path)
+                }
+            }
+        }
+    }
+    return $targets
+}
+
+function Restore-PatchTargetsToHead {
+    # Restores the files a patch touches to their git HEAD state. Only files
+    # that are tracked by git and actually differ from HEAD are restored;
+    # everything else is left alone. Returns the list of restored paths.
+    #
+    # This makes `git apply` robust against stale working-tree changes such as
+    # an older revision of the same patch. Note: it assumes that no two
+    # patches under myapp/patch/ modify the same file, otherwise a later
+    # restore would undo an earlier patch.
+    param([string]$PatchPath)
+
+    # Relax ErrorActionPreference for the git invocations below; see the
+    # comment in Test-GitApply for why this is required in Windows
+    # PowerShell 5.1.
+    $ErrorActionPreference = "Continue"
+
+    $targets = @(Get-PatchTargetFiles $PatchPath)
+    if ($targets.Count -eq 0) {
+        return @()
+    }
+
+    $dirty = @()
+    Push-Location $script:cefRoot
+    try {
+        $tracked = @(& git ls-files -- @targets 2>$null | Where-Object { $_ })
+        # Only restore paths exactly as written in the patch; if the repo root
+        # is not the CEF root, git rewrites them with a different prefix.
+        $tracked = @($tracked | Where-Object { $targets -contains $_ })
+        if ($tracked.Count -eq 0) {
+            return @()
+        }
+
+        foreach ($line in @(& git status --porcelain -- @tracked 2>$null)) {
+            if ($line.Length -gt 3) {
+                $path = $line.Substring(3)
+                $arrowIndex = $path.IndexOf(" -> ")
+                if ($arrowIndex -ge 0) {
+                    $path = $path.Substring($arrowIndex + 4)
+                }
+                $dirty += $path
+            }
+        }
+        if ($dirty.Count -eq 0) {
+            return @()
+        }
+
+        & git checkout HEAD -- @dirty 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "git checkout HEAD failed for: $($dirty -join ', ')"
+        }
+    } finally {
+        Pop-Location
+    }
+
+    return $dirty
+}
+
 function Invoke-PatchFile {
     # Idempotently apply a single unified-diff patch via git apply.
-    # Returns $true when freshly applied, $false when already applied.
-    param([string]$PatchPath)
+    # Returns $true when freshly applied, $false when already applied. When
+    # the patch is not already applied and the tree is git-managed, the files
+    # it touches are first restored to their HEAD state so stale working-tree
+    # edits cannot block the application.
+    param(
+        [string]$PatchPath,
+        [bool]$GitManaged
+    )
 
     $description = Split-Path -Leaf $PatchPath
 
     if (Test-GitApply @("--reverse", "--check", $PatchPath)) {
         Write-Host "Already applied: $description"
         return $false
+    }
+
+    if ($GitManaged) {
+        $restored = @(Restore-PatchTargetsToHead $PatchPath)
+        if ($restored.Count -gt 0) {
+            Write-Host "Restored to HEAD before applying ${description}: $($restored -join ', ')"
+        }
     }
 
     if (-not (Test-GitApply @("--check", $PatchPath))) {
@@ -177,6 +294,8 @@ function Invoke-PatchFile {
 }
 
 function Invoke-StaticPatches {
+    param([bool]$GitManaged)
+
     if (-not (Test-Path -LiteralPath $script:patchDir -PathType Container)) {
         throw "Patch directory does not exist: $script:patchDir"
     }
@@ -190,7 +309,7 @@ function Invoke-StaticPatches {
 
     $changed = $false
     foreach ($patchFile in $patchFiles) {
-        if (Invoke-PatchFile $patchFile.FullName) {
+        if (Invoke-PatchFile -PatchPath $patchFile.FullName -GitManaged $GitManaged) {
             $changed = $true
         }
     }
@@ -291,7 +410,12 @@ if (-not $headerText.Contains("OnBeforeResourceResponse")) {
 
 # 2. Every static unified diff under myapp/patch/. These never introduce a CEF
 #    API, so they never set $introducedNext.
-if (Invoke-StaticPatches) {
+$gitManaged = Test-GitWorktree
+if (-not $gitManaged) {
+    Write-Host "Not a git worktree: patch target files will not be restored to HEAD before applying."
+}
+
+if (Invoke-StaticPatches $gitManaged) {
     $sourceChanged = $true
 }
 

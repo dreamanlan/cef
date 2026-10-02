@@ -12,7 +12,10 @@
 #      introduce any CEF API (e.g. the use-chrome-window window.open->tab
 #      merge, the response-header override plumbing in the .cc files). These
 #      are applied with `git apply` and are idempotent: if a patch already
-#      reverse-applies cleanly it is considered applied and skipped.
+#      reverse-applies cleanly it is considered applied and skipped. When a
+#      patch is not yet applied and the tree is git-managed, the files it
+#      touches are first restored to their HEAD state, so stale working-tree
+#      edits (e.g. an older revision of the same patch) cannot block it.
 #
 # CEF has no built-in mechanism to auto-apply patches against its own source
 # (only against Chromium), so this script performs the edits directly.
@@ -79,12 +82,106 @@ def git_apply_ok(cef_root, extra_args):
     return result.returncode == 0, result.stderr.decode("utf-8", "replace")
 
 
-def apply_patch_file(cef_root, patch_path):
+DIFF_GIT_LINE_RE = re.compile(r"^diff --git (\S+) (\S+)$")
+
+
+def is_git_worktree(cef_root):
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=cef_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    except OSError:
+        return False
+    return result.returncode == 0 and result.stdout.strip() == b"true"
+
+
+def get_patch_target_files(patch_path):
+    """Extract the file paths that a patch modifies from its headers.
+
+    Handles both standard "a/... b/..." prefixes and --no-prefix diffs.
+    """
+    targets = []
+    text = patch_path.read_text(encoding="utf-8", errors="replace")
+    for line in text.splitlines():
+        match = DIFF_GIT_LINE_RE.match(line)
+        if not match:
+            continue
+        old_path, new_path = match.groups()
+        if old_path.startswith("a/") and new_path.startswith("b/"):
+            old_path = old_path[2:]
+            new_path = new_path[2:]
+        for path in (old_path, new_path):
+            if path != "/dev/null" and path not in targets:
+                targets.append(path)
+    return targets
+
+
+def restore_patch_targets_to_head(cef_root, patch_path):
+    """Restore the files a patch touches to their git HEAD state.
+
+    Only files that are tracked by git and actually differ from HEAD are
+    restored; everything else is left alone. Returns the list of restored
+    paths (empty when there was nothing to restore).
+
+    This makes `git apply` robust against stale working-tree changes such as
+    an older revision of the same patch. Note: it assumes that no two patches
+    under myapp/patch/ modify the same file, otherwise a later restore would
+    undo an earlier patch.
+    """
+    targets = get_patch_target_files(patch_path)
+    if not targets:
+        return []
+
+    result = subprocess.run(
+        ["git", "ls-files", "--", *targets],
+        cwd=cef_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    # Only restore paths exactly as written in the patch; if the repo root is
+    # not the CEF root, git rewrites them with a different prefix.
+    tracked = [
+        path
+        for path in result.stdout.decode("utf-8", "replace").splitlines()
+        if path in targets
+    ]
+    if not tracked:
+        return []
+
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--", *tracked],
+        cwd=cef_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    dirty = [
+        line[3:].split(" -> ")[-1]
+        for line in status.stdout.decode("utf-8", "replace").splitlines()
+        if line
+    ]
+    if not dirty:
+        return []
+
+    subprocess.run(
+        ["git", "checkout", "HEAD", "--", *dirty],
+        cwd=cef_root,
+        check=True,
+    )
+    return dirty
+
+
+def apply_patch_file(cef_root, patch_path, git_managed):
     """Idempotently apply a single unified-diff patch via git apply.
 
     Returns True when the patch was freshly applied, False when it was already
-    applied. Raises RuntimeError when the patch neither applies nor is already
-    applied (e.g. the source anchor changed upstream).
+    applied. When the patch is not already applied and the tree is
+    git-managed, the files it touches are first restored to their HEAD state
+    so that stale working-tree edits cannot block the application. Raises
+    RuntimeError when the patch still cannot be applied (e.g. the source
+    anchor changed upstream).
     """
     description = patch_path.name
     patch_arg = str(patch_path)
@@ -95,6 +192,14 @@ def apply_patch_file(cef_root, patch_path):
     if reverse_ok:
         print(f"Already applied: {description}")
         return False
+
+    if git_managed:
+        restored = restore_patch_targets_to_head(cef_root, patch_path)
+        if restored:
+            print(
+                f"Restored to HEAD before applying: {description} "
+                f"({', '.join(restored)})"
+            )
 
     forward_ok, forward_err = git_apply_ok(cef_root, ["--check", patch_arg])
     if not forward_ok:
@@ -112,7 +217,7 @@ def apply_patch_file(cef_root, patch_path):
     return True
 
 
-def apply_static_patches(cef_root):
+def apply_static_patches(cef_root, git_managed):
     patch_dir = cef_root / PATCH_SUBDIR
     if not patch_dir.is_dir():
         raise RuntimeError(f"Patch directory does not exist: {patch_dir}")
@@ -124,7 +229,7 @@ def apply_static_patches(cef_root):
 
     source_changed = False
     for patch_path in patch_files:
-        if apply_patch_file(cef_root, patch_path):
+        if apply_patch_file(cef_root, patch_path, git_managed):
             source_changed = True
     return source_changed
 
@@ -268,6 +373,13 @@ def main():
         if not required_path.is_file():
             raise RuntimeError(f"Required file does not exist: {required_path}")
 
+    git_managed = is_git_worktree(cef_root)
+    if not git_managed:
+        print(
+            "Not a git worktree: patch target files will not be "
+            "restored to HEAD before applying."
+        )
+
     source_changed = False
     introduced_next = False
 
@@ -278,7 +390,7 @@ def main():
 
     # 2. Every static unified diff under myapp/patch/. These never introduce a
     #    CEF API, so they never set introduced_next.
-    if apply_static_patches(cef_root):
+    if apply_static_patches(cef_root, git_managed):
         source_changed = True
 
     if introduced_next or args.force_generate:
