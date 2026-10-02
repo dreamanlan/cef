@@ -278,7 +278,7 @@ out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeR
 
 8037 的 patch 更新流程（下次升级可参考）：
 1、把 cef/patch/patches/chrome_runtime_views.patch 以 git apply -p0 --ignore-whitespace 应用到 chromium src（需先做 CRLF 转 LF 归一化，与 cef/tools/git_util.py 行为一致；patcher 构建时对已应用的 patch 会自动跳过，幂等）。
-2、手动合入 fix_tab_search_bubble_host_dangling_ptr.patch（d:/GitHub/cef/patch/patches/，仅手动合入用）。
+2、（已废弃 2026-10-02）fix_tab_search_bubble_host_dangling_ptr.patch 不再需要。该修复源于 7559(144) 时代的 Mac 关窗崩溃：当时 WebUIBubbleManagerImpl 持有 anchor_view_ 裸 raw_ptr，无任何保护；CEF 自 7632 起用 dangling_rawptr.patch（ViewTracker）修复同类问题（300426d4f，2026-01-20），我们的重排序自此冗余。8037 已还原 stock 析构顺序，实测关窗/退出（含 chrome 风格窗口）无崩溃，参考 patch 文件已从备份仓库删除。此变更已同步 chrome_runtime_views.patch（还原后 1220 行，reverse-check 通过）。CEF 侧对应 issue 已按此结论撤回关闭。
 3、手动合入 fix_webui_toolbar_only_for_normal_browser.patch（同上，注意适配上下文漂移）。
 4、在 chromium src 根用 git diff --no-prefix --relative --full-index -- <patch 涉及的文件清单> 重新生成 chrome_runtime_views.patch（与 cef/tools/patch_updater.py 的再生成命令一致，输出 LF 行尾），同步回 e: 构建树与 d:/GitHub/cef 两处。
 5、验证：git apply -p0 --ignore-whitespace --reverse --check 必须通过（幂等性）；新旧 patch 对比确认差异仅为本次合入内容与行号平移。
