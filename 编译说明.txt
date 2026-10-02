@@ -211,9 +211,9 @@ out/Release_GN_arm64/ceftests --gtest_filter='ResourceRequestHandlerTest.BeforeR
 2、apply_cef_custom_patches.py 中 OnBeforeResourceResponse 相关的 bespoke 逻辑（header 声明插入 + API 版本号生成）一并移除。
 3、PR 进度：chromiumembedded/cef #4289（fork 分支 on-before-resource-response，最新 commit 035dc2aa3）。评审第一轮 5 条意见（1×P1 + 4×P2）已全部修复，本地回归 175 + 538 测试全绿，等第二轮。合并后删除 worktree /Users/lanxiang/Documents/GitHub/cefpr（git worktree remove cef 后 rm -rf cefpr 目录，内含 llvm-build/sandbox 符号链接，只删链接不动真实文件）与本地分支 on-before-resource-response。
 
-issue 草稿管理（2026-10-02）：备份仓库根目录只保留仍存在问题的 issue 草稿，无编号命名，与本地 patch 对应关系如下，修复被 CEF 采纳或不再需要时同步删除草稿与对应 patch：
+issue 草稿管理（2026-10-02）：备份仓库（d:/GitHub/cef 与 Mac 的 /Users/lanxiang/Documents/GitHub/cef）根目录只保留仍存在问题的 issue 草稿，无编号命名，与本地 patch 对应关系如下，修复被 CEF 采纳或不再需要时同步删除草稿与对应 patch：
 - issue_new_tab_check_crash.md ↔ chrome_browser_browser.patch 的防护① + fix_tab_model_is_selected_no_tab_guard.patch（②）
-- issue_webui_toolbar_popup_hosts.md ↔ fix_webui_toolbar_only_for_normal_browser.patch
+- issue_webui_toolbar_popup_hosts.md ↔ fix_webui_toolbar_only_for_normal_browser.patch（CEF 官方跟踪单 #4225，Open；后提的重复视角单 #4287 已被维护者标记 duplicate 并关闭）
 - issue_ceftests_null_browser_crash.md ↔ patch 08 中 RedirectResponseTest 的 null browser 判空守卫
 已撤回的（tab_search 悬垂指针）与已转 PR 跟踪的（OnBeforeResourceResponse → #4289）草稿已删除，PR 状态见上面备忘。
 
