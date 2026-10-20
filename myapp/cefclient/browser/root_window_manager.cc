@@ -201,10 +201,11 @@ void RootWindowManager::CreateChromeWindow(
     // Always answer the pending completion, even if Chrome never reports the
     // browser, so the hot reload query cannot hang forever.
     const int kCreateTimeoutMs = 10000;
+    const int seq = ++pending_chrome_window_seq_;
     CefPostDelayedTask(
         TID_UI,
         base::BindOnce(&RootWindowManager::OnChromeWindowCreateTimeout,
-                       base::Unretained(this)),
+                       base::Unretained(this), seq),
         kCreateTimeoutMs);
   }
 
@@ -212,9 +213,13 @@ void RootWindowManager::CreateChromeWindow(
                                 nullptr);
 }
 
-void RootWindowManager::OnChromeWindowCreateTimeout() {
+void RootWindowManager::OnChromeWindowCreateTimeout(int seq) {
   CEF_REQUIRE_UI_THREAD();
 
+  // A newer request replaced the one this timeout was posted for.
+  if (seq != pending_chrome_window_seq_) {
+    return;
+  }
   if (!pending_chrome_window_callback_.is_null()) {
     printf_log(LOG_SEVERITY_WARNING,
                "RootWindowManager: Timed out waiting for the Chrome window");
@@ -246,8 +251,11 @@ void RootWindowManager::RestoreNextChromeWindow(
 
   hot_reload_chrome_index_ = window_index;
   // The first browser of the window is reported before this collection flag
-  // goes up again, so only the tabs created by IDC_NEW_TAB end up in it.
+  // goes up again, so only the tabs created by IDC_NEW_TAB end up in it. The
+  // tabs collected for the previous window are dropped: the index lookup in
+  // RestoreNextChromeTab counts from this window's first new tab.
   hot_reload_collect_new_tabs_ = false;
+  hot_reload_new_tabs_.clear();
   hot_reload_chrome_host_ = nullptr;
 
   const auto& urls = hot_reload_chrome_windows_[window_index].urls;
@@ -341,6 +349,9 @@ void RootWindowManager::RestoreNextChromeTab(
       hot_reload_chrome_host_->GetHost()->ExecuteChromeCommand(new_tab_id,
                                                                 CEF_WOD_UNKNOWN);
       issued = true;
+      // Waiting for the tab to show up gets a budget of its own: under load
+      // the command alone can take most of the shared one.
+      wait_ms = 0;
     } else if (wait_ms == 0) {
       printf_log(LOG_SEVERITY_INFO,
                  "ExecuteHotReload: IDC_NEW_TAB not available yet (id=%d), "
@@ -747,8 +758,10 @@ void RootWindowManager::OtherBrowserCreated(int browser_id,
   if (browser.get()) {
     other_browsers_[browser_id] = browser;
     // Tabs created by the hot reload rebuild (IDC_NEW_TAB), collected in
-    // creation order so each one can be loaded with its page.
-    if (hot_reload_collect_new_tabs_) {
+    // creation order so each one can be loaded with its page. IDC_NEW_TAB tabs
+    // have no opener; a browser with one was opened by a page (window.open,
+    // target=_blank) and must not take the slot of a rebuilt tab.
+    if (hot_reload_collect_new_tabs_ && opener_browser_id <= 0) {
       hot_reload_new_tabs_.push_back(browser);
     }
   }
@@ -1124,16 +1137,29 @@ void RootWindowManager::ExecuteHotReload(
     for (const auto& entry : other_browsers_) {
       CefRefPtr<CefBrowser> browser = entry.second;
       if (!browser.get() || !browser->GetHost()) {
+        printf_log(LOG_SEVERITY_WARNING,
+                   "ExecuteHotReload: snapshot browser %d skipped (no host)",
+                   entry.first);
         continue;
       }
       CefRefPtr<CefFrame> frame = browser->GetMainFrame();
       const std::string page_url =
           frame.get() ? frame->GetURL().ToString() : std::string();
+      const CefWindowHandle handle = browser->GetHost()->GetWindowHandle();
+      // Urls are cut: a data: url can be several KB.
       if (!IsRestorableHotReloadUrl(page_url)) {
+        printf_log(LOG_SEVERITY_WARNING,
+                   "ExecuteHotReload: snapshot browser %d window %p skipped "
+                   "(not restorable), url=%.200s",
+                   entry.first, reinterpret_cast<void*>(handle),
+                   page_url.empty() ? "[empty]" : page_url.c_str());
         continue;
       }
       page_ct++;
-      const CefWindowHandle handle = browser->GetHost()->GetWindowHandle();
+      printf_log(LOG_SEVERITY_INFO,
+                 "ExecuteHotReload: snapshot browser %d window %p, url=%.200s",
+                 entry.first, reinterpret_cast<void*>(handle),
+                 page_url.c_str());
       auto it = window_index.find(handle);
       if (it == window_index.end()) {
         it = window_index

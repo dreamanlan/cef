@@ -162,8 +162,11 @@ class RootWindowManager : public RootWindow::Delegate {
   std::vector<CefRefPtr<CefBrowser>> hot_reload_result_browsers_;
 
   // Gives up on a pending CreateChromeWindow() completion and reports it with a
-  // null browser, so the hot reload query is always answered.
-  void OnChromeWindowCreateTimeout();
+  // null browser, so the hot reload query is always answered. |seq| identifies
+  // the request the timeout was posted for: a timeout left over from an earlier
+  // request must not answer a newer one.
+  void OnChromeWindowCreateTimeout(int seq);
+  int pending_chrome_window_seq_ = 0;
 
   // Wraps the hot reload completion for the Chrome window path: the window is
   // created asynchronously, so termination may only be re-enabled once the new
