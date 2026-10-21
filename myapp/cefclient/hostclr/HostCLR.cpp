@@ -3016,7 +3016,7 @@ int terminate_process_by_key(const char* key) {
         }
 
         // Try to read command line from PEB
-        bool is_renderer = false;
+        bool is_target = false;
 
         if (pNtQueryInformationProcess) {
             MY_PROCESS_BASIC_INFORMATION pbi;
@@ -3083,9 +3083,9 @@ int terminate_process_by_key(const char* key) {
 
                                             // Check if command line contains --type=renderer
                                             if (strstr(cmd_line_utf8, key)) {
-                                                is_renderer = true;
+                                                is_target = true;
                                                 printf_log(LOG_SEVERITY_INFO,
-                                                          "terminate_process_by_key: Found renderer process PID=%d",
+                                                          "terminate_process_by_key: Found target process PID=%d",
                                                           pe32.th32ProcessID);
                                             }
 
@@ -3101,7 +3101,7 @@ int terminate_process_by_key(const char* key) {
             }
         }
 
-        if (!is_renderer && !pNtQueryInformationProcess) {
+        if (!is_target && !pNtQueryInformationProcess) {
             // Fallback: check if it's webagent.exe (less precise)
             char exe_name[MAX_PATH];
             if (GetModuleBaseNameA(process, NULL, exe_name, MAX_PATH)) {
@@ -3109,17 +3109,17 @@ int terminate_process_by_key(const char* key) {
                     printf_log(LOG_SEVERITY_WARNING,
                               "terminate_process_by_key: Using fallback for webagent.exe PID=%d",
                               pe32.th32ProcessID);
-                    is_renderer = true;
+                    is_target = true;
                 }
             }
         }
 
-        // Terminate renderer process
-        if (is_renderer) {
+        // Terminate the target process
+        if (is_target) {
             if (TerminateProcess(process, 0)) {
                 terminated_count++;
                 printf_log(LOG_SEVERITY_INFO,
-                          "terminate_process_by_key: Terminated renderer process PID=%d",
+                          "terminate_process_by_key: Terminated target process PID=%d",
                           pe32.th32ProcessID);
             } else {
                 printf_log(LOG_SEVERITY_WARNING,
@@ -3197,14 +3197,14 @@ int terminate_process_by_key(const char* key) {
         cmdline[bytes_read] = '\0';
         fclose(cmdline_file);
 
-        // Check if it's a renderer process
+        // Check if the command line matches the key
         if (strstr(cmdline, key)) {
-            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found renderer process PID=%d", pid);
+            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found target process PID=%d", pid);
 
             // Terminate the process
             if (kill(pid, SIGTERM) == 0) {
                 terminated_count++;
-                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated renderer process PID=%d", pid);
+                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated target process PID=%d", pid);
             } else {
                 printf_log(LOG_SEVERITY_WARNING, "terminate_process_by_key: Failed to terminate PID=%d", pid);
             }
@@ -3268,11 +3268,11 @@ int terminate_process_by_key(const char* key) {
         }
 
         // Check all arguments for --type=renderer
-        bool is_renderer = false;
+        bool is_target = false;
         char* arg = current_arg;
         for (int j = 0; j < argc && arg < args_end; j++) {
             if (strstr(arg, key)) {
-                is_renderer = true;
+                is_target = true;
                 break;
             }
 
@@ -3283,13 +3283,13 @@ int terminate_process_by_key(const char* key) {
             }
         }
 
-        if (is_renderer) {
-            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found renderer process PID=%d", pids[i]);
+        if (is_target) {
+            printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Found target process PID=%d", pids[i]);
 
             // Terminate the process
             if (kill(pids[i], SIGTERM) == 0) {
                 terminated_count++;
-                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated renderer process PID=%d", pids[i]);
+                printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated target process PID=%d", pids[i]);
             } else {
                 printf_log(LOG_SEVERITY_WARNING, "terminate_process_by_key: Failed to terminate PID=%d", pids[i]);
             }
@@ -3300,16 +3300,17 @@ int terminate_process_by_key(const char* key) {
     return -1;
 #endif
 
-    printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated %d renderer process(es)", terminated_count);
+    printf_log(LOG_SEVERITY_INFO, "terminate_process_by_key: Terminated %d target process(es)", terminated_count);
     return terminated_count;
 }
 
-// Count renderer processes using platform-specific APIs
-// Returns the number of renderer processes, or -1 on error
+// Count child processes matching the key in their command line
+// (platform-specific APIs). The key is caller-defined, so the matches are
+// target processes of any kind - renderers, the agent host, etc.
 // Same matching rules as terminate_process_by_key(), but only counts.
 // Returns the number of matching processes, or -1 on error.
 int count_process_by_key(const char* key) {
-    int renderer_count = 0;
+    int target_count = 0;
 
 #if defined(OS_WIN)
     // Windows implementation
@@ -3353,7 +3354,7 @@ int count_process_by_key(const char* key) {
             continue;
         }
 
-        bool is_renderer = false;
+        bool is_target = false;
 
         if (pNtQueryInformationProcess) {
             MY_PROCESS_BASIC_INFORMATION pbi;
@@ -3424,9 +3425,9 @@ int count_process_by_key(const char* key) {
                                 // Check if command line contains
                                 // --type=renderer
                                 if (strstr(cmd_line_utf8, key)) {
-                                  is_renderer = true;
+                                  is_target = true;
                                   printf_log(LOG_SEVERITY_INFO,
-                                             "count_process_by_key: Found renderer process PID=%d", pe32.th32ProcessID);
+                                             "count_process_by_key: Found target process PID=%d", pe32.th32ProcessID);
                                 }
 
                                 free(cmd_line_utf8);
@@ -3440,18 +3441,18 @@ int count_process_by_key(const char* key) {
             }
         }
 
-        if (!is_renderer && !pNtQueryInformationProcess) {
+        if (!is_target && !pNtQueryInformationProcess) {
             char exe_name[MAX_PATH];
             if (GetModuleBaseNameA(process, NULL, exe_name, MAX_PATH)) {
                 if (strstr(exe_name, key)) {
-                    is_renderer = true;
+                    is_target = true;
                 }
             }
         }
 
-        if (is_renderer) {
-            renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pe32.th32ProcessID);
+        if (is_target) {
+            target_count++;
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found target process PID=%d", pe32.th32ProcessID);
         }
 
         CloseHandle(process);
@@ -3520,8 +3521,8 @@ int count_process_by_key(const char* key) {
         fclose(cmdline_file);
 
         if (strstr(cmdline, key)) {
-            renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pid);
+            target_count++;
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found target process PID=%d", pid);
         }
     }
 
@@ -3578,19 +3579,19 @@ int count_process_by_key(const char* key) {
             current_arg++;
         }
 
-        bool is_renderer = false;
+        bool is_target = false;
         char* arg = current_arg;
         for (int j = 0; j < argc && arg < args_end; j++) {
             if (strstr(arg, key)) {
-                is_renderer = true;
+                is_target = true;
                 break;
             }
             arg += strlen(arg) + 1;
         }
 
-        if (is_renderer) {
-            renderer_count++;
-            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found renderer process PID=%d", pids[i]);
+        if (is_target) {
+            target_count++;
+            printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found target process PID=%d", pids[i]);
         }
     }
 #else
@@ -3598,7 +3599,7 @@ int count_process_by_key(const char* key) {
     return -1;
 #endif
 
-    printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found %d renderer process(es)", renderer_count);
-    return renderer_count;
+    printf_log(LOG_SEVERITY_INFO, "count_process_by_key: Found %d target process(es)", target_count);
+    return target_count;
 }
 
