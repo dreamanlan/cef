@@ -1,0 +1,38 @@
+diff --git a/libcef/common/response_impl.cc b/libcef/common/response_impl.cc
+index eb722e17e..40092dc10 100644
+--- a/libcef/common/response_impl.cc
++++ b/libcef/common/response_impl.cc
+@@ -156,11 +156,17 @@ void CefResponseImpl::SetHeaderMap(const HeaderMap& headerMap) {
+   header_map_ = headerMap;
+ }
+ 
+-scoped_refptr<net::HttpResponseHeaders> CefResponseImpl::GetResponseHeaders() {
++scoped_refptr<net::HttpResponseHeaders> CefResponseImpl::GetResponseHeaders(
++    bool default_mime_type) {
+   base::AutoLock lock_scope(lock_);
+ 
++  // The Content-Type header is generated from |mime_type_| and |charset_|, so
++  // an empty MIME type omits the header. A default is only applied for
++  // responses created by CefResponse::Create() that never had a MIME type
++  // assigned, unless |default_mime_type| is false (e.g. when serializing an
++  // intercepted response where the header is genuinely absent).
+   std::string mime_type = mime_type_;
+-  if (mime_type.empty()) {
++  if (mime_type.empty() && default_mime_type) {
+     mime_type = "text/html";
+   }
+ 
+diff --git a/libcef/common/response_impl.h b/libcef/common/response_impl.h
+index ef0f9337f..f45cb8ff8 100644
+--- a/libcef/common/response_impl.h
++++ b/libcef/common/response_impl.h
+@@ -43,7 +43,8 @@ class CefResponseImpl : public CefResponse {
+   CefString GetURL() override;
+   void SetURL(const CefString& url) override;
+ 
+-  scoped_refptr<net::HttpResponseHeaders> GetResponseHeaders();
++  scoped_refptr<net::HttpResponseHeaders> GetResponseHeaders(
++      bool default_mime_type = true);
+   void SetResponseHeaders(const net::HttpResponseHeaders& headers);
+ 
+   void Set(const blink::WebURLResponse& response);

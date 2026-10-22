@@ -1,8 +1,20 @@
 diff --git a/libcef/browser/net_service/resource_request_handler_wrapper.cc b/libcef/browser/net_service/resource_request_handler_wrapper.cc
-index efabfd257..b45102028 100644
+index efabfd257..996b50f40 100644
 --- a/libcef/browser/net_service/resource_request_handler_wrapper.cc
 +++ b/libcef/browser/net_service/resource_request_handler_wrapper.cc
-@@ -107,6 +107,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -4,9 +4,11 @@
+ 
+ #include "cef/libcef/browser/net_service/resource_request_handler_wrapper.h"
+ 
++#include <map>
+ #include <memory>
+ 
+ #include "base/memory/raw_ptr.h"
++#include "base/strings/string_util.h"
+ #include "cef/libcef/browser/browser_host_base.h"
+ #include "cef/libcef/browser/context.h"
+ #include "cef/libcef/browser/iothread_state.h"
+@@ -107,6 +109,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
        cookie_filter_ = nullptr;
        pending_request_ = pending_request;
        pending_response_ = nullptr;
@@ -10,7 +22,7 @@ index efabfd257..b45102028 100644
        request_ = request;
        request_was_redirected_ = request_was_redirected;
        was_custom_handled_ = false;
-@@ -118,6 +119,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -118,6 +121,7 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
      CefRefPtr<CefCookieAccessFilter> cookie_filter_;
      CefRefPtr<CefRequestImpl> pending_request_;
      CefRefPtr<CefResponseImpl> pending_response_;
@@ -18,7 +30,7 @@ index efabfd257..b45102028 100644
      raw_ptr<network::ResourceRequest> request_;
      bool request_was_redirected_ = false;
      bool was_custom_handled_ = false;
-@@ -870,6 +872,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -870,6 +874,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
        return;
      }
  
@@ -27,12 +39,14 @@ index efabfd257..b45102028 100644
      if (!state->handler_) {
        return;
      }
-@@ -884,6 +888,58 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -884,6 +890,84 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
        state->pending_response_->SetResponseHeaders(*headers);
      }
  
-+    const auto original_headers =
-+        state->pending_response_->GetResponseHeaders();
++    // Serialize without a default MIME type (see |modified_headers| below) so
++    // that both snapshots are directly comparable.
++    const auto original_headers = state->pending_response_->GetResponseHeaders(
++        false /* default_mime_type */);
 +
 +    // Capture the MIME type and charset field values before the callback so
 +    // that changes via SetMimeType()/SetCharset() can be detected.
@@ -56,10 +70,14 @@ index efabfd257..b45102028 100644
 +    if (modified_mime != original_mime ||
 +        modified_charset != original_charset) {
 +      if (modified_mime.empty()) {
-+        // Remove the header when the MIME type is cleared.
++        // Remove the header when the MIME type is cleared. Header names may
++        // use any case (e.g. lowercase for HTTP/2 responses).
 +        CefResponse::HeaderMap map;
 +        state->pending_response_->GetHeaderMap(map);
-+        map.erase("Content-Type");
++        std::erase_if(map, [](const auto& entry) {
++          return base::EqualsCaseInsensitiveASCII(entry.first.ToString(),
++                                                  "Content-Type");
++        });
 +        state->pending_response_->SetHeaderMap(map);
 +      } else {
 +        state->pending_response_->SetHeaderByName(
@@ -67,10 +85,30 @@ index efabfd257..b45102028 100644
 +            net_service::MakeContentTypeValue(modified_mime, modified_charset),
 +            true /* overwrite */);
 +      }
++    } else if (!modified_mime.empty()) {
++      // The MIME type field is unchanged, so it may now be stale with respect
++      // to the header map (e.g. Content-Type removed via SetHeaderMap()). Clear
++      // the field so that the header is not regenerated during serialization.
++      CefResponse::HeaderMap map;
++      state->pending_response_->GetHeaderMap(map);
++      bool has_content_type = false;
++      for (const auto& [key, value] : map) {
++        if (base::EqualsCaseInsensitiveASCII(key.ToString(), "Content-Type")) {
++          has_content_type = true;
++          break;
++        }
++      }
++      if (!has_content_type) {
++        state->pending_response_->SetMimeType(CefString());
++        state->pending_response_->SetCharset(CefString());
++      }
 +    }
 +
-+    const auto modified_headers =
-+        state->pending_response_->GetResponseHeaders();
++    // Don't apply a default MIME type here. The MIME type is empty when the
++    // response genuinely has no Content-Type header (and none was assigned by
++    // the client), in which case the header must remain absent.
++    const auto modified_headers = state->pending_response_->GetResponseHeaders(
++        false /* default_mime_type */);
 +
 +    if (original_headers && modified_headers &&
 +        original_headers->raw_headers() != modified_headers->raw_headers()) {
@@ -86,10 +124,12 @@ index efabfd257..b45102028 100644
      state->pending_response_->SetReadOnly(true);
    }
  
-@@ -955,10 +1011,19 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -955,10 +1039,19 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
      }
      state->pending_request_->SetReadOnly(true);
  
+-    auto exec_callback = base::BindOnce(
+-        std::move(callback), ResponseMode::CONTINUE, nullptr, new_url);
 +    // Cookie saving should consume the effective headers, including any
 +    // modifications made in OnBeforeResourceResponse.
 +    net::HttpResponseHeaders* effective_headers = headers;
@@ -97,10 +137,9 @@ index efabfd257..b45102028 100644
 +      effective_headers = state->override_response_headers_.get();
 +    }
 +
-     auto exec_callback = base::BindOnce(
--        std::move(callback), ResponseMode::CONTINUE, nullptr, new_url);
-+        std::move(callback), ResponseMode::CONTINUE,
-+        std::move(state->override_response_headers_), new_url);
++    auto exec_callback =
++        base::BindOnce(std::move(callback), ResponseMode::CONTINUE,
++                       std::move(state->override_response_headers_), new_url);
  
 -    MaybeSaveCookies(request_id, state, headers, std::move(exec_callback));
 +    MaybeSaveCookies(request_id, state, effective_headers,
@@ -108,7 +147,7 @@ index efabfd257..b45102028 100644
    }
  
    void HandleResponse(int32_t request_id,
-@@ -997,8 +1062,16 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -997,8 +1090,16 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
      state->pending_request_->SetReadOnly(true);
      state->pending_request_->SetTrackChanges(false);
  
@@ -126,7 +165,7 @@ index efabfd257..b45102028 100644
  
      if (response_mode == ResponseMode::RESTART) {
        // Get any cookies after the restart.
-@@ -1006,7 +1079,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
+@@ -1006,7 +1107,8 @@ class InterceptedRequestHandlerWrapper : public InterceptedRequestHandler {
        return;
      }
  
