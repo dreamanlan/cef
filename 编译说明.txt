@@ -176,6 +176,20 @@ Mac相应路径：
 /Users/lanxiang/Documents/GitHub/cef
 /Users/lanxiang/CEF_BUILD/chromium_git/chromium/src/cef
 
+================ 8078 迁移记录（2026-10-25 merge 完成，待构建验证） ================
+merge upstream/8078（Chromium 156.0.8078.48，4fa4ab516）到 cef_modified，merge commit 6f737c884，备份分支 cef_modified_pre8078。冲突解决摘要：
+- 版本号文件（CHROMIUM_BUILD_COMPATIBILITY.txt、cef_paths2.gypi）与全部 20 个 patch/patches/*.patch 冲突均取上游版：上游因 Chromium 156 升级全量再生成 patch；其中 mac_print_preview_modal、viz_capture_3826 为 add/add（我方此前 cherry-pick 的上游修复落盘版，与上游正式版同源）。
+- chrome_browser_browser.patch 的 GetIndexOfTab 防护（8037 新标签页 CHECK 崩溃修复①）已被上游收录（短注释版），取上游无损；防护② fix_tab_model_is_selected_no_tab_guard.patch 独立文件无冲突保留。
+- chrome_runtime_views.patch 的 is_normal_browser guard（WebUI toolbar 修复）在 Chromium 156 已失效：上游移除了 kWebUIToolbarProcessOverheadExperiment / WebUIToolbarWebView 创建逻辑，该 hunk 无对象可改，未回放。fix_webui_toolbar_only_for_normal_browser.patch 文件保留但已无合入目标，#4225 在 156 上已无意义，待清理草稿与 patch（issue_webui_toolbar_popup_hosts.md 同）。
+- osr_accessibility 4 文件（helper.cc/h、node.h、node_mac.mm）rename/rename 冲突：上游移到 tests/shared/browser 且有内容修复（新增析构、Reset() 重入安全、mac lifetime fix #3595），myapp/cefclient/browser 副本已同步上游内容并把 include 改写为 myapp 路径；tests/cefclient 旧位置删除，tests/shared 新位置取上游。node.cc/node_win.cc 由 git 自动 rename 合并，仅 include 路径与 FAR* 风格差异，无需处理。
+- osr_renderer.h 跟随上游删除（我方仅注释漂移，mac 已由 OsrRendererMetal 替代）；osr_renderer_settings.h、osr_display_unittest.cc 取上游（我方改动均为上游提交的 patch-id 相同 cherry-pick）。
+- 8078 的 60 个上游提交中 23 个此前已 cherry-pick（patch-id 相同，merge 自动消解），实际新内容 37 个（Chromium 156 版本升级三连 + osr 重构 + 若干修复）。
+- PR #4289（OnBeforeResourceResponse）全部改动在 myapp/patch/，与上游零交集，不受 merge 影响。
+待构建验证事项：
+- osr win 渲染结构变化（D3D11 结构对齐 Metal/EGL、osr_renderer.cc 删除、external begin frame）可能影响 myapp 的 osr 代码，构建时需适配。
+- Chromium 154→156 的 Win11 SDK 版本要求需重新确认（8037 时要求 10.0.28000.0，见下方 8037 SDK_VERSION 坑）。
+- libcef API 在 154→156 间可能有变化（8078 含 15600 API tag），myapp 编译错误属预期迁移工作。
+
 ================ 8037 迁移状态（2026-09-26 完成） ================
 8037（Chromium 154.0.8037.58，e72305f54）迁移记录：
 - fix_webui_toolbar_only_for_normal_browser.patch：仍需要，已手动合入 toolbar_view.cc。注意 8037 上下文漂移：构造参数由 browser_->command_controller() 变为 chrome::BrowserCommandController::From(browser_)，合入时已适配。
