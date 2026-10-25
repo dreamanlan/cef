@@ -363,10 +363,16 @@ CefRenderWidgetHostViewOSR::GetNativeViewAccessible() {
   return gfx::NativeViewAccessible();
 }
 
-void CefRenderWidgetHostViewOSR::Focus() {}
+void CefRenderWidgetHostViewOSR::Focus() {
+  if (browser_impl_) {
+    // Let the client accept or cancel the request before focusing the widget.
+    browser_impl_->SetFocus(true);
+  }
+}
 
 bool CefRenderWidgetHostViewOSR::HasFocus() {
-  return false;
+  // Chromium uses this state to preserve focus when replacing a page's view.
+  return render_widget_host_ && render_widget_host_->is_focused();
 }
 
 bool CefRenderWidgetHostViewOSR::IsSurfaceAvailableForCopy() {
@@ -698,10 +704,10 @@ void CefRenderWidgetHostViewOSR::SetIsLoading(bool is_loading) {
 }
 
 void CefRenderWidgetHostViewOSR::RenderProcessGone() {
-  Destroy();
+  DestroyOrDefer();
 }
 
-void CefRenderWidgetHostViewOSR::Destroy() {
+void CefRenderWidgetHostViewOSR::OnDestroyOrDefer() {
   if (!is_destroyed_) {
     is_destroyed_ = true;
 
@@ -727,6 +733,25 @@ void CefRenderWidgetHostViewOSR::Destroy() {
     }
   }
 
+  if (text_input_manager_) {
+    text_input_manager_->RemoveObserver(this);
+  }
+  weak_ptr_factory_.InvalidateWeakPtrs();
+  gesture_provider_->Shutdown();
+  mouse_wheel_phase_handler_.IgnorePendingWheelEndEvent();
+  video_consumer_.reset();
+  ReleaseCompositor();
+}
+
+void CefRenderWidgetHostViewOSR::CleanUpHostObservers() {
+  if (render_widget_host_) {
+    render_widget_host_->render_frame_metadata_provider()->RemoveObserver(this);
+    render_widget_host_->ViewDestroyed();
+    render_widget_host_ = nullptr;
+  }
+}
+
+void CefRenderWidgetHostViewOSR::DestroyImpl() {
   delete this;
 }
 
@@ -1033,7 +1058,7 @@ void CefRenderWidgetHostViewOSR::OnFrameComplete(
 void CefRenderWidgetHostViewOSR::OnRenderFrameMetadataChangedAfterActivation(
     base::TimeTicks activation_time) {
   auto metadata =
-      host_->render_frame_metadata_provider()->LastRenderFrameMetadata();
+      host()->render_frame_metadata_provider()->LastRenderFrameMetadata();
 
   if (video_consumer_) {
     // Need to wait for the first frame of the new size before calling
@@ -1862,7 +1887,7 @@ void CefRenderWidgetHostViewOSR::CancelWidget() {
     // This matches a CHECK() in RenderWidgetHostImpl::Destroy().
     const bool also_delete = !render_widget_host_->owner_delegate();
 
-    // Results in a call to Destroy().
+    // Results in a call to DestroyOrDefer().
     render_widget_host_->ShutdownAndDestroyWidget(also_delete);
   }
 }

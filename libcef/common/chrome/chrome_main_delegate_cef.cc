@@ -17,6 +17,7 @@
 #include "cef/libcef/browser/chrome/chrome_browser_context.h"
 #include "cef/libcef/browser/chrome/chrome_content_browser_client_cef.h"
 #include "cef/libcef/browser/main_runner.h"
+#include "cef/libcef/common/api_version_util.h"
 #include "cef/libcef/common/cef_switches.h"
 #include "cef/libcef/common/command_line_impl.h"
 #include "cef/libcef/common/crash_reporting.h"
@@ -31,6 +32,7 @@
 #include "components/autofill/core/common/autofill_features.h"
 #include "components/embedder_support/switches.h"
 #include "components/lens/lens_features.h"
+#include "components/signin/public/base/signin_switches.h"
 #include "components/variations/service/buildflags.h"
 #include "content/common/features.h"
 #include "content/public/common/content_switches.h"
@@ -42,6 +44,7 @@
 
 #if BUILDFLAG(IS_MAC)
 #include "cef/libcef/common/util_mac.h"
+#include "components/os_crypt/common/keychain_password_mac.h"
 #elif BUILDFLAG(IS_POSIX)
 #include "cef/libcef/common/util_linux.h"
 #endif
@@ -339,6 +342,21 @@ std::optional<int> ChromeMainDelegateCef::BasicStartupComplete() {
           base::NumberToString(settings_->uncaught_exception_stack_size));
     }
 
+#if BUILDFLAG(IS_MAC)
+    if (CEF_API_IS_ADDED(15600)) {
+      if (CEF_MEMBER_EXISTS(settings_, keychain_service_name) &&
+          settings_->keychain_service_name.length > 0) {
+        KeychainPassword::GetServiceName() =
+            CefString(&settings_->keychain_service_name).ToString();
+      }
+      if (CEF_MEMBER_EXISTS(settings_, keychain_account_name) &&
+          settings_->keychain_account_name.length > 0) {
+        KeychainPassword::GetAccountName() =
+            CefString(&settings_->keychain_account_name).ToString();
+      }
+    }
+#endif
+
     std::vector<std::string> disable_features;
 
     if (!!settings_->multi_threaded_message_loop) {
@@ -362,6 +380,13 @@ std::optional<int> ChromeMainDelegateCef::BasicStartupComplete() {
                             disable_features);
     // -- "Search with Google Lens" support.
     DisableFeatureByDefault(lens::features::kLensOverlay, disable_features);
+
+#if BUILDFLAG(ENABLE_DICE_SUPPORT)
+    // Chromium no longer has a feature flag for the avatar sign-in promo.
+    // Clients can remove this switch in OnBeforeCommandLineProcessing.
+    command_line->AppendSwitch(
+        switches::kDisableSigninPromoOnAvatarPillForTesting);
+#endif  // BUILDFLAG(ENABLE_DICE_SUPPORT)
 
     // Disable features that break CEF APIs.
     // -- KillOnInvalidNavigationHeaders kills the renderer when a navigation

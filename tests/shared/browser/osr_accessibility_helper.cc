@@ -2,9 +2,15 @@
 // 2013 The Chromium Authors. All rights reserved. Use of this source code is
 // governed by a BSD-style license that can be found in the LICENSE file.
 
+<<<<<<<< HEAD:myapp/cefclient/browser/osr_accessibility_helper.cc
+#include "myapp/cefclient/browser/osr_accessibility_helper.h"
+
+#include "myapp/cefclient/browser/osr_accessibility_node.h"
+========
 #include "tests/shared/browser/osr_accessibility_helper.h"
 
 #include "tests/shared/browser/osr_accessibility_node.h"
+>>>>>>>> 8078:tests/shared/browser/osr_accessibility_helper.cc
 
 namespace client {
 

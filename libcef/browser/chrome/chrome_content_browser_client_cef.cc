@@ -30,6 +30,7 @@
 #include "cef/libcef/common/command_line_impl.h"
 #include "chrome/browser/chrome_browser_main.h"
 #include "chrome/browser/net/system_network_context_manager.h"
+#include "chrome/browser/picture_in_picture/picture_in_picture_window_manager.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "chrome/common/chrome_switches.h"
@@ -53,6 +54,13 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "cef/libcef_dll/bootstrap/bootstrap_util_win.h"
+#endif
+
+#if BUILDFLAG(IS_MAC)
+#include "base/apple/foundation_util.h"
+#include "cef/libcef/common/util_mac.h"
+#include "chrome/browser/child_process_host_flags.h"
+#include "chrome/common/chrome_constants.h"
 #endif
 
 namespace {
@@ -181,6 +189,21 @@ HINSTANCE GetCodeModuleHandle() {
 
 ChromeContentBrowserClientCef::ChromeContentBrowserClientCef() = default;
 ChromeContentBrowserClientCef::~ChromeContentBrowserClientCef() = default;
+
+#if BUILDFLAG(IS_MAC)
+base::FilePath ChromeContentBrowserClientCef::GetChildProcessPath(int flags) {
+  if (flags !=
+      std::to_underlying(ChildProcessHostFlags::kChildProcessHelperAlerts)) {
+    return ChromeContentBrowserClient::GetChildProcessPath(flags);
+  }
+
+  if (!base::apple::AmIBundled()) {
+    return base::FilePath();
+  }
+
+  return util_mac::GetChildProcessPath(chrome::kMacHelperSuffixAlerts);
+}
+#endif
 
 void ChromeContentBrowserClientCef::CleanupOnUIThread() {
   browser_main_parts_ = nullptr;
@@ -426,6 +449,14 @@ void ChromeContentBrowserClientCef::OverrideWebPreferences(
   if (browser) {
     renderer_prefs::SetCefPrefs(browser->settings(), *prefs);
 
+#if BUILDFLAG(IS_MAC)
+    // Use internal select menus for OSR, including when Blink reapplies
+    // preferences after navigation or in out-of-process iframes.
+    if (browser->IsWindowless()) {
+      prefs->should_disable_external_popups = true;
+    }
+#endif
+
     // Runtime override takes precedence over CefBrowserSettings.
     if (browser->ax_viewport_collapse().has_value()) {
       prefs->accessibility_viewport_collapse =
@@ -441,6 +472,10 @@ void ChromeContentBrowserClientCef::OverrideWebPreferences(
         CefContext::Get()->GetBackgroundColor(nullptr, STATE_DEFAULT);
   }
 
+  if (PictureInPictureWindowManager::IsTransparentDocumentPictureInPicture(
+          web_contents->GetPictureInPictureOptions())) {
+    base_background_color = SK_ColorTRANSPARENT;
+  }
   web_contents->SetPageBaseBackgroundColor(base_background_color);
 }
 

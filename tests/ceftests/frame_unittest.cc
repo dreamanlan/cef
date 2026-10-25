@@ -5,8 +5,10 @@
 #include <memory>
 
 #include "include/base/cef_callback.h"
+#include "include/cef_parser.h"
 #include "include/wrapper/cef_closure_task.h"
 #include "include/wrapper/cef_stream_resource_handler.h"
+#include "tests/ceftests/routing_test_handler.h"
 #include "tests/ceftests/test_handler.h"
 #include "tests/ceftests/test_util.h"
 #include "tests/gtest/include/gtest/gtest.h"
@@ -2319,6 +2321,288 @@ FrameNavExpectationsFactoryRenderer::FromID(FrameNavFactoryId id) {
 }
 
 }  // namespace
+
+namespace {
+
+enum class SrcdocParent { kData, kDocumentWrite, kHttp, kNestedData };
+
+// Verify both successful srcdoc commits and access to the inherited origin.
+// Sandboxed srcdoc frames must still receive a distinct opaque origin.
+class SrcdocOriginTestHandler : public RoutingTestHandler {
+ public:
+  SrcdocOriginTestHandler(SrcdocParent parent, bool sandbox)
+      : parent_(parent), sandbox_(sandbox) {}
+
+  void RunTest() override {
+    const std::string report = parent_ == SrcdocParent::kNestedData
+                                   ? "parent.postMessage(result, '*');"
+                                   : "window.testQuery({request:result});";
+    html_ =
+        "<script>window.addEventListener('message', function(event) {"
+        "const child = document.querySelector('iframe');"
+        "if (event.source !== child.contentWindow) return;"
+        "let accessible = false; let result = 'success';"
+        "try { accessible = child.contentWindow.document.getElementById('text')"
+        ".textContent === 'hi'; } catch (error) {"
+        "if (error.name !== 'SecurityError') result = error.toString(); }"
+        "if (event.data !== 'hi') result = 'srcdoc did not render hi';"
+        "if (accessible !== " +
+        std::string(sandbox_ ? "false" : "true") +
+        ") result = 'incorrect srcdoc origin inheritance';" + report +
+        "});</script><iframe " +
+        std::string(sandbox_ ? "sandbox='allow-scripts' " : "") +
+        "srcdoc=\"<span id='text'>hi</span><script>"
+        "parent.postMessage(document.getElementById('text').textContent, '*');"
+        "</script>\"></iframe>";
+
+    std::string url;
+    switch (parent_) {
+      case SrcdocParent::kData:
+        url = DataURL(html_);
+        break;
+      case SrcdocParent::kDocumentWrite:
+        url = "about:blank";
+        break;
+      case SrcdocParent::kHttp:
+        url = "https://tests-srcdoc-origin.test/";
+        AddResource(url, html_, "text/html");
+        break;
+      case SrcdocParent::kNestedData:
+        url = "https://tests-srcdoc-origin.test/";
+        AddResource(
+            url,
+            "<script>window.addEventListener('message', function(event) {"
+            "if (event.source === "
+            "document.querySelector('iframe').contentWindow)"
+            "window.testQuery({request:event.data});});</script><iframe "
+            "src=\"" +
+                DataURL(html_) + "\"></iframe>",
+            "text/html");
+        break;
+    }
+    CreateBrowser(url);
+    SetTestTimeout();
+  }
+
+  void OnLoadEnd(CefRefPtr<CefBrowser> browser,
+                 CefRefPtr<CefFrame> frame,
+                 int httpStatusCode) override {
+    if (parent_ == SrcdocParent::kDocumentWrite && frame->IsMain() &&
+        !wrote_document_) {
+      wrote_document_ = true;
+      frame->ExecuteJavaScript(
+          "document.open();document.write(`" + html_ + "`);document.close();",
+          frame->GetURL(), 0);
+    }
+  }
+
+  bool OnQuery(CefRefPtr<CefBrowser> browser,
+               CefRefPtr<CefFrame> frame,
+               int64_t query_id,
+               const CefString& request,
+               bool persistent,
+               CefRefPtr<Callback> callback) override {
+    EXPECT_TRUE(frame->IsMain());
+    EXPECT_EQ("success", request.ToString());
+    got_result_ = true;
+    callback->Success("");
+    DestroyTest();
+    return true;
+  }
+
+  void OnRenderProcessTerminated(CefRefPtr<CefBrowser> browser,
+                                 TerminationStatus status,
+                                 int error_code,
+                                 const CefString& error_string) override {
+    RoutingTestHandler::OnRenderProcessTerminated(browser, status, error_code,
+                                                  error_string);
+    ADD_FAILURE() << "Renderer terminated: " << status << ", " << error_code
+                  << ", " << error_string.ToString();
+    DestroyTest();
+  }
+
+  void DestroyTest() override {
+    EXPECT_TRUE(got_result_);
+    RoutingTestHandler::DestroyTest();
+  }
+
+ private:
+  static std::string DataURL(const std::string& html) {
+    return "data:text/html," + CefURIEncode(html, false).ToString();
+  }
+
+  const SrcdocParent parent_;
+  const bool sandbox_;
+  std::string html_;
+  bool wrote_document_ = false;
+  bool got_result_ = false;
+
+  IMPLEMENT_REFCOUNTING(SrcdocOriginTestHandler);
+};
+
+void RunSrcdocOriginTest(SrcdocParent parent, bool sandbox) {
+  CefRefPtr<SrcdocOriginTestHandler> handler =
+      new SrcdocOriginTestHandler(parent, sandbox);
+  handler->ExecuteTest();
+  ReleaseAndWaitForDestructor(handler);
+}
+
+}  // namespace
+
+TEST(FrameTest, SrcdocDataOrigin) {
+  RunSrcdocOriginTest(SrcdocParent::kData, false);
+}
+
+TEST(FrameTest, SrcdocDataOriginSandbox) {
+  RunSrcdocOriginTest(SrcdocParent::kData, true);
+}
+
+TEST(FrameTest, SrcdocDocumentWriteOrigin) {
+  RunSrcdocOriginTest(SrcdocParent::kDocumentWrite, false);
+}
+
+// Sandboxed srcdoc in an initial about:blank document triggers CHECK(has_site_)
+// during isolated sandboxed frame process selection.
+// https://issues.chromium.org/issues/570981950
+TEST(FrameTest, DISABLED_SrcdocDocumentWriteOriginSandbox) {
+  RunSrcdocOriginTest(SrcdocParent::kDocumentWrite, true);
+}
+
+TEST(FrameTest, SrcdocHttpOrigin) {
+  RunSrcdocOriginTest(SrcdocParent::kHttp, false);
+}
+
+TEST(FrameTest, SrcdocHttpOriginSandbox) {
+  RunSrcdocOriginTest(SrcdocParent::kHttp, true);
+}
+
+TEST(FrameTest, SrcdocNestedDataOrigin) {
+  RunSrcdocOriginTest(SrcdocParent::kNestedData, false);
+}
+
+TEST(FrameTest, SrcdocNestedDataOriginSandbox) {
+  RunSrcdocOriginTest(SrcdocParent::kNestedData, true);
+}
+
+namespace {
+
+constexpr char kHiddenBFCacheUrl1[] =
+    "https://tests-hidden-bfcache-1/index.html";
+constexpr char kHiddenBFCacheUrl2[] =
+    "https://tests-hidden-bfcache-2/index.html";
+
+class HiddenBFCacheTestHandler : public RoutingTestHandler,
+                                 public CefFrameHandler {
+ public:
+  void RunTest() override {
+    SetUseViews(true);
+    AddResource(kHiddenBFCacheUrl1, "<title>First</title>", "text/html");
+    AddResource(kHiddenBFCacheUrl2, "<title>Second</title>", "text/html");
+    CreateBrowser(kHiddenBFCacheUrl1);
+    SetTestTimeout();
+  }
+
+  CefRefPtr<CefFrameHandler> GetFrameHandler() override { return this; }
+
+  void OnFrameAttached(CefRefPtr<CefBrowser> browser,
+                       CefRefPtr<CefFrame> frame,
+                       bool reattached) override {
+    if (reattached && frame->IsMain() &&
+        frame->GetURL() == kHiddenBFCacheUrl1) {
+      got_reattached_ = true;
+    }
+  }
+
+  void OnLoadingStateChange(CefRefPtr<CefBrowser> browser,
+                            bool isLoading,
+                            bool canGoBack,
+                            bool canGoForward) override {
+    if (isLoading) {
+      return;
+    }
+    const auto frame = browser->GetMainFrame();
+    const auto url = frame->GetURL();
+    if (step_ == 0 && url == kHiddenBFCacheUrl1) {
+      step_ = 1;
+      CefPostTask(TID_UI, base::BindOnce(
+                              [](CefRefPtr<CefFrame> frame) {
+                                frame->LoadURL(kHiddenBFCacheUrl2);
+                              },
+                              frame));
+    } else if (step_ == 1 && url == kHiddenBFCacheUrl2) {
+      step_ = 2;
+      auto window = CefBrowserView::GetForBrowser(browser)->GetWindow();
+      window->Hide();
+      EXPECT_FALSE(window->IsVisible());
+      CefPostTask(TID_UI, base::BindOnce(&CefBrowser::GoBack, browser));
+    } else if (step_ == 2 && url == kHiddenBFCacheUrl1) {
+      step_ = 3;
+      // Both this browser-to-renderer command and the reply must work while
+      // the restored page remains hidden, without waiting for WasShown().
+      frame->ExecuteJavaScript(
+          "document.title='Restored';window.testQuery({request:'restored'});",
+          kHiddenBFCacheUrl1, 0);
+    }
+  }
+
+  void OnTitleChange(CefRefPtr<CefBrowser> browser,
+                     const CefString& title) override {
+    if (title == "Restored") {
+      got_title_ = true;
+      MaybeDone(browser);
+    }
+  }
+
+  bool OnQuery(CefRefPtr<CefBrowser> browser,
+               CefRefPtr<CefFrame> frame,
+               int64_t query_id,
+               const CefString& request,
+               bool persistent,
+               CefRefPtr<Callback> callback) override {
+    EXPECT_TRUE(frame->IsMain());
+    EXPECT_EQ(kHiddenBFCacheUrl1, frame->GetURL().ToString());
+    EXPECT_EQ("restored", request.ToString());
+    got_query_ = true;
+    callback->Success("");
+    MaybeDone(browser);
+    return true;
+  }
+
+  void DestroyTest() override {
+    EXPECT_EQ(3, step_);
+    EXPECT_TRUE(got_reattached_);
+    EXPECT_TRUE(got_title_);
+    EXPECT_TRUE(got_query_);
+    RoutingTestHandler::DestroyTest();
+  }
+
+ private:
+  void MaybeDone(CefRefPtr<CefBrowser> browser) {
+    EXPECT_FALSE(
+        CefBrowserView::GetForBrowser(browser)->GetWindow()->IsVisible());
+    if (got_title_ && got_query_) {
+      DestroyTest();
+    }
+  }
+
+  int step_ = 0;
+  bool got_reattached_ = false;
+  bool got_title_ = false;
+  bool got_query_ = false;
+
+  IMPLEMENT_REFCOUNTING(HiddenBFCacheTestHandler);
+};
+
+}  // namespace
+
+TEST(FrameTest, BackForwardCacheHidden) {
+  if (!IsBFCacheEnabled()) {
+    GTEST_SKIP() << "BackForwardCache is disabled";
+  }
+  CefRefPtr<HiddenBFCacheTestHandler> handler = new HiddenBFCacheTestHandler();
+  handler->ExecuteTest();
+  ReleaseAndWaitForDestructor(handler);
+}
 
 // Entry point for creating frame renderer test objects.
 // Called from client_app_delegates.cc.

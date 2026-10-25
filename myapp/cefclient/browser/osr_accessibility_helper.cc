@@ -43,6 +43,10 @@ OsrAccessibilityHelper::OsrAccessibilityHelper(CefRefPtr<CefValue> value,
   UpdateAccessibilityTree(value);
 }
 
+OsrAccessibilityHelper::~OsrAccessibilityHelper() {
+  Reset();
+}
+
 int OsrAccessibilityHelper::CastToInt(CefRefPtr<CefValue> value) {
   if (value->GetType() == VTYPE_STRING) {
     const std::string& str = value->GetString();
@@ -226,10 +230,22 @@ void OsrAccessibilityHelper::UpdateFocusedNode(const CefString& treeId,
 }
 
 void OsrAccessibilityHelper::Reset() {
-  accessibility_node_map_.clear();
+  // Remove nodes from lookups before destruction notifications can reenter.
+  decltype(accessibility_node_map_) trees;
+  trees.swap(accessibility_node_map_);
   root_tree_id_ = "";
   focused_tree_id_ = "";
   focused_node_id_ = -1;
+  for (auto& [tree_id, tree] : trees) {
+    for (auto& [node_id, node] : tree.node_map_) {
+      node->SetParent(nullptr);
+    }
+  }
+  for (auto& [tree_id, tree] : trees) {
+    for (auto& [node_id, node] : tree.node_map_) {
+      node->Destroy();
+    }
+  }
 }
 
 void OsrAccessibilityHelper::DestroyNode(OsrAXNode* node) {

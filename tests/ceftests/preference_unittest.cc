@@ -6,6 +6,7 @@
 #include "include/cef_request_context_handler.h"
 #include "include/cef_waitable_event.h"
 #include "include/wrapper/cef_closure_task.h"
+#include "include/wrapper/cef_scoped_temp_dir.h"
 #include "tests/ceftests/test_handler.h"
 #include "tests/ceftests/test_util.h"
 #include "tests/gtest/include/gtest/gtest.h"
@@ -22,6 +23,11 @@ const char kPrefTestString[] = "test.string";
 const char kPrefTestList[] = "test.list";
 const char kPrefTestDict[] = "test.dict";
 const char kPrefTestNoExist[] = "test.noexist";
+#if CEF_API_ADDED(15600)
+const char kPrefTestOverride[] = "test.override";
+const char kSigninAllowed[] = "signin.allowed";
+const char kSigninAllowedOnNextStartup[] = "signin.allowed_on_next_startup";
+#endif
 
 // Unqualified preference names.
 const char kPrefBool[] = "bool";
@@ -30,6 +36,9 @@ const char kPrefDouble[] = "double";
 const char kPrefString[] = "string";
 const char kPrefList[] = "list";
 const char kPrefDict[] = "dict";
+#if CEF_API_ADDED(15600)
+const char kPrefOverride[] = "override";
+#endif
 
 CefRefPtr<CefValue> CreateBoolValue(bool value) {
   auto val = CefValue::Create();
@@ -85,6 +94,83 @@ class PreferenceBrowserTest : public client::ClientAppBrowser::Delegate {
                              CreateListValue(CefListValue::Create()));
     registrar->AddPreference(
         kPrefTestDict, CreateDictionaryValue(CefDictionaryValue::Create()));
+#if CEF_API_ADDED(15600)
+    const bool added_override =
+        registrar->AddPreference(kPrefTestOverride, CreateBoolValue(true));
+    const auto* test_info =
+        testing::UnitTest::GetInstance()->current_test_info();
+    const bool run_registration_tests =
+        type == CEF_PREFERENCES_TYPE_REQUEST_CONTEXT && test_info &&
+        std::string(test_info->test_suite_name()) == "PreferenceTest" &&
+        std::string(test_info->name()) == "OverriddenRequestContextDefault";
+    if (!run_registration_tests) {
+      // Establish test defaults without running registration assertions during
+      // startup or while unrelated tests create request contexts.
+      CefString error;
+      registrar->SetDefaultPreference(kPrefTestOverride, CreateBoolValue(false),
+                                      error);
+      return;
+    }
+
+    ASSERT_TRUE(added_override);
+    auto original_default = registrar->GetDefaultPreference(kPrefTestOverride);
+    ASSERT_TRUE(original_default);
+    EXPECT_EQ(VTYPE_BOOL, original_default->GetType());
+    EXPECT_TRUE(original_default->GetBool());
+    EXPECT_FALSE(registrar->GetDefaultPreference(kPrefTestNoExist));
+    CefString error;
+    EXPECT_TRUE(registrar->SetDefaultPreference(kPrefTestOverride,
+                                                CreateBoolValue(false), error));
+    EXPECT_TRUE(error.empty());
+    auto overridden_default =
+        registrar->GetDefaultPreference(kPrefTestOverride);
+    ASSERT_TRUE(overridden_default);
+    EXPECT_EQ(VTYPE_BOOL, overridden_default->GetType());
+    EXPECT_FALSE(overridden_default->GetBool());
+    EXPECT_FALSE(registrar->SetDefaultPreference(kPrefTestOverride,
+                                                 CreateIntValue(1), error));
+    EXPECT_STREQ("Wrong type for preference: test.override",
+                 error.ToString().c_str());
+    error.clear();
+    EXPECT_FALSE(registrar->SetDefaultPreference(kPrefTestNoExist,
+                                                 CreateBoolValue(true), error));
+    EXPECT_STREQ("Trying to modify an unregistered preference",
+                 error.ToString().c_str());
+    error.clear();
+    EXPECT_FALSE(registrar->SetDefaultPreference(kPrefTestOverride,
+                                                 CefValue::Create(), error));
+    EXPECT_STREQ("A valid value is required", error.ToString().c_str());
+
+    EXPECT_TRUE(registrar->SetDefaultPreference(kPrefTestOverride,
+                                                original_default, error));
+    EXPECT_TRUE(registrar->GetDefaultPreference(kPrefTestOverride)->GetBool());
+    EXPECT_TRUE(registrar->SetDefaultPreference(kPrefTestOverride,
+                                                CreateBoolValue(false), error));
+    EXPECT_TRUE(error.empty());
+
+    if (type == CEF_PREFERENCES_TYPE_REQUEST_CONTEXT) {
+      // Registered by a Chrome keyed service, after RegisterUserProfilePrefs.
+      EXPECT_FALSE(registrar->AddPreference(kSigninAllowedOnNextStartup,
+                                            CreateBoolValue(true)));
+      auto signin_default =
+          registrar->GetDefaultPreference(kSigninAllowedOnNextStartup);
+      ASSERT_TRUE(signin_default);
+      EXPECT_EQ(VTYPE_BOOL, signin_default->GetType());
+      EXPECT_FALSE(signin_default->GetBool());
+
+      // Applications can opt in before the profile is created.
+      EXPECT_TRUE(registrar->SetDefaultPreference(
+          kSigninAllowedOnNextStartup, CreateBoolValue(true), error));
+      EXPECT_TRUE(error.empty());
+      EXPECT_TRUE(registrar->GetDefaultPreference(kSigninAllowedOnNextStartup)
+                      ->GetBool());
+      EXPECT_TRUE(registrar->SetDefaultPreference(kSigninAllowedOnNextStartup,
+                                                  signin_default, error));
+      EXPECT_TRUE(error.empty());
+      EXPECT_FALSE(registrar->GetDefaultPreference(kSigninAllowedOnNextStartup)
+                       ->GetBool());
+    }
+#endif
   }
 
  private:
@@ -251,6 +337,9 @@ void PopulateRootDefaults(CefRefPtr<CefDictionaryValue> val) {
   val->SetString(kPrefString, "default");
   val->SetList(kPrefList, CefListValue::Create());
   val->SetDictionary(kPrefDict, CefDictionaryValue::Create());
+#if CEF_API_ADDED(15600)
+  val->SetBool(kPrefOverride, false);
+#endif
 }
 
 void ValidateRoot(CefRefPtr<CefDictionaryValue> root,
@@ -338,6 +427,9 @@ void PopulateRootSet(CefRefPtr<CefDictionaryValue> val) {
   val->SetString(kPrefString, "My test string");
   val->SetList(kPrefList, list_val);
   val->SetDictionary(kPrefDict, dict_val);
+#if CEF_API_ADDED(15600)
+  val->SetBool(kPrefOverride, false);
+#endif
 }
 
 // Validate getting and setting values.
@@ -373,6 +465,9 @@ void ValidateSetGet(CefRefPtr<CefPreferenceManager> context,
   ValidateRoot(context->GetAllPreferences(true), expected);
 
   // Validate all preferences excluding defaults.
+#if CEF_API_ADDED(15600)
+  expected->Remove(kPrefOverride);
+#endif
   ValidateRoot(context->GetAllPreferences(false), expected);
 
   event->Signal();
@@ -411,6 +506,9 @@ void ValidateGet(CefRefPtr<CefPreferenceManager> context,
   ValidateRoot(context->GetAllPreferences(true), expected);
 
   // Validate all preferences excluding defaults.
+#if CEF_API_ADDED(15600)
+  expected->Remove(kPrefOverride);
+#endif
   ValidateRoot(context->GetAllPreferences(false), expected);
 
   event->Signal();
@@ -630,6 +728,96 @@ TEST(PreferenceTest, RequestContextCustomSetGetShared) {
   ValidateDefaults(context, true, event, "Reset to the default values.");
   event->Wait();
 }
+
+#if CEF_API_ADDED(15600)
+void ValidateOverriddenDefault(CefRefPtr<CefPreferenceManager> context,
+                               CefRefPtr<CefWaitableEvent> event) {
+  if (!CefCurrentlyOn(TID_UI)) {
+    CefPostTask(TID_UI,
+                base::BindOnce(ValidateOverriddenDefault, context, event));
+    return;
+  }
+
+  // Verify the default set by OnRegisterCustomPreferences is the effective
+  // value before a user preference is set.
+  auto value = context->GetPreference(kPrefTestOverride);
+  EXPECT_TRUE(value);
+  if (!value) {
+    event->Signal();
+    return;
+  }
+  EXPECT_EQ(VTYPE_BOOL, value->GetType());
+  EXPECT_FALSE(value->GetBool());
+
+  CefString error;
+  EXPECT_TRUE(
+      context->SetPreference(kPrefTestOverride, CreateBoolValue(true), error));
+  EXPECT_TRUE(error.empty());
+  EXPECT_TRUE(context->GetPreference(kPrefTestOverride)->GetBool());
+  EXPECT_TRUE(context->SetPreference(kPrefTestOverride, nullptr, error));
+  EXPECT_FALSE(context->GetPreference(kPrefTestOverride)->GetBool());
+  event->Signal();
+}
+
+TEST(PreferenceTest, OverriddenGlobalDefault) {
+  auto event = CefWaitableEvent::CreateWaitableEvent(true, false);
+  ValidateOverriddenDefault(CefPreferenceManager::GetGlobalPreferenceManager(),
+                            event);
+  event->Wait();
+}
+
+TEST(PreferenceTest, OverriddenRequestContextDefault) {
+  // An in-memory context shares an existing profile's registered defaults.
+  // Use a fresh profile so this test runs the registration-time assertions.
+  CefScopedTempDir tempdir;
+  ASSERT_TRUE(tempdir.CreateUniqueTempDirUnderPath(
+      CefTestSuite::GetInstance()->root_cache_path()));
+  // Take ownership so the directory isn't deleted while the profile is still
+  // initializing on-disk storage (e.g. the WebDatabase) in the background. It
+  // will be cleaned up when the root_cache_path is deleted during test
+  // shutdown. See https://crbug.com/416755456.
+  const std::string cache_path = tempdir.Take();
+  auto init_event = CefWaitableEvent::CreateWaitableEvent(true, false);
+  CefRequestContextSettings settings;
+  CefString(&settings.cache_path) = cache_path;
+  auto context = CefRequestContext::CreateContext(
+      settings, new TestRequestContextHandler(init_event));
+  init_event->Wait();
+  auto event = CefWaitableEvent::CreateWaitableEvent(true, false);
+  ValidateOverriddenDefault(context, event);
+  event->Wait();
+}
+
+void ValidateSigninDisabled(CefRefPtr<CefRequestContext> context,
+                            CefRefPtr<CefWaitableEvent> event) {
+  if (!CefCurrentlyOn(TID_UI)) {
+    CefPostTask(TID_UI, base::BindOnce(ValidateSigninDisabled, context, event));
+    return;
+  }
+
+  // The registration default is applied before account consistency initializes.
+  auto next_startup = context->GetPreference(kSigninAllowedOnNextStartup);
+  EXPECT_TRUE(next_startup);
+  if (next_startup) {
+    EXPECT_EQ(VTYPE_BOOL, next_startup->GetType());
+    EXPECT_FALSE(next_startup->GetBool());
+  }
+
+  auto allowed = context->GetPreference(kSigninAllowed);
+  EXPECT_TRUE(allowed);
+  if (allowed) {
+    EXPECT_EQ(VTYPE_BOOL, allowed->GetType());
+    EXPECT_FALSE(allowed->GetBool());
+  }
+  event->Signal();
+}
+
+TEST(PreferenceTest, RequestContextSigninDisabledByDefault) {
+  auto event = CefWaitableEvent::CreateWaitableEvent(true, false);
+  ValidateSigninDisabled(CefRequestContext::GetGlobalContext(), event);
+  event->Wait();
+}
+#endif  // CEF_API_ADDED(15600)
 
 // Entry point for creating preference browser test objects.
 // Called from client_app_delegates.cc.
