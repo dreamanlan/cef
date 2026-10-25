@@ -185,6 +185,7 @@ merge upstream/8078（Chromium 156.0.8078.48，4fa4ab516）到 cef_modified，me
 - osr_renderer.h 跟随上游删除（我方仅注释漂移，mac 已由 OsrRendererMetal 替代）；osr_renderer_settings.h、osr_display_unittest.cc 取上游（我方改动均为上游提交的 patch-id 相同 cherry-pick）。
 - 8078 的 60 个上游提交中 23 个此前已 cherry-pick（patch-id 相同，merge 自动消解），实际新内容 37 个（Chromium 156 版本升级三连 + osr 重构 + 若干修复）。
 - PR #4289（OnBeforeResourceResponse）全部改动在 myapp/patch/，与上游零交集，不受 merge 影响。
+- devtools_ai_assistance_skills.patch 已被上游采纳并删除（2026-10-25，构建时 patch does not apply 发现）：devtools-frontend 上游提交 1e7b645280 "[ai_assistance] Propagate generated skill JS files to bundle action"（对应 chromium issue 555144010）已包含等价且更完整的实现（public_inputs 还含 .skill.d.ts），patch 文件与 patch.cfg 条目均已删除。
 待构建验证事项：
 - osr win 渲染结构变化（D3D11 结构对齐 Metal/EGL、osr_renderer.cc 删除、external begin frame）可能影响 myapp 的 osr 代码，构建时需适配。
 - Chromium 154→156 的 Win11 SDK 版本要求需重新确认（8037 时要求 10.0.28000.0，见下方 8037 SDK_VERSION 坑）。
